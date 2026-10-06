@@ -186,3 +186,9 @@ Read failures after starting navigation report `execution: unknown`: the website
 PDF.js uses the official legacy build and `isEvalSupported:false`. Only user-selected local PDFs are opened; its Worker, CMaps, fonts and WASM resolve inside the package. Tesseract uses bundled workers, core and language files with persistent OCR cache disabled, never the default CDN. Extension CSP enables local WASM, not remote scripts or `unsafe-eval`. Unmodified Tesseract Core reads `navigator.languages` solely to build Emscripten C-runtime LANG; it does not select the UI or user-chosen OCR language. The localization check permits only that exact expression in that SHA-256-pinned vendor file and continues checking all other reads.
 
 Upstream packages contain unused Node/download/dynamic-execution branches. No provider credentials, arbitrary remote document URL or server execution entry is exposed to them. Sources, npm SHA-512 integrity and full licenses are recorded in `THIRD-PARTY-LICENSES.txt`.
+
+## 0.4.2 subtitle workflow fix
+
+Opening Subtitles now reads and translates automatically, starting near the playhead; delayed captions and imported SRT/VTT continue without refreshing the page or pressing Translate. Invalid model formatting or item counts get one automatic repair attempt. If that fails, original and completed lines remain with an inline retry action; the selected model is never silently changed. Closing the panel or cancelling stops translation.
+
+Reloading the same URL in the same tab restores subtitle mode. Explicit close, changing modes, or navigating elsewhere clears that choice. This state lives only in extension session storage, and resumed learning still uses the existing site and document authorization checks.

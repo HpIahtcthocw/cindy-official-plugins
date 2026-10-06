@@ -75,9 +75,20 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
  await service.handle(profile,request);assert.equal(creates.length,1);assert.equal(sends.length,2);assert.equal(sends[0].requestKey,sends[1].requestKey);assert.match(sends[0].text,/quoted webpage material/);
  await assert.rejects(service.handle(profile,{...request,instruction:'Different request'}),/REQUEST_CONFLICT/);
 });
-for(const previousVersion of ['0.3.48','0.4.0'])test('new bridge preserves extension '+previousVersion,async t=>{
+for(const previousVersion of ['0.3.48','0.4.0','0.4.1'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
  const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);
  const status=await bridge.request('status');assert.equal(status.extension_connected,true);assert.equal(status.clients[0].id,id);
+});
+
+for(const first of [{ok:false,errorCode:'BAD_MODEL_OUTPUT'},{ok:true,text:'{"translations":["少了一句"]}'},{ok:true,text:'not JSON'},{ok:true,text:'{"translations":["",""]}'}])test('translation repairs malformed output once without losing alignment: '+JSON.stringify(first),async()=>{
+ const calls=[];const s=createLearningService({core,model:async p=>{calls.push(p);return calls.length===1?first:{ok:true,text:'```json\n{"translations":["困惑","笑声"]}\n```'};}});
+ const result=await s.handle(crypto.randomUUID(),{op:'translate',texts:['confused.','[laughter]']});
+ assert.deepEqual(result.translations,['困惑','笑声']);assert.equal(calls.length,2);assert.match(calls[1].prompt,/never merge or omit/);
+});
+test('failed translation repair is bounded and cancellation prevents the extra model call',async()=>{
+ let count=0;const s=createLearningService({core,model:async()=>{count++;return {ok:true,text:'{"translations":[]}'};}});
+ await assert.rejects(s.handle(crypto.randomUUID(),{op:'translate',text:'Hello'}),/BAD_MODEL_OUTPUT/);assert.equal(count,2);
+ count=0;await assert.rejects(s.handle(crypto.randomUUID(),{op:'translate',text:'Hello'},async()=>count===0),/REQUEST_CANCELLED/);assert.equal(count,1);
 });

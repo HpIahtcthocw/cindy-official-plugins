@@ -48,7 +48,7 @@ async function discover() {
     try {
       let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && r.version !== '0.4.0' && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if (r.version !== VERSION && !['0.4.0','0.4.1'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
       if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
       if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
       bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
@@ -657,5 +657,25 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
     return {ok:true,cues,language:track.language};
   })().then(reply).catch(e=>reply({ok:false,error:e.message}));return true;
 });
+
+// Resume only the user's subtitle panel on the same tab and exact URL after reload.
+// No page storage, cross-tab inheritance or bypass of learningRequest authorization.
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{
+  if(!['cindy-video-state','cindy-video-resume'].includes(m?.type)||sender.id!==chrome.runtime.id||!sender.tab?.id||sender.frameId!==0)return;
+  (async()=>{
+    const tab=await chrome.tabs.get(sender.tab.id);
+    if(tab.url!==sender.url)return {enabled:false};
+    const key='cindy-video-'+tab.id;
+    if(m.type==='cindy-video-state'){
+      if(typeof m.enabled!=='boolean')return {enabled:false};
+      if(await network.document(tab.id)!==sender.documentId)return {enabled:false};
+      await sessionStore.set({[key]:m.enabled?tab.url:null});return {enabled:m.enabled};
+    }
+    const saved=(await sessionStore.get(key))[key];
+    if(saved!==tab.url){if(saved)await sessionStore.set({[key]:null});return {enabled:false};}
+    return {enabled:true};
+  })().then(reply).catch(()=>reply({enabled:false}));return true;
+});
+chrome.tabs.onRemoved.addListener(id=>{const key='cindy-video-'+id;if(sessionStore.remove)sessionStore.remove(key).catch(()=>{});else delete memory[key];});
 
 chain();
