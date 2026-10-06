@@ -75,9 +75,9 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
  await service.handle(profile,request);assert.equal(creates.length,1);assert.equal(sends.length,2);assert.equal(sends[0].requestKey,sends[1].requestKey);assert.match(sends[0].text,/quoted webpage material/);
  await assert.rejects(service.handle(profile,{...request,instruction:'Different request'}),/REQUEST_CONFLICT/);
 });
-test('new bridge negotiates old extensions without changing their identity or control protocol',async t=>{
+for(const previousVersion of ['0.3.48','0.4.0'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
- const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':'0.3.48'};
- const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,'0.3.48');assert.equal(health.installedVersion,version);assert.ok(health.session);
+ const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
+ const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);
  const status=await bridge.request('status');assert.equal(status.extension_connected,true);assert.equal(status.clients[0].id,id);
 });

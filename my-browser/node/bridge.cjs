@@ -17,7 +17,7 @@ function createBridge(options = {}) {
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map();
-  const compatible = version => version === manifest.version || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === manifest.version || version === '0.4.0' || /^0\.3\.\d+$/.test(version);
   const session = crypto.randomUUID();
   const live = c => Date.now()-c.seen < 35000;
   const connected = () => [...clients.values()].filter(c => c.trusted && live(c) && compatible(c.version));
@@ -137,7 +137,7 @@ function createBridge(options = {}) {
       if (!client && clients.size >= 16) return send(res,failure('TOO_MANY_BROWSERS','Close unused browser connections.'),429);
       client = {id,origin,extensionId,browser:['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : 'chrome',version:String(h['x-my-browser-version'] || '').slice(0,30),seen:Date.now()};
       client.trusted = approved(client); clients.set(id,client);
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:/^0\.3\.\d+$/.test(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!client.trusted,capabilities:['learning-v1'],...(client.trusted ? {session} : {})});
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!client.trusted,capabilities:['learning-v1'],...(client.trusted ? {session} : {})});
     }
     if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
     client.seen = Date.now();

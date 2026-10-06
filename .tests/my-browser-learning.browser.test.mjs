@@ -40,8 +40,27 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  for(let i=0;i<40&&!(await panelText()).includes('译文：Hello world');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/译文：Hello world/);await click('收藏');
  for(let i=0;i<30&&files.size===0;i++)await page.waitForTimeout(100);assert.equal(files.size,1);
- const screenshots=process.env.CINDY_SCREENSHOTS;if(screenshots){await fs.mkdir(screenshots,{recursive:true});await page.screenshot({path:path.join(screenshots,'web-light.png')});await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:path.join(screenshots,'web-dark.png')});}
- await click('整页双语');for(let i=0;i<40&&!(await panelText()).includes('译文：Practice');i++)await page.waitForTimeout(100);assert.match(await panelText(),/译文：Practice/);await click('恢复原文');assert.doesNotMatch(await panelText(),/译文：Practice/);
+ const screenshots=process.env.CINDY_SCREENSHOTS;if(screenshots)await fs.mkdir(screenshots,{recursive:true});
+ async function appearance(){return (await cdp.send('Runtime.callFunctionOn',{objectId:await element('SECTION','Cindy'),functionDeclaration:`function(){const c=getComputedStyle(this),r=this.getBoundingClientRect();return {color:c.color,background:c.backgroundColor,font:c.fontSize,width:r.width,theme:this.dataset.theme,active:this.querySelector('nav [aria-pressed=true]')?.textContent,cancelHidden:this.querySelector('footer button').hidden}}`,returnByValue:true})).result.value;}
+ function readable(a){const lum=c=>{const v=c.match(/[\d.]+/g).slice(0,3).map(Number).map(n=>{n/=255;return n<=.04045?n/12.92:((n+.055)/1.055)**2.4;});return v[0]*.2126+v[1]*.7152+v[2]*.0722;};const x=lum(a.color),y=lum(a.background);assert.ok((Math.max(x,y)+.05)/(Math.min(x,y)+.05)>=4.5,JSON.stringify(a));assert.equal(a.font,'13px');assert.equal(a.width,384);}
+ readable(await appearance());assert.equal((await appearance()).theme,'light');
+ if(screenshots)await page.screenshot({path:path.join(screenshots,'web-light.png')});
+ // A dark OS must not make an otherwise white web page's panel black.
+ await page.emulateMedia({colorScheme:'dark'});readable(await appearance());assert.equal((await appearance()).theme,'light');
+ // Host typography, CSS variables and !important rules cannot enter the closed panel.
+ await page.addStyleTag({content:'html{--text:red;--surface:red;font:32px serif;color:red}html>div{font:40px serif!important;color:black!important;background:red!important;position:static!important;width:900px!important}'});
+ readable(await appearance());
+ await click('整页双语');for(let i=0;i<40&&!(await panelText()).includes('译文：Practice');i++)await page.waitForTimeout(100);assert.match(await panelText(),/译文：Practice/);
+ assert.equal((await appearance()).active,'整页双语');assert.equal((await appearance()).cancelHidden,true);
+ if(screenshots){await page.screenshot({path:path.join(screenshots,'page-light.png')});await page.screenshot({path:path.join(screenshots,'panel-light.png'),clip:{x:879,y:15,width:386,height:272}});}
+ await click('切换明暗外观');readable(await appearance());assert.equal((await appearance()).theme,'dark');
+ if(screenshots)await page.screenshot({path:path.join(screenshots,'page-dark.png')});
+ await click('恢复原文');assert.doesNotMatch(await panelText(),/译文：Practice/);
+ // A genuinely dark page defaults to the readable dark panel on a fresh open.
+ await click('关闭');await page.addStyleTag({content:'body{background:#181818;color:#eee}'});
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'open'}),tabId);
+ readable(await appearance());assert.equal((await appearance()).theme,'dark');
+ if(screenshots)await page.screenshot({path:path.join(screenshots,'web-dark.png')});
  // Actual HTML5 media time/track integration with generated silence, no external fixture.
  const wav=Buffer.alloc(44+8000*2*3);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40);
  await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';track.addCue(new VTTCue(0,1,'First subtitle'));track.addCue(new VTTCue(1,2,'Second subtitle'));v.currentTime=1.25;},wav.toString('base64'));
