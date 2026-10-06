@@ -18,8 +18,5 @@
     "browser_policy": {
       "description": "Get/update permissions. allow_interact grants site clicks/forms, block_read blocks both reading and interaction, remove removes the read block, interaction allow entry and interaction exclusion. Domains include subdomains (= means exact). New grants/unblocking require real Cindy confirmation; cancellation changes nothing and must not be retried. New installations allow all public sites; saved restrictions remain until explicitly removed. Use host * for all-site interaction."
     }
-  },
-  "mainView": {
-    "title": "Cindy Chrome"
   }
 }

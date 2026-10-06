@@ -18,8 +18,5 @@
     "browser_policy": {
       "description": "读取或修改网站权限。allow_interact 授权点击／表单，block_read 同时禁止读取和交互，remove 移除读取拦截、交互允许项及交互排除项。域名包含子域名，= 表示精确匹配。新增授权／解除拦截必须真实 Cindy 确认，取消不修改，不能反复重试授权。 新安装默认开放公网网站，已保存的限制保留，直到你明确移除。host * 表示所有网站交互。"
     }
-  },
-  "mainView": {
-    "title": "Cindy Chrome"
   }
 }
