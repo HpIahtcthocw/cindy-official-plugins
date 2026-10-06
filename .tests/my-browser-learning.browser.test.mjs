@@ -119,10 +119,11 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  const repairedCalls=modelCalls.map(r=>JSON.parse(r.prompt.split('\n').at(-1))).filter(m=>m.turns&&m.turns.map(t=>t.text).join(' ').includes('Repair'));
  assert.equal(repairedCalls.length,1);assert.equal(repairedCalls[0].turns.length,2);
  // Persistent malformed output stops automatic model retries and exposes a local retry.
- await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'BrokenSubtitle'));track.addCue(new VTTCue(2.3,2.8,'HealthySubtitle'));});
+ await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'BrokenSubtitle'));track.addCue(new VTTCue(2.3,2.8,'HealthySubtitle'));document.querySelector('video').currentTime=.5;});
  for(let i=0;i<60&&!(await panelText()).includes('部分字幕译文为空或无法读取');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/部分字幕译文为空或无法读取/);
  const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.turns&&m.turns.map(t=>t.text).join(' ').includes('BrokenSubtitle');}).length;
+ await page.locator('video').evaluate(v=>{v.currentTime=2.5;});
  for(let i=0;i<40&&(await captions()).translation!=='译文：HealthySubtitle';i++)await page.waitForTimeout(100);assert.equal((await captions()).translation,'译文：HealthySubtitle');assert.equal(brokenCalls(),4);await page.evaluate(()=>{document.querySelector('video').currentTime=.5;});await page.waitForTimeout(100);assert.equal((await captions()).original,'BrokenSubtitle');assert.equal((await captions()).translation,'');await page.waitForTimeout(1400);assert.equal(brokenCalls(),4);
  allowBroken=true;await click('字幕设置');await click('重试字幕翻译');await click('字幕设置');
  for(let i=0;i<40&&!(await panelText()).includes('译文：BrokenSubtitle');i++)await page.waitForTimeout(100);
@@ -156,11 +157,17 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;v.muted=true;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';for(let i=0;i<72;i++)track.addCue(new VTTCue(i*2,(i+1)*2,Array.from({length:10},(_,j)=>'Buffer'+(i*10+j)).join(' ')));await v.play();},longWav.toString('base64'));
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
  for(let i=0;i<60&&prefetchStarted.length<2;i++)await page.waitForTimeout(100);
- assert.deepEqual(prefetchStarted,['Buffer0','Buffer360']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'initial playback waits for a prepared long passage');
+ assert.deepEqual(prefetchStarted,['Buffer0','Buffer180']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'initial playback waits for a prepared long passage');
  prefetchGates.get('Buffer0')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
  assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'first long passage is playable while the next request remains in flight');
- await page.locator('video').evaluate(v=>{v.currentTime=70;});await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'seeking near unfinished subtitles buffers instead of playing without them');
- prefetchGates.get('Buffer360')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
+ await page.locator('video').evaluate(v=>{v.currentTime=45;});await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'seeking near unfinished subtitles buffers instead of playing without them');
+ prefetchGates.get('Buffer180')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
+ assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
+ assert.equal(modelCalls.some(r=>JSON.parse(r.prompt.split('\n').at(-1)).transcript),false,'no whole-video model pass blocks first captions');
+ await page.locator('video').evaluate(v=>{v.currentTime=120;});
+ for(let i=0;i<40&&!prefetchStarted.includes('Buffer540');i++)await page.waitForTimeout(100);
+ assert.ok(prefetchStarted.includes('Buffer540'),'seek prioritizes the new position without waiting for old in-flight passages');
+ prefetchGates.get('Buffer540')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
  assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
  await click('关闭');await page.locator('video').evaluate(v=>v.pause());
  const library=await context.newPage();await library.goto('chrome-extension://'+extensionId+'/library.html');await library.getByText('Hello world',{exact:true}).waitFor();await library.getByRole('button',{name:'复习',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByText('本次待复习内容已完成。').waitFor();

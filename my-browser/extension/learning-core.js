@@ -117,9 +117,9 @@
   }
   function subtitleChunks(words,editorial=false) {
     const chunks=[];let start=0;
-    while(start<words.length){let end=Math.min(start+(editorial?360:180),words.length);
-      if(editorial){let chars=0;for(let i=start;i<end;i++){chars+=words[i].text.length;if(chars>6400&&i>start){end=i;break;}}}
-      if(end<words.length){for(let i=end;i>start+(editorial?180:60);i--)if(words[i]?.breakBefore||/[.!?。！？]["”’]?$/u.test(words[i-1].text)){end=i;break;}}
+    while(start<words.length){let end=Math.min(start+180,words.length);
+      if(editorial){let chars=0;for(let i=start;i<end;i++){chars+=words[i].text.length;if(i>start&&(chars>3200||words[i].start-words[start].start>=45)){end=i;break;}}}
+      if(end<words.length){for(let i=end;i>start+Math.min(60,Math.floor((end-start)/2));i--)if(words[i]?.breakBefore||/[.!?。！？]["”’]?$/u.test(words[i-1].text)){end=i;break;}}
       chunks.push({start,end,words:words.slice(start,end),nextStart:words[end]?.start});start=end;
     }return chunks;
   }
@@ -176,17 +176,16 @@
     }
     return subtitleSegments(words,groups,nextStart,true);
   }
-  function transcriptPages(words) {
-    const pages=[];let page=[],size=0;
-    for(const word of words){if(size+word.text.length+1>12000&&page.length){pages.push(joinWords(page));page=[];size=0;}page.push(word);size+=word.text.length+1;}
-    if(page.length)pages.push(joinWords(page));return pages;
-  }
   function subtitleDocument(cues) {
     const paragraphs=[];let text=[],translation=[];
     const flush=()=>{if(text.length)paragraphs.push({text:joinWords(text.map(text=>({text}))),translation:joinWords(translation.map(text=>({text})))});text=[];translation=[];};
     for(const cue of cues){text.push(cue.text);translation.push(cue.translation||'');if(cue.paragraphEnd)flush();}flush();return paragraphs;
   }
   // Coverage comes from finished preparation windows, not caption density: genuine silence is ready too.
+  function pendingSubtitleChunks(chunks,time,rate=1) {
+    const until=time+90*Math.max(.25,rate);
+    return (chunks||[]).filter(c=>!c.done&&!c.error&&!c.busy&&c.words.at(-1).end>time&&c.words[0].start<=until);
+  }
   function subtitleBuffer(chunks,time,rate=1) {
     if(!chunks?.length)return {ahead:0,ready:false,complete:false};
     const ordered=[...chunks].sort((a,b)=>a.start-b.start),remaining=ordered.filter(c=>c.words.at(-1).end>time);
@@ -194,7 +193,7 @@
     let until=time,complete=true;
     for(const chunk of remaining){if(!chunk.done){complete=false;until=Math.max(until,chunk.words[0].start);break;}until=chunk.nextStart??chunk.words.at(-1).end;}
     const ahead=Math.max(0,until-time)/Math.max(.25,rate);
-    return {ahead,ready:complete||ahead>=45,complete};
+    return {ahead,ready:complete||ahead>=15,complete};
   }
   function splitSubtitleChunk(chunk) {
     const {words}=chunk;if(words.length<2)return [];
@@ -215,7 +214,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,transcriptPages,subtitleDocument,subtitleBuffer};
+  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);

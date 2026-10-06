@@ -75,7 +75,7 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
  await service.handle(profile,request);assert.equal(creates.length,1);assert.equal(sends.length,2);assert.equal(sends[0].requestKey,sends[1].requestKey);assert.match(sends[0].text,/quoted webpage material/);
  await assert.rejects(service.handle(profile,{...request,instruction:'Different request'}),/REQUEST_CONFLICT/);
 });
-for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6'])test('new bridge preserves extension '+previousVersion,async t=>{
+for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
  const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);

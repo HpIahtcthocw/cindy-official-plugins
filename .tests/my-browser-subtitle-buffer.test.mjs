@@ -12,7 +12,7 @@ const chunk=(start,end,done)=>({start,end,words:[{text:'speech',start,end}],next
 test('coverage measures prepared passages, includes silence and stops at the first unfinished passage',()=>{
  const chunks=[chunk(0,60,true),chunk(60,120,false),chunk(120,180,true)];
  assert.deepEqual(core.subtitleBuffer(chunks,10),{ahead:50,ready:true,complete:false});
- assert.equal(core.subtitleBuffer(chunks,10,2).ready,false);
+ assert.equal(core.subtitleBuffer(chunks,35,2).ready,false);
  assert.equal(core.subtitleBuffer(chunks,55).ahead,5);
  assert.equal(core.subtitleBuffer(chunks,130).complete,true);
  chunks[0].done=false;assert.equal(core.subtitleBuffer(chunks,0).ahead,0);
@@ -31,10 +31,9 @@ test('seeking rechecks the buffer, closing restores only playback stopped by buf
  buffer={ahead:20,ready:false};media.dispatchEvent(new Event('seeked'));assert.equal(media.paused,true);controller.dispose();assert.equal(media.paused,false);
  const paused=new Media(true),other=playback.create(paused,{state:()=>({ahead:0,ready:false})});other.update();other.dispose();assert.equal(paused.paused,true);
 });
-test('full transcript preparation consumes every page and supports long editorial windows',()=>{
+test('incremental windows cover the transcript without translating it all upfront',()=>{
  const words=core.subtitleWords(Array.from({length:1200},(_,i)=>({start:i*.5,end:(i+1)*.5,text:'sourceword'+i})),true);
- const pages=core.transcriptPages(words);assert.ok(pages.length>1);assert.equal(pages.join(' '),core.joinWords(words));
- const windows=core.subtitleChunks(words,true);assert.ok(windows[0].words.length>180);assert.deepEqual(windows.flatMap(c=>c.words),words);
+ const windows=core.subtitleChunks(words,true);assert.ok(windows.every(c=>c.words.length<=180&&c.words.at(-1).start-c.words[0].start<45));assert.deepEqual(windows.flatMap(c=>c.words),words);
  assert.doesNotThrow(()=>core.validate({op:'subtitles',editorial:true,words:windows[0].words}));
 });
 test('editorial captions clean source prose, retain timing anchors and join short display gaps',()=>{
@@ -49,4 +48,14 @@ test('document brief and editorial requests use bounded prompts and keep separat
  const client=crypto.randomUUID();const guide=await service.handle(client,{op:'subtitle-document',text:'Entire source transcript.'});assert.match(guide.guide,/Consistent/);
  const words=Array.from({length:360},(_,i)=>({text:'fairlylongsourceword',start:i,end:i+.5}));
  const result=await service.handle(client,{op:'subtitles',editorial:true,words,context:'context '.repeat(1000)});assert.equal(result.cues.length,360);assert.match(calls[1].prompt,/Reconstruct polished, faithful prose first/);assert.match(calls[1].prompt,/not English fragment boundaries/);
+});
+
+test('incremental scheduling skips the past and distant future, and reprioritizes after seeking',()=>{
+ const chunks=Array.from({length:20},(_,i)=>chunk(i*30,(i+1)*30,false));
+ assert.deepEqual(core.pendingSubtitleChunks(chunks,65).map(c=>c.start),[60,90,120,150]);
+ chunks[2].done=true;chunks[3].busy=true;
+ assert.deepEqual(core.pendingSubtitleChunks(chunks,65).map(c=>c.start),[120,150]);
+ assert.deepEqual(core.pendingSubtitleChunks(chunks,400).map(c=>c.start),[390,420,450,480]);
+ assert.equal(core.pendingSubtitleChunks(chunks,400,2).at(-1).start,570);
+ assert.equal(core.subtitleBuffer([chunk(0,25,true),chunk(25,60,false)],0).ready,true);
 });
