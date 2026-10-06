@@ -2,7 +2,7 @@
 // Shared, deterministic input and subtitle handling. No network or host access.
 (function(root) {
   const languages = {auto:'Auto',en:'English','zh-CN':'简体中文','zh-TW':'繁體中文',ja:'日本語',ko:'한국어',fr:'Français',de:'Deutsch',es:'Español',it:'Italiano',pt:'Português',ru:'Русский',ar:'العربية',hi:'हिन्दी',th:'ไทย',vi:'Tiếng Việt'};
-  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task']);
+  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles']);
   function string(value,max,required=false) {
     if (typeof value !== 'string' || value.length>max || (required && !value.trim())) throw Error('INVALID_INPUT');
     return value;
@@ -32,6 +32,12 @@
       if(out.op!=='translate' || !Array.isArray(input.texts) || !input.texts.length || input.texts.length>24) throw Error('INVALID_BATCH');
       out.texts=input.texts.map(x=>string(x,4000,true));
       if(out.texts.join('').length>20000) throw Error('BATCH_TOO_LARGE');
+    }
+    if(out.op==='subtitles') {
+      if(!Array.isArray(input.words)||!input.words.length||input.words.length>240)throw Error('INVALID_BATCH');
+      out.words=input.words.map((w,i)=>{const text=string(w.text,500,true);if(!Number.isFinite(w.start)||!Number.isFinite(w.end)||w.start<0||w.end<=w.start||w.end>864000||(i&&w.start<input.words[i-1].end-.001))throw Error('INVALID_TIME');return {text,start:w.start,end:w.end,breakBefore:w.breakBefore===true};});
+      if(out.words.map(w=>w.text).join('').length>12000)throw Error('BATCH_TOO_LARGE');
+      if(input.nextStart!==undefined){if(!Number.isFinite(input.nextStart)||input.nextStart<out.words.at(-1).end||input.nextStart>864000)throw Error('INVALID_TIME');out.nextStart=input.nextStart;}
     }
     if (input.id!==undefined) out.id=string(input.id,100,true);
     if (['remove','review','task'].includes(out.op) && !out.id) throw Error('INVALID_ID');
@@ -66,6 +72,68 @@
     }
     return cues.sort((a,b)=>a.start-b.start);
   }
+  function joinWords(words) {
+    let text='';for(const w of words){const part=w.text.trim();if(!part)continue;const tight=/^[,.;:!?，。！？、；：)\]”’]/u.test(part)||/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}，。！？、；：]$/u.test(text)&&/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(part);text+=(text&&!tight?' ':'')+part;}return text;
+  }
+  function timedWords(text,start,end) {
+    const parts=text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu)||[];
+    const total=parts.reduce((n,p)=>n+p.length,0);let offset=0;
+    return parts.map(text=>{const a=start+(end-start)*offset/total;offset+=text.length;return {text,start:a,end:start+(end-start)*offset/total};});
+  }
+  function youtubeSubtitles(data) {
+    const cues=[];
+    for(const e of (Array.isArray(data.events)?data.events:[])){
+      if(!Array.isArray(e.segs)||!Number.isFinite(e.tStartMs)||!Number.isFinite(e.dDurationMs)||e.tStartMs<0||e.dDurationMs<=0)continue;
+      const start=e.tStartMs/1000,end=(e.tStartMs+e.dDurationMs)/1000,segs=e.segs.filter(s=>typeof s.utf8==='string'&&s.utf8.trim());
+      if(segs.length&&segs[0].tOffsetMs===undefined)segs[0]={...segs[0],tOffsetMs:0};
+      const text=segs.map(s=>s.utf8).join('').trim();if(!text)continue;if(text.length>4000||cues.length>=10000)throw Error('SUBTITLE_TOO_LARGE');
+      let words;
+      if(segs.every((s,i)=>Number.isFinite(s.tOffsetMs)&&s.tOffsetMs>=0&&s.tOffsetMs<e.dDurationMs&&(!i||s.tOffsetMs>=segs[i-1].tOffsetMs))){
+        words=[];for(let i=0;i<segs.length;){let j=i+1;while(j<segs.length&&segs[j].tOffsetMs===segs[i].tOffsetMs)j++;words.push(...timedWords(segs.slice(i,j).map(s=>s.utf8).join(''),start+segs[i].tOffsetMs/1000,j<segs.length?start+segs[j].tOffsetMs/1000:end));i=j;}
+      }
+      cues.push({start,end,text,...(words?{words}:{})});
+    }
+    return cues;
+  }
+  function subtitleWords(raw) {
+    const result=[];let previous;
+    for(const cue of [...raw].sort((a,b)=>a.start-b.start)){
+      if(!cue.text?.trim()||!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.end<=cue.start)continue;
+      if(previous&&cue.start===previous.start&&cue.end===previous.end&&cue.text===previous.text)continue;
+      let words=cue.words?.length?cue.words.map(w=>({...w})):timedWords(cue.text,cue.start,cue.end);
+      // Remove the repeated prefix of an overlapping rolling-caption window, not spoken repetitions.
+      if(previous&&cue.start<previous.end&&words.length>2){let overlap=0;for(let n=2;n<words.length&&n<=Math.min(result.length,30);n++)if(words.slice(0,n).every((w,i)=>w.text.trim()===result[result.length-n+i].text.trim()))overlap=n;if(overlap)words=words.slice(overlap);}
+      if(words.length){words[0].breakBefore=Boolean(result.length&&(words[0].start-result.at(-1).end>=.65||/^\s*(?:>>|[-–—]\s|\[)/u.test(cue.text)||/\]\s*$/.test(previous?.text||'')));result.push(...words);}
+      previous=cue;
+    }
+    // Conflicting source timestamps must not silently drop words or reorder spoken text.
+    for(let i=1;i<result.length;i++)if(result[i].start<=result[i-1].start){result[i].start=result[i-1].start+.01;result[i].end=Math.max(result[i].end,result[i].start+.01);}
+    for(let i=0;i<result.length-1;i++)if(result[i].end>result[i+1].start)result[i].end=result[i+1].start;
+    return result;
+  }
+  function subtitleChunks(words) {
+    const chunks=[];let start=0;
+    while(start<words.length){let end=Math.min(start+180,words.length);
+      if(end<words.length){for(let i=end;i>start+60;i--)if(words[i]?.breakBefore||/[.!?。！？]["”’]?$/u.test(words[i-1].text)){end=i;break;}}
+      chunks.push({start,end,words:words.slice(start,end),nextStart:words[end]?.start});start=end;
+    }return chunks;
+  }
+  function subtitleSegments(words,groups,nextStart) {
+    if(!Array.isArray(groups)||!groups.length||groups.length>words.length)throw Error('BAD_MODEL_OUTPUT');
+    const cues=[];let first=0;
+    for(const group of groups){
+      const last=group.end;
+      if(!Number.isInteger(last)||last<first||last>=words.length||typeof group.translation!=='string'||!group.translation.trim()||group.translation.length>300)throw Error('BAD_MODEL_OUTPUT');
+      const segment=words.slice(first,last+1),text=joinWords(segment),start=segment[0].start,speechEnd=Math.min(segment.at(-1).end,start+8.5);
+      if(segment.slice(1).some(w=>w.breakBefore)||segment.at(-1).start-start>=8.5||text.length>110||group.translation.length>110)throw Error('BAD_MODEL_OUTPUT');
+      const boundary=words[last+1]?.start??nextStart??speechEnd+.5;
+      const reading=Math.max(1.2,Math.min(7,Math.max(text.length/20,group.translation.length/12)));
+      const end=Math.min(boundary,start+8.5,speechEnd+.7,Math.max(speechEnd+.15,start+reading));
+      if(end<=start)throw Error('BAD_MODEL_OUTPUT');
+      cues.push({start,end,text,translation:group.translation.trim()});first=last+1;
+    }
+    if(first!==words.length)throw Error('BAD_MODEL_OUTPUT');return cues;
+  }
   function clock(seconds) {
     const ms=Math.max(0,Math.round(seconds*1000)), sec=Math.floor(ms/1000);
     return [Math.floor(sec/3600),Math.floor(sec/60)%60,sec%60].map(n=>String(n).padStart(2,'0')).join(':')+','+String(ms%1000).padStart(3,'0');
@@ -77,7 +145,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source};
+  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);

@@ -17,12 +17,24 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  const extension=path.join(profile,'extension');await fs.cp(path.join(root,'extension'),extension,{recursive:true});
  const {publicKey}=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'}}),extensionId=createHash('sha256').update(publicKey).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
  const manifest=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8'));manifest.key=publicKey.toString('base64');await fs.writeFile(path.join(extension,'manifest.json'),JSON.stringify(manifest));
- const bg=path.join(extension,'background.js');await fs.writeFile(bg,`const nativeCompleted=chrome.webRequest.onCompleted.addListener.bind(chrome.webRequest.onCompleted);chrome.webRequest.onCompleted.addListener=(fn,...a)=>nativeCompleted(d=>fn(new URL(d.url).hostname==='example.test'?{...d,ip:'8.8.8.8'}:d),...a);\n`+await fs.readFile(bg,'utf8'));
+ const bg=path.join(extension,'background.js');await fs.writeFile(bg,`const nativeCompleted=chrome.webRequest.onCompleted.addListener.bind(chrome.webRequest.onCompleted);chrome.webRequest.onCompleted.addListener=(fn,...a)=>nativeCompleted(d=>fn(['example.test','www.youtube.com'].includes(new URL(d.url).hostname)?{...d,ip:'8.8.8.8'}:d),...a);\n`+await fs.readFile(bg,'utf8'));
  const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false;
- const service=createLearningService({core,locale:()=> 'zh-CN',model:async r=>{modelCalls.push(r);const material=JSON.parse(r.prompt.split('\n').at(-1));if(material.texts.includes('Broken subtitle')&&!allowBroken)return {ok:true,text:'{"translations":[]}'};if(material.texts.includes('and I think you can relate to this,')&&!subtitleMismatch){subtitleMismatch=true;return {ok:true,text:'{"translations":[]}'};}return {ok:true,text:r.expectJson?JSON.stringify({translations:material.texts.map(x=>x==='and I think you can relate to this,'?'而且我觉得你也能对此产生共鸣，':'译文：'+x)}):'这是结合上下文的解释。'};},library:async r=>r.op==='open'?{ok:true}:r.op==='read'?(files.has(r.path)?{ok:true,content:files.get(r.path)}:{ok:false,errorCode:'NOT_FOUND'}):(files.set(r.path,r.content),{ok:true})});
+ const service=createLearningService({core,locale:()=> 'zh-CN',model:async r=>{
+  modelCalls.push(r);const material=JSON.parse(r.prompt.split('\n').at(-1));
+  if(material.words){
+    const text=core.joinWords(material.words);
+    if(text.includes('Broken subtitle')&&!allowBroken)return {ok:true,text:'{"segments":[]}'};
+    if(text.includes('and I think you can relate to this,')&&!subtitleMismatch){subtitleMismatch=true;return {ok:true,text:'{"segments":[]}'};}
+    const segments=[];let start=0;
+    for(let i=0;i<material.words.length;i++)if(material.words[i].text==='subtitle'||i===material.words.length-1){const text=core.joinWords(material.words.slice(start,i+1));segments.push({end:i,translation:text==='and I think you can relate to this,'?'而且我觉得你也能对此产生共鸣，':'译文：'+text});start=i+1;}
+    return {ok:true,text:JSON.stringify({segments})};
+  }
+  return {ok:true,text:r.expectJson?JSON.stringify({translations:material.texts.map(x=>'译文：'+x)}):'这是结合上下文的解释。'};
+ },library:async r=>r.op==='open'?{ok:true}:r.op==='read'?(files.has(r.path)?{ok:true,content:files.get(r.path)}:{ok:false,errorCode:'NOT_FOUND'}):(files.set(r.path,r.content),{ok:true})});
+
  bridge=createBridge({ports:[18819],extensionId,notify:(_method,p)=>{service.handle(p.clientId,p.request,async()=> (await bridge.request('learningActive',{id:p.id})).active).then(result=>bridge.request('learningResult',{id:p.id,result}),e=>bridge.request('learningResult',{id:p.id,result:{ok:false,error:e.message}}));}});await bridge.request('status');
  const fixture='<title>Reading fixture</title><main style="max-width:600px;padding:40px;font:20px/1.8 sans-serif"><h1>Learning with Cindy</h1><p>Hello world. Reading gives us new ideas.</p><p>Practice makes progress.</p><div id="movie_player" class="html5-video-player" style="position:relative;width:960px;height:540px;background:linear-gradient(125deg,#977c66,#293d3d)"><video controls style="width:100%;height:100%;display:block"></video><div class="ytp-caption-window-container" style="position:absolute;bottom:30px;left:25%;color:white">Original YouTube caption</div></div></main>';
- const proxy=http.createServer((req,res)=>{let url;try{url=new URL(req.url);}catch{res.writeHead(403);return res.end();}if(url.hostname==='example.test'){res.setHeader('content-type','text/html');return res.end(fixture);}if(url.hostname!=='127.0.0.1'||url.port!=='18819'){res.writeHead(403);return res.end();}const upstream=http.request({hostname:'127.0.0.1',port:18819,path:url.pathname,method:req.method,headers:req.headers},r=>{res.writeHead(r.statusCode,r.headers);r.pipe(res);});upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);});
+ const proxy=http.createServer((req,res)=>{let url;try{url=new URL(req.url);}catch{res.writeHead(403);return res.end();}if(['example.test','www.youtube.com'].includes(url.hostname)){res.setHeader('content-type','text/html');return res.end(fixture);}if(url.hostname!=='127.0.0.1'||url.port!=='18819'){res.writeHead(403);return res.end();}const upstream=http.request({hostname:'127.0.0.1',port:18819,path:url.pathname,method:req.method,headers:req.headers},r=>{res.writeHead(r.statusCode,r.headers);r.pipe(res);});upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);});
  proxy.on('connect',(_r,s)=>s.end('HTTP/1.1 403 Forbidden\r\n\r\n'));await new Promise(r=>proxy.listen(0,'127.0.0.1',r));t.after(()=>{proxy.closeAllConnections();proxy.close();});
  context=await chromium.launchPersistentContext(profile,{channel:'chromium',executablePath:process.env.CHROMIUM_PATH,headless:true,viewport:{width:1280,height:900},args:['--proxy-server=http://127.0.0.1:'+proxy.address().port,'--proxy-bypass-list=<-loopback>','--disable-extensions-except='+extension,'--load-extension='+extension]});
  const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
@@ -64,7 +76,7 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  // Actual HTML5 media time/track integration with generated silence, no external fixture.
  const wav=Buffer.alloc(44+8000*2*3);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40);
  await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';v.currentTime=1.25;},wav.toString('base64'));
- await click('字幕');assert.match(await panelText(),/正在等待字幕/);await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];track.addCue(new VTTCue(0,1,'First subtitle'));track.addCue(new VTTCue(1,2,'and I think you can relate to this,'));});for(let i=0;i<40&&!(await panelText()).includes('而且我觉得你也能对此产生共鸣，');i++)await page.waitForTimeout(100);assert.match(await panelText(),/而且我觉得你也能对此产生共鸣，/);const captionCalls=modelCalls.map(r=>JSON.parse(r.prompt.split('\n').at(-1))).filter(m=>m.texts.includes('and I think you can relate to this,'));assert.equal(captionCalls.length,2);assert.equal(captionCalls[0].texts[0],'and I think you can relate to this,');
+ await click('字幕');assert.match(await panelText(),/正在等待字幕/);await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];track.addCue(new VTTCue(0,.4,'First'));track.addCue(new VTTCue(.4,1,'subtitle'));track.addCue(new VTTCue(1,1.4,'and I think'));track.addCue(new VTTCue(1.4,1.7,'you can relate'));track.addCue(new VTTCue(1.7,2,'to this,'));});for(let i=0;i<40&&!(await panelText()).includes('而且我觉得你也能对此产生共鸣，');i++)await page.waitForTimeout(100);assert.match(await panelText(),/而且我觉得你也能对此产生共鸣，/);const captionCalls=modelCalls.map(r=>JSON.parse(r.prompt.split('\n').at(-1))).filter(m=>m.words&&core.joinWords(m.words).includes('and I think you can relate to this,'));assert.equal(captionCalls.length,2);assert.match(core.joinWords(captionCalls[0].words),/^First subtitle and I think you can relate to this,/);assert.match(captionCalls[0].context,/Surrounding transcript/);
  await page.evaluate(()=>{document.querySelector('video').currentTime=1.4;});await page.waitForTimeout(100);await click('字幕设置');await click('收藏');await click('字幕设置');for(let i=0;i<30&&!JSON.parse([...files.values()][0]).entries.some(e=>e.text==='and I think you can relate to this,');i++)await page.waitForTimeout(100);assert.equal(JSON.parse([...files.values()][0]).entries.find(e=>e.text==='and I think you can relate to this,').source.time,1);
  async function captions(){return (await cdp.send('Runtime.callFunctionOn',{objectId:await element('DIV','caption-box'),functionDeclaration:`function(){const root=this.getRootNode(),r=this.getBoundingClientRect();return {original:this.querySelector('.caption-original').textContent,translation:this.querySelector('.caption-translation').textContent,hidden:this.hidden,width:r.width,x:r.x,y:r.y,bottom:r.bottom,player:root.host.parentElement.id,settingsHidden:root.querySelector('.caption-settings').hidden}}`,returnByValue:true})).result.value;}
  assert.equal((await captions()).player,'movie_player');assert.equal((await captions()).settingsHidden,true);assert.equal((await captions()).original,'and I think you can relate to this,');assert.equal((await captions()).translation,'而且我觉得你也能对此产生共鸣，');
@@ -82,7 +94,7 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.evaluate(()=>document.exitFullscreen());await page.waitForTimeout(150);
  await page.locator('#movie_player').evaluate(n=>{n.style.width='720px';n.style.height='405px';});await page.waitForTimeout(150);
  const mediaBox=await page.locator('video').boundingBox(),captionBox=await captions();assert.ok(captionBox.x>=mediaBox.x);assert.ok(captionBox.x+captionBox.width<=mediaBox.x+mediaBox.width+1);assert.ok(captionBox.bottom<=mediaBox.y+mediaBox.height);
- await page.evaluate(()=>{document.querySelector('video').currentTime=2.5;});await page.waitForTimeout(100);assert.equal((await captions()).hidden,true);assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>getComputedStyle(n).visibility),'visible');
+ await page.evaluate(()=>{document.querySelector('video').currentTime=2.9;});await page.waitForTimeout(100);assert.equal((await captions()).hidden,true);assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>getComputedStyle(n).visibility),'visible');
  await page.evaluate(()=>{document.querySelector('video').currentTime=1.4;});await page.waitForTimeout(100);
 
  // YouTube can replace its caption container; suppression and restoration survive that replacement.
@@ -93,7 +105,7 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,3,'Broken subtitle'));});
  for(let i=0;i<60&&!(await panelText()).includes('暂未取得完整译文');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/暂未取得完整译文/);
- const brokenCalls=()=>modelCalls.filter(r=>JSON.parse(r.prompt.split('\n').at(-1)).texts.includes('Broken subtitle')).length;
+ const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words).includes('Broken subtitle');}).length;
  assert.equal(brokenCalls(),2);await page.waitForTimeout(1400);assert.equal(brokenCalls(),2);
  allowBroken=true;await click('字幕设置');await click('重试字幕翻译');await click('字幕设置');
  for(let i=0;i<40&&!(await panelText()).includes('译文：Broken subtitle');i++)await page.waitForTimeout(100);
@@ -104,6 +116,23 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.reload();for(let i=0;i<50&&!(await panelText()).includes('正在等待字幕');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/正在等待字幕/);assert.equal((await captions()).settingsHidden,true);
  await click('关闭');await page.waitForTimeout(150);await page.reload();await page.waitForTimeout(500);assert.doesNotMatch(await panelText(),/cindy-root/);
+ // Exercise the YouTube full-transcript path while a partial native track is already present.
+ // Only the website and timedtext response are fixtures; extension extraction/bridge remain real.
+ await worker.evaluate(()=>{const originalFetch=globalThis.fetch;globalThis.fixtureCaptionReads=0;globalThis.fetch=(input,init)=>{
+  if(String(input).startsWith('https://www.youtube.com/api/timedtext?fixture=full')){globalThis.fixtureCaptionReads++;return Promise.resolve(new Response(JSON.stringify({events:[
+   {tStartMs:0,dDurationMs:1000,segs:[{utf8:'Entire transcript ',tOffsetMs:0},{utf8:'from the beginning.',tOffsetMs:400}]},
+   {tStartMs:1000,dDurationMs:1200,segs:[{utf8:'A complete phrase outside the native window.'}]}]}),{status:200}));}
+  return originalFetch(input,init);
+ };});
+ await page.goto('http://www.youtube.com/watch?v=fixture');await page.waitForTimeout(200);
+ await page.evaluate(async data=>{globalThis.ytInitialPlayerResponse={captions:{playerCaptionsTracklistRenderer:{captionTracks:[{baseUrl:'https://www.youtube.com/api/timedtext?fixture=full',languageCode:'en'}]}}};const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';track.addCue(new VTTCue(1,2,'Partial native fragment'));v.currentTime=1.4;},wav.toString('base64'));
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
+ for(let i=0;i<50&&!(await panelText()).includes('译文：Entire transcript');i++)await page.waitForTimeout(100);
+ assert.match((await captions()).original,/Entire transcript from the beginning.*outside the native window/);
+ assert.doesNotMatch((await captions()).original,/Partial native fragment/);
+ const completeCalls=()=>modelCalls.filter(r=>r.prompt.includes('Entire transcript'));
+ assert.equal(completeCalls().length,1);await page.waitForTimeout(1500);assert.equal(completeCalls().length,1);assert.equal(await worker.evaluate(()=>globalThis.fixtureCaptionReads),1);
+ await click('关闭');
  const library=await context.newPage();await library.goto('chrome-extension://'+extensionId+'/library.html');await library.getByText('Hello world',{exact:true}).waitFor();await library.getByRole('button',{name:'复习',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByText('本次待复习内容已完成。').waitFor();
  await library.getByRole('button',{name:'收藏',exact:true}).click();await library.getByText('Hello world',{exact:true}).waitFor();if(screenshots){await library.screenshot({path:path.join(screenshots,'library-light.png')});await library.emulateMedia({colorScheme:'dark'});await library.screenshot({path:path.join(screenshots,'library-dark.png')});}
  // Real bundled OCR/WASM with a synthetic local bitmap and no external network.

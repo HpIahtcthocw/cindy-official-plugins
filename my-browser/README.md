@@ -198,3 +198,13 @@ Reloading the same URL in the same tab restores subtitle mode. Explicit close, c
 Subtitles are injected into the YouTube player: original above translation, on a content-sized translucent background. They follow playback, seeking, player resizing and fullscreen; the right floating panel is no longer the default subtitle surface. Language, repeat, import, export, transcript and saving remain in the in-player Subtitle settings.
 
 The YouTube caption container is hidden only while a current injected caption is available. Closing, switching modes or leaving the page restores original visibility and HTML5 track modes; replacement caption containers are handled too. Extension 0.4.3 can connect to plugin 0.4.2, so this display fix does not require a simultaneous host plugin upgrade. Isolated Chromium validates player/timeline fixtures, not the user's live YouTube video.
+
+## 0.4.4 Full-transcript semantic segmentation
+
+YouTube now loads the complete transcript before removing repeated rolling fragments and jointly regrouping and translating coherent clauses. Long videos use bounded windows with surrounding context, prioritizing the current playback position. HTML5 tracks and imported SRT/VTT use the same pipeline.
+
+The model supplies word-index ranges and translations only. Code reconstructs the original text and validates complete, ordered coverage, pause/speaker boundaries and caption length. Display timing uses JSON3 word offsets where present, otherwise estimates within original cue bounds, then adjusts ending times for readability without overlap (maximum 8.5 seconds). This is not audio forced alignment and cannot guarantee word-accurate sync when source timing is wrong. Invalid output gets one repair attempt; missing translations are never silently discarded.
+
+**Both the Chrome extension and Cindy Chrome plugin need version 0.4.4 for semantic segmentation.** The new host retains older extension support. A new extension connected to an old host shows an update message instead of sending an unsupported operation; normal browser control stays compatible.
+
+Validation uses isolated Chromium with the actual extension and bridge, fixture media and explicit model responses: five source fragments become two bilingual captions; playback, fullscreen and retry work; the complete YouTube JSON3 is fetched even when a partial native track exists. The user's actual video and selected model have not been validated in this environment.

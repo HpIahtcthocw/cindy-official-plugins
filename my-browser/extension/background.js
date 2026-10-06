@@ -48,7 +48,7 @@ async function discover() {
     try {
       let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
       if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
       if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
       bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
@@ -651,7 +651,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
     try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('SUBTITLE_TOO_LARGE');parts.push(value);}}finally{await reader.cancel().catch(()=>{});}
     const data=new Uint8Array(bytes);let at=0;for(const part of parts){data.set(part,at);at+=part.length;}
     const parsed=JSON.parse(new TextDecoder().decode(data));
-    const cues=(parsed.events||[]).filter(e=>Array.isArray(e.segs)&&Number.isFinite(e.tStartMs)&&Number.isFinite(e.dDurationMs)).slice(0,10000).map(e=>({start:e.tStartMs/1000,end:(e.tStartMs+e.dDurationMs)/1000,text:e.segs.map(s=>s.utf8||'').join('').trim().slice(0,4000)})).filter(e=>e.text&&e.end>e.start);
+    const cues=globalThis.CindyLearning.youtubeSubtitles(parsed);
     await learningRequest({id:crypto.randomUUID(),request:{op:'config'}},sender);
     if((await chrome.tabs.get(tab.id)).url!==tab.url)throw Error('PAGE_CHANGED');
     return {ok:true,cues,language:track.language};

@@ -3,7 +3,7 @@
   if(globalThis.__cindyReading)return;
   globalThis.__cindyReading=true;
   const api=globalThis.browser||globalThis.chrome,L=globalThis.CindyLearning,U=globalThis.CindyUI;
-  let locale='en',t=U.copy(locale),target='zh-CN',host,shadow,body,status,footer,cancelButton,nav,selected='',selectedContext='',lastResult='',taskKey='',taskPayload='',generation=0,translated=false;
+  let subtitleSegmentation=false,locale='en',t=U.copy(locale),target='zh-CN',host,shadow,body,status,footer,cancelButton,nav,selected='',selectedContext='',lastResult='',taskKey='',taskPayload='',generation=0,translated=false;
   let cueMedia,cueMediaSource='',video,cues=[],activeCue=-1,repeat=false,autoPause=false,previousCue=-1,videoHandler,recognition,videoSession,videoTimer;
   const requests=new Set(),translations=new Map();let observer,translateRunning=false;
   function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
@@ -22,7 +22,7 @@
   }
   function cancel(){generation++;for(const id of requests)api.runtime.sendMessage({type:'cindy-cancel',id}).catch(()=>{});requests.clear();updateFooter();}
   function speak(text,language){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=language||target;u.rate=0.9;speechSynthesis.speak(u);}
-  async function configure(){const r=await request({op:'config'});locale=r.locale||'en';t=U.copy(locale);const prefs=await request({op:'preferences'});target=prefs.target||target;}
+  async function configure(){const r=await request({op:'config'});subtitleSegmentation=r.features?.includes('subtitle-segmentation-v1')===true;locale=r.locale||'en';t=U.copy(locale);const prefs=await request({op:'preferences'});target=prefs.target||target;}
   function stopPage(){translated=false;observer?.disconnect();observer=null;clearTimeout(translateTimer);}
   function rememberVideo(enabled){api.runtime.sendMessage({type:'cindy-video-state',enabled}).catch(()=>{});}
   function close(){rememberVideo(false);cancel();stopPage();stopVideo();recognition?.stop();recognition=null;speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;}
@@ -35,7 +35,7 @@
     row.append(el('h1','Cindy','grow'));
     const language=el('select');language.setAttribute('aria-label',t.target);
     for(const [value,label]of Object.entries(L.languages)){if(value==='auto')continue;const o=el('option',label);o.value=value;language.append(o);}language.value=target;
-    language.onchange=()=>{cancel();target=language.value;request({op:'preferences',target}).catch(report);for(const c of cues)delete c.translation;if(translated)restorePage();if(videoSession){videoSession.paused=false;videoSession.failed=false;cueList();videoHandler?.();translateCues();}};
+    language.onchange=()=>{cancel();target=language.value;request({op:'preferences',target}).catch(report);for(const c of cues)delete c.translation;if(videoSession){for(const chunk of videoSession.chunks||[])chunk.done=false;cues=[];}if(translated)restorePage();if(videoSession){videoSession.paused=false;videoSession.failed=false;cueList();videoHandler?.();translateCues();}};
     row.append(language,iconButton(t.theme,'M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z M12 3v18 M12 3a9 9 0 0 1 0 18Z',()=>{panel.dataset.theme=panel.dataset.theme==='dark'?'light':'dark';}),iconButton(t.close,'M6 6l12 12M18 6 6 18',close));header.append(row);
     nav=el('nav');for(const [mode,label,action]of [['selection',t.translate,showSelection],['page',t.page,togglePage],['video',t.video,showVideo],['practice',t.practice,showPractice],['library',t.library,()=>api.runtime.sendMessage({type:'cindy-open-library'})]]){const b=button(label,action,'quiet');b.dataset.mode=mode;b.setAttribute('aria-pressed','false');nav.append(b);}header.append(nav);
     body=el('main',undefined,'stack');status=el('div','', 'status');status.setAttribute('role','status');footer=el('footer');cancelButton=button(t.cancel,()=>{if(videoSession){videoSession.paused=true;videoSession.retryButton.hidden=false;}cancel();stopPage();note(t.cancel);},'quiet');footer.append(status,cancelButton);panel.append(header,body,footer);shadow.append(panel);document.documentElement.append(host);updateFooter();
@@ -130,42 +130,46 @@
   function cueList(){const list=body.querySelector('.video-list');if(!list)return;list.replaceChildren();cues.forEach((c,i)=>{const b=button(c.text,()=>jump(i),'cue');b.dataset.index=String(i);b.classList.toggle('active',i===activeCue);if(c.translation)b.append(el('small',c.translation));list.append(b);});}
   function jump(i){if(!video||!cues[i])return;video.currentTime=cues[i].start;activeCue=i;previousCue=i;video.play().catch(report);}
   async function translateCues(){
-    const session=videoSession;if(!session||session.running||session.paused||session.failed||!cues.some(c=>!c.translation))return;
-    session.running=true;const g=generation;note(t.working);
+    const session=videoSession;if(!session||session.running||session.paused||session.failed||!session.chunks?.some(c=>!c.done))return;
+    if(!subtitleSegmentation){session.failed=true;session.retryButton.hidden=false;report('UPDATE_CINDY_CHROME');return;}
+    session.running=true;const g=generation,revision=session.revision;note(t.organizingSubtitles);
     try {
-      while(session===videoSession&&g===generation&&!session.paused){
-        const index=cues.findIndex(c=>c.end>video.currentTime),start=index<0?0:index;
-        const batch=[...cues.slice(start),...cues.slice(0,start)].filter(c=>!c.translation).slice(0,4);
-        if(!batch.length)break;
-        const r=await request({op:'translate',texts:batch.map(c=>c.text)});
-        if(session!==videoSession||g!==generation)return;
-        batch.forEach((c,i)=>c.translation=r.translations[i]);cueList();videoHandler?.();
-        note(`${t.progress} ${cues.filter(c=>c.translation).length} / ${cues.length}`);
+      while(session===videoSession&&g===generation&&revision===session.revision&&!session.paused){
+        const pending=session.chunks.filter(c=>!c.done);if(!pending.length)break;
+        const chunk=pending.find(c=>c.words.at(-1).end>video.currentTime)||pending[0];
+        const nearby=L.joinWords(session.words.slice(Math.max(0,chunk.start-80),Math.min(session.words.length,chunk.end+80)));
+        const context=('Transcript opening: '+L.joinWords(session.words.slice(0,100))+'\nSurrounding transcript: '+nearby).slice(0,4000);
+        const r=await request({op:'subtitles',words:chunk.words,nextStart:chunk.nextStart,context});
+        if(session!==videoSession||g!==generation||revision!==session.revision)return;
+        chunk.done=true;chunk.cues=r.cues;cues=session.chunks.flatMap(c=>c.done?c.cues:[]).sort((a,b)=>a.start-b.start);cueList();videoHandler?.();
+        note(`${t.progress} ${session.chunks.filter(c=>c.done).length} / ${session.chunks.length}`);
       }
-    }catch(e){if(session===videoSession&&g===generation){session.failed=true;session.retryButton.hidden=false;report(e);}}
-    finally{session.running=false;if(session===videoSession&&g!==generation&&!session.paused&&!session.failed)translateCues();}
+    }catch(e){if(session===videoSession&&g===generation&&revision===session.revision){session.failed=true;session.retryButton.hidden=false;report(e);}}
+    finally{session.running=false;if(session===videoSession&&(g!==generation||revision!==session.revision)&&!session.paused&&!session.failed)translateCues();}
   }
   function mergeCues(next){
-    const key=c=>JSON.stringify([c.start,c.end,c.text]),previous=new Map(cues.map(c=>[key(c),c]));
-    const changed=next.length!==cues.length||next.some((c,i)=>key(c)!==key(cues[i]||{}));
-    if(!changed)return;
-    cues=next.map(c=>previous.get(key(c))||c);cueList();videoHandler?.();
+    const session=videoSession;if(!session)return;
+    const signature=JSON.stringify(next);if(signature===session.transcript)return;
+    // Build the entire transcript timeline before asking for semantic grouping and translation.
+    const words=L.subtitleWords(next);session.transcript=signature;session.words=words;session.chunks=L.subtitleChunks(words);session.revision=(session.revision||0)+1;
+    cancel();cues=[];cueList();videoHandler?.();note(words.length?t.organizingSubtitles:t.waitSubtitles);
   }
   async function readCues(session){
     if(session!==videoSession)return;
     try {
       if(!video.isConnected||(video.currentSrc&&video.currentSrc!==session.src)){showVideo();return;}
       if(!session.imported){
+        const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
         const tracks=[...video.textTracks],track=tracks.find(x=>x.mode==='showing')||tracks.find(x=>x===session.nativeTrack)||tracks.find(x=>x.kind==='subtitles'||x.kind==='captions');
-        if(track){session.nativeTrack=track;session.overlay?.track(track);const next=[...(track.cues||[])].map(c=>({start:c.startTime,end:c.endTime,text:c.text.replace(/<[^>]*>/g,'').trim().slice(0,4000)})).filter(c=>c.text&&c.end>c.start);if(next.length)mergeCues(next);}
-        if(!cues.length&&/(^|\.)youtube\.com$/.test(location.hostname)&&!session.readBlocked&&Date.now()>=session.nextRead){
+        if(track){session.nativeTrack=track;session.overlay?.track(track);const next=[...(track.cues||[])].map(c=>({start:c.startTime,end:c.endTime,text:c.text.replace(/<[^>]*>/g,'').trim().slice(0,4000)})).filter(c=>c.text&&c.end>c.start);if(next.length&&!youtube)mergeCues(next);}
+        if(youtube&&!session.fullTranscript&&!session.readBlocked&&Date.now()>=session.nextRead){
           session.attempts++;session.nextRead=Date.now()+Math.min(30000,3000*session.attempts);
           const result=await api.runtime.sendMessage({type:'cindy-captions',language:'auto'});
           if(session!==videoSession)return;
-          if(result?.ok)mergeCues(result.cues);else throw Error(result?.error||'SUBTITLE_UNAVAILABLE');
+          if(result?.ok){if(result.cues?.length){session.fullTranscript=true;mergeCues(result.cues);}}else throw Error(result?.error||'SUBTITLE_UNAVAILABLE');
         }
       }
-      if(cues.length)translateCues();else if(!session.readBlocked)note(t.waitSubtitles);
+      if(session.words?.length)translateCues();else if(!session.readBlocked)note(t.waitSubtitles);
     }catch(e){if(session===videoSession){session.readBlocked=e.message!=='SUBTITLE_UNAVAILABLE';session.retryButton.hidden=false;report(e);}}
     finally{if(session===videoSession)videoTimer=setTimeout(()=>readCues(session),1200);}
   }
@@ -174,11 +178,11 @@
     if(!video){body.append(el('p',t.noVideo));videoTimer=setTimeout(showVideo,1200);return;}
     const media=video;
     if(cueMedia!==media||media.currentSrc!==cueMediaSource){cues=[];cueMedia=media;cueMediaSource=media.currentSrc;}
-    const session=videoSession={src:media.currentSrc,running:false,paused:false,failed:false,imported:false,attempts:0,nextRead:0};
+    cues=[];const session=videoSession={src:media.currentSrc,running:false,paused:false,failed:false,imported:false,attempts:0,nextRead:0};
     const originalLanguage=shadow.querySelector('header select'),language=originalLanguage.cloneNode(true),languageRow=el('label',t.target);language.onchange=()=>{originalLanguage.value=language.value;originalLanguage.onchange();};languageRow.append(language);body.append(languageRow);
     const tools=el('div',undefined,'row'),file=el('input');file.type='file';file.accept='.srt,.vtt';file.hidden=true;
-    file.onchange=async()=>{try{const f=file.files[0];if(!f)return;if(f.size>2000000)throw Error('SUBTITLE_TOO_LARGE');const next=L.parseSubtitles(await f.text());if(session!==videoSession)return;cancel();session.imported=true;session.failed=false;session.paused=false;mergeCues(next);if(cues.length)translateCues();else if(!session.readBlocked)note(t.waitSubtitles);}catch(e){report(e);}};
-    session.retryButton=button(t.retrySubtitles,()=>{session.retryButton.hidden=true;session.failed=false;session.paused=false;session.attempts=0;session.nextRead=0;session.readBlocked=false;clearTimeout(videoTimer);return readCues(session);});session.retryButton.hidden=true;tools.append(session.retryButton,button(t.subtitles,()=>file.click()),button(t.export,()=>download(L.exportSubtitles(cues),'subtitles.srt')),file);body.append(tools);
+    file.onchange=async()=>{try{const f=file.files[0];if(!f)return;if(f.size>2000000)throw Error('SUBTITLE_TOO_LARGE');const next=L.parseSubtitles(await f.text());if(session!==videoSession)return;cancel();session.imported=true;session.failed=false;session.paused=false;mergeCues(next);if(session.words?.length)translateCues();else if(!session.readBlocked)note(t.waitSubtitles);}catch(e){report(e);}};
+    session.retryButton=button(t.retrySubtitles,async()=>{if(!subtitleSegmentation)await configure();session.retryButton.hidden=true;session.failed=false;session.paused=false;session.attempts=0;session.nextRead=0;session.readBlocked=false;clearTimeout(videoTimer);return readCues(session);});session.retryButton.hidden=true;tools.append(session.retryButton,button(t.subtitles,()=>file.click()),button(t.export,()=>download(L.exportSubtitles(cues),'subtitles.srt')),file);body.append(tools);
     const controls=el('div',undefined,'row');controls.append(button(t.previous,()=>jump(Math.max(0,activeCue-1))),button(t.replay,()=>jump(Math.max(0,activeCue))),button(t.next,()=>jump(Math.min(cues.length-1,activeCue+1))));
     const speed=el('select');speed.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=el('option',n+'×');o.value=n;speed.append(o);}speed.value=media.playbackRate;speed.onchange=()=>media.playbackRate=Number(speed.value);controls.append(speed);body.append(controls);
     const options=el('div',undefined,'row');for(const [label,get,set]of [[t.repeat,()=>repeat,v=>repeat=v],[t.pause,()=>autoPause,v=>autoPause=v]]){const l=el('label'),c=el('input');c.type='checkbox';c.checked=get();c.onchange=()=>set(c.checked);l.append(c,el('span',label));options.append(l);}body.append(options);
