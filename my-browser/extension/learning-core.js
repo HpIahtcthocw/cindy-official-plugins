@@ -2,7 +2,7 @@
 // Shared, deterministic input and subtitle handling. No network or host access.
 (function(root) {
   const languages = {auto:'Auto',en:'English','zh-CN':'简体中文','zh-TW':'繁體中文',ja:'日本語',ko:'한국어',fr:'Français',de:'Deutsch',es:'Español',it:'Italiano',pt:'Português',ru:'Русский',ar:'العربية',hi:'हिन्दी',th:'ไทย',vi:'Tiếng Việt'};
-  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles']);
+  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles','subtitle-document']);
   function string(value,max,required=false) {
     if (typeof value !== 'string' || value.length>max || (required && !value.trim())) throw Error('INVALID_INPUT');
     return value;
@@ -26,15 +26,17 @@
       if (!Object.hasOwn(languages,input.language)) throw Error('INVALID_LANGUAGE');
       out.language=input.language;
     }
-    for (const [key,max] of [['text',20000],['translation',20000],['context',4000],['query',200],['scenario',1000],['instruction',4000]]) if(input[key]!==undefined) out[key]=string(input[key],max);
+    for (const [key,max] of [['text',20000],['translation',20000],['context',input.op==='subtitle-document'||(input.op==='subtitles'&&input.editorial===true)?8000:4000],['query',200],['scenario',1000],['instruction',4000]]) if(input[key]!==undefined) out[key]=string(input[key],max);
     if (['translate','explain','summary','conversation','save','task'].includes(out.op) && !out.text?.trim() && !input.texts) throw Error('EMPTY_TEXT');
     if (input.texts!==undefined) {
       if(out.op!=='translate' || !Array.isArray(input.texts) || !input.texts.length || input.texts.length>24) throw Error('INVALID_BATCH');
       out.texts=input.texts.map(x=>string(x,4000,true));
       if(out.texts.join('').length>20000) throw Error('BATCH_TOO_LARGE');
     }
+    if(out.op==='subtitle-document'&&!out.text?.trim())throw Error('EMPTY_TEXT');
     if(out.op==='subtitles') {
-      if(!Array.isArray(input.words)||!input.words.length||input.words.length>240)throw Error('INVALID_BATCH');
+      out.editorial=input.editorial===true;
+      if(!Array.isArray(input.words)||!input.words.length||input.words.length>(out.editorial?360:240))throw Error('INVALID_BATCH');
       out.words=input.words.map((w,i)=>{const text=string(w.text,500,true);if(!Number.isFinite(w.start)||!Number.isFinite(w.end)||w.start<0||w.end<=w.start||w.end>864000||(i&&w.start<input.words[i-1].end-.001))throw Error('INVALID_TIME');return {text,start:w.start,end:w.end,breakBefore:w.breakBefore===true};});
       if(out.words.map(w=>w.text).join('').length>12000)throw Error('BATCH_TOO_LARGE');
       if(input.nextStart!==undefined){if(!Number.isFinite(input.nextStart)||input.nextStart<out.words.at(-1).end||input.nextStart>864000)throw Error('INVALID_TIME');out.nextStart=input.nextStart;}
@@ -95,15 +97,16 @@
     }
     return cues;
   }
-  function subtitleWords(raw) {
+  function subtitleWords(raw,editorial=false) {
     const result=[];let previous;
     for(const cue of [...raw].sort((a,b)=>a.start-b.start)){
       if(!cue.text?.trim()||!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.end<=cue.start)continue;
       if(previous&&cue.start===previous.start&&cue.end===previous.end&&cue.text===previous.text)continue;
       let words=cue.words?.length?cue.words.map(w=>({...w})):timedWords(cue.text,cue.start,cue.end);
+      if(editorial)words=words.filter(w=>!/^(?:>>|[♪♫]+)$/.test(w.text.trim()));
       // Remove the repeated prefix of an overlapping rolling-caption window, not spoken repetitions.
       if(previous&&cue.start<previous.end&&words.length>2){let overlap=0;for(let n=2;n<words.length&&n<=Math.min(result.length,30);n++)if(words.slice(0,n).every((w,i)=>w.text.trim()===result[result.length-n+i].text.trim()))overlap=n;if(overlap)words=words.slice(overlap);}
-      if(words.length){words[0].breakBefore=Boolean(result.length&&(words[0].start-result.at(-1).end>=.65||/^\s*(?:>>|[-–—]\s|\[)/u.test(cue.text)||/\]\s*$/.test(previous?.text||'')));result.push(...words);}
+      if(words.length){words[0].breakBefore=Boolean(result.length&&(words[0].start-result.at(-1).end>=(editorial?1.2:.65)||/^\s*(?:>>|[-–—]\s|\[)/u.test(cue.text)||/\]\s*$/.test(previous?.text||'')));result.push(...words);}
       previous=cue;
     }
     // Conflicting source timestamps must not silently drop words or reorder spoken text.
@@ -111,32 +114,58 @@
     for(let i=0;i<result.length-1;i++)if(result[i].end>result[i+1].start)result[i].end=result[i+1].start;
     return result;
   }
-  function subtitleChunks(words) {
+  function subtitleChunks(words,editorial=false) {
     const chunks=[];let start=0;
-    while(start<words.length){let end=Math.min(start+180,words.length);
-      if(end<words.length){for(let i=end;i>start+60;i--)if(words[i]?.breakBefore||/[.!?。！？]["”’]?$/u.test(words[i-1].text)){end=i;break;}}
+    while(start<words.length){let end=Math.min(start+(editorial?360:180),words.length);
+      if(editorial){let chars=0;for(let i=start;i<end;i++){chars+=words[i].text.length;if(chars>6400&&i>start){end=i;break;}}}
+      if(end<words.length){for(let i=end;i>start+(editorial?180:60);i--)if(words[i]?.breakBefore||/[.!?。！？]["”’]?$/u.test(words[i-1].text)){end=i;break;}}
       chunks.push({start,end,words:words.slice(start,end),nextStart:words[end]?.start});start=end;
     }return chunks;
   }
   // These codes describe structure only; never include model output or page text in errors.
-  function subtitleSegments(words,groups,nextStart) {
+  function subtitleSegments(words,groups,nextStart,editorial=false) {
     if(!Array.isArray(groups)||!groups.length||groups.length>words.length)throw Error('SUBTITLE_FORMAT');
     const cues=[];let first=0;
     for(const group of groups){
       const last=group?.end;
       if(!Number.isInteger(last)||last<first||last>=words.length||(group.start!==undefined&&group.start!==first))throw Error('SUBTITLE_COVERAGE');
       if(typeof group.translation!=='string'||!group.translation.trim())throw Error('SUBTITLE_TRANSLATION');
-      const segment=words.slice(first,last+1),text=joinWords(segment),start=segment[0].start,speechEnd=Math.min(segment.at(-1).end,start+8.5);
+      const segment=words.slice(first,last+1),sourceText=joinWords(segment),text=editorial?cleanSubtitleText(group.text):sourceText,start=segment[0].start,speechEnd=Math.min(segment.at(-1).end,start+8.5);
+      if(!text)throw Error('SUBTITLE_TRANSLATION');
       if(segment.slice(1).some(w=>w.breakBefore))throw Error('SUBTITLE_PAUSE');
       if(segment.at(-1).start-start>=8.5)throw Error('SUBTITLE_DURATION');
       if(text.length>110||group.translation.trim().length>110)throw Error('SUBTITLE_LENGTH');
       const boundary=words[last+1]?.start??nextStart??speechEnd+.5;
       const reading=Math.max(1.2,Math.min(7,Math.max(text.length/20,group.translation.length/12)));
-      const end=Math.min(boundary,start+8.5,speechEnd+.7,Math.max(speechEnd+.15,start+reading));
+      const end=Math.min(boundary,start+8.5,speechEnd+.7,Math.max(speechEnd+.15,start+reading,editorial&&boundary-speechEnd<=.7?boundary:0));
       if(end<=start)throw Error('SUBTITLE_DURATION');
-      cues.push({start,end,text,translation:group.translation.trim()});first=last+1;
+      const translation=editorial?cleanSubtitleText(group.translation):group.translation.trim();if(!translation)throw Error('SUBTITLE_TRANSLATION');
+      cues.push({start,end,text,translation,...(editorial?{sourceText,paragraphEnd:group.paragraphEnd===true}:{})});first=last+1;
     }
     if(first!==words.length)throw Error('SUBTITLE_COVERAGE');return cues;
+  }
+  function cleanSubtitleText(text) {
+    return typeof text==='string'?text.replace(/<\/?[a-z][^>]*>/gi,'').replace(/^\s*>>\s*/,'').replace(/[♪♫]+/g,'').replace(/\s+/g,' ').trim():'';
+  }
+  function transcriptPages(words) {
+    const pages=[];let page=[],size=0;
+    for(const word of words){if(size+word.text.length+1>12000&&page.length){pages.push(joinWords(page));page=[];size=0;}page.push(word);size+=word.text.length+1;}
+    if(page.length)pages.push(joinWords(page));return pages;
+  }
+  function subtitleDocument(cues) {
+    const paragraphs=[];let text=[],translation=[];
+    const flush=()=>{if(text.length)paragraphs.push({text:joinWords(text.map(text=>({text}))),translation:joinWords(translation.map(text=>({text})))});text=[];translation=[];};
+    for(const cue of cues){text.push(cue.text);translation.push(cue.translation||'');if(cue.paragraphEnd)flush();}flush();return paragraphs;
+  }
+  // Coverage comes from finished preparation windows, not caption density: genuine silence is ready too.
+  function subtitleBuffer(chunks,time,rate=1) {
+    if(!chunks?.length)return {ahead:0,ready:false,complete:false};
+    const ordered=[...chunks].sort((a,b)=>a.start-b.start),remaining=ordered.filter(c=>c.words.at(-1).end>time);
+    if(!remaining.length)return {ahead:Infinity,ready:true,complete:true};
+    let until=time,complete=true;
+    for(const chunk of remaining){if(!chunk.done){complete=false;until=Math.max(until,chunk.words[0].start);break;}until=chunk.nextStart??chunk.words.at(-1).end;}
+    const ahead=Math.max(0,until-time)/Math.max(.25,rate);
+    return {ahead,ready:complete||ahead>=45,complete};
   }
   function splitSubtitleChunk(chunk) {
     const {words}=chunk;if(words.length<2)return [];
@@ -157,7 +186,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk};
+  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,transcriptPages,subtitleDocument,subtitleBuffer};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);

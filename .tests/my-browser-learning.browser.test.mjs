@@ -18,16 +18,18 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  const {publicKey}=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'}}),extensionId=createHash('sha256').update(publicKey).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
  const manifest=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8'));manifest.key=publicKey.toString('base64');await fs.writeFile(path.join(extension,'manifest.json'),JSON.stringify(manifest));
  const bg=path.join(extension,'background.js');await fs.writeFile(bg,`const nativeCompleted=chrome.webRequest.onCompleted.addListener.bind(chrome.webRequest.onCompleted);chrome.webRequest.onCompleted.addListener=(fn,...a)=>nativeCompleted(d=>fn(['example.test','www.youtube.com'].includes(new URL(d.url).hostname)?{...d,ip:'8.8.8.8'}:d),...a);\n`+await fs.readFile(bg,'utf8'));
- const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false;
+ const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false;const prefetchGates=new Map(),prefetchStarted=[];
  const service=createLearningService({core,locale:()=> 'zh-CN',model:async r=>{
   modelCalls.push(r);const material=JSON.parse(r.prompt.split('\n').at(-1));
+  if(material.transcript)return {ok:true,text:'Editorial brief: preserve the source meaning and produce consistent natural Chinese prose.'};
   if(material.text==='BrokenSubtitle'&&!allowBroken)return {ok:true,text:''};
   if(material.words){
     const text=core.joinWords(material.words);
+    if(material.words[0].text.startsWith('Buffer')){const segments=[];for(let i=0;i<material.words.length;i+=10){const end=Math.min(i+9,material.words.length-1);segments.push({end,text:core.joinWords(material.words.slice(i,end+1)),translation:'连续字幕 '+i,paragraphEnd:end===material.words.length-1});}prefetchStarted.push(material.words[0].text);return new Promise(resolve=>prefetchGates.set(material.words[0].text,()=>resolve({ok:true,text:JSON.stringify({segments})})));}
     if(text.includes('BrokenSubtitle')&&!allowBroken)return {ok:true,text:'{"segments":[]}'};
     if(text.includes('and I think you can relate to this,')&&!subtitleMismatch){subtitleMismatch=true;return {ok:true,text:'{"segments":[]}'};}
     const segments=[];let start=0;
-    for(let i=0;i<material.words.length;i++)if(material.words[i].text==='subtitle'||i===material.words.length-1){const text=core.joinWords(material.words.slice(start,i+1));segments.push({end:i,translation:text==='and I think you can relate to this,'?'而且我觉得你也能对此产生共鸣，':'译文：'+text});start=i+1;}
+    for(let i=0;i<material.words.length;i++)if(material.words[i].text==='subtitle'||i===material.words.length-1){const text=core.joinWords(material.words.slice(start,i+1));segments.push({end:i,text:core.cleanSubtitleText(text),paragraphEnd:i===material.words.length-1,translation:text==='and I think you can relate to this,'?'而且我觉得你也能对此产生共鸣，':'译文：'+text});start=i+1;}
     return {ok:true,text:JSON.stringify({segments})};
   }
   return {ok:true,text:r.expectJson?JSON.stringify({translations:material.texts.map(x=>'译文：'+x)}):'这是结合上下文的解释。'};
@@ -88,6 +90,12 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.evaluate(()=>{document.querySelector('video').currentTime=1.4;});await page.waitForTimeout(100);
  await page.mouse.move(5,5);await page.waitForTimeout(2300);
  if(screenshots){await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-bilingual.png')});await page.screenshot({path:path.join(screenshots,'subtitles-dark.png')});}
+ await click('字幕设置');
+ const targetLanguage=await cdp.send('Runtime.callFunctionOn',{objectId:await element('ARTICLE'),functionDeclaration:'function(){return this.closest("main").querySelector("select").value}',returnByValue:true});assert.equal(targetLanguage.result.value,'zh-CN');
+ const summaryBox=await cdp.send('Runtime.callFunctionOn',{objectId:await element('SUMMARY','阅读文稿'),functionDeclaration:'function(){this.scrollIntoView({block:"nearest"});const r=this.getBoundingClientRect();return {x:r.x+20,y:r.y+r.height/2}}',returnByValue:true});await page.mouse.click(summaryBox.result.value.x,summaryBox.result.value.y);
+ const prose=await cdp.send('Runtime.callFunctionOn',{objectId:await element('ARTICLE'),functionDeclaration:'function(){return this.textContent}',returnByValue:true});assert.match(prose.result.value,/First subtitle and I think you can relate to this,/);
+ if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'reading-transcript.png')});
+ await click('字幕设置');
  // A real fullscreen player owns the injected layer; it does not depend on a page-fixed panel.
  await page.locator('#movie_player').evaluate(n=>n.requestFullscreen());await page.waitForTimeout(200);
  assert.equal(await page.evaluate(()=>document.fullscreenElement?.id),'movie_player');assert.ok((await captions()).bottom<900);assert.equal((await captions()).player,'movie_player');
@@ -103,13 +111,13 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>getComputedStyle(n).visibility),'hidden');
  if(screenshots)await page.screenshot({path:path.join(screenshots,'subtitles-dark.png')});
  // Syntactically valid grouping that crosses a pause must recover automatically in smaller passages.
- await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'Repairfirst phrase.'));track.addCue(new VTTCue(1.8,2.6,'Repairsecond phrase.'));document.querySelector('video').currentTime=2;});
+ await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'Repairfirst phrase.'));track.addCue(new VTTCue(2.3,2.8,'Repairsecond phrase.'));document.querySelector('video').currentTime=2.5;});
  for(let i=0;i<60&&!(await panelText()).includes('译文：Repairsecond phrase.');i++)await page.waitForTimeout(100);
  assert.equal((await captions()).original,'Repairsecond phrase.');assert.equal((await captions()).translation,'译文：Repairsecond phrase.');
  const repairedCalls=modelCalls.map(r=>JSON.parse(r.prompt.split('\n').at(-1))).filter(m=>m.words&&core.joinWords(m.words).includes('Repair'));
  assert.equal(repairedCalls.length,3);assert.ok(repairedCalls[0].words.some(w=>w.breakBefore));
  // Persistent malformed output stops automatic model retries and exposes a local retry.
- await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'BrokenSubtitle'));track.addCue(new VTTCue(1.8,2.6,'HealthySubtitle'));});
+ await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'BrokenSubtitle'));track.addCue(new VTTCue(2.3,2.8,'HealthySubtitle'));});
  for(let i=0;i<60&&!(await panelText()).includes('部分字幕译文为空或无法读取');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/部分字幕译文为空或无法读取/);
  const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words).includes('BrokenSubtitle');}).length;
@@ -137,9 +145,22 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  for(let i=0;i<50&&!(await panelText()).includes('译文：Entire transcript');i++)await page.waitForTimeout(100);
  assert.match((await captions()).original,/Entire transcript from the beginning.*outside the native window/);
  assert.doesNotMatch((await captions()).original,/Partial native fragment/);
- const completeCalls=()=>modelCalls.filter(r=>r.prompt.includes('Entire transcript'));
+ const completeCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words).includes('Entire transcript');});
  assert.equal(completeCalls().length,1);await page.waitForTimeout(1500);assert.equal(completeCalls().length,1);assert.equal(await worker.evaluate(()=>globalThis.fixtureCaptionReads),1);
  await click('关闭');
+ // Slow-model fixture proves that two long passages are prepared concurrently before playback.
+ await page.goto('http://example.test/buffer');await page.waitForTimeout(200);
+ const longWav=Buffer.alloc(44+8000*2*150);wav.copy(longWav,0,0,44);longWav.writeUInt32LE(longWav.length-8,4);longWav.writeUInt32LE(longWav.length-44,40);
+ await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;v.muted=true;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';for(let i=0;i<72;i++)track.addCue(new VTTCue(i*2,(i+1)*2,Array.from({length:10},(_,j)=>'Buffer'+(i*10+j)).join(' ')));await v.play();},longWav.toString('base64'));
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
+ for(let i=0;i<60&&prefetchStarted.length<2;i++)await page.waitForTimeout(100);
+ assert.deepEqual(prefetchStarted,['Buffer0','Buffer360']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'initial playback waits for a prepared long passage');
+ prefetchGates.get('Buffer0')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
+ assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'first long passage is playable while the next request remains in flight');
+ await page.locator('video').evaluate(v=>{v.currentTime=70;});await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),true,'seeking near unfinished subtitles buffers instead of playing without them');
+ prefetchGates.get('Buffer360')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);
+ assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
+ await click('关闭');await page.locator('video').evaluate(v=>v.pause());
  const library=await context.newPage();await library.goto('chrome-extension://'+extensionId+'/library.html');await library.getByText('Hello world',{exact:true}).waitFor();await library.getByRole('button',{name:'复习',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByRole('button',{name:'显示答案'}).click();await library.getByRole('button',{name:'记得',exact:true}).click();await library.getByText('本次待复习内容已完成。').waitFor();
  await library.getByRole('button',{name:'收藏',exact:true}).click();await library.getByText('Hello world',{exact:true}).waitFor();if(screenshots){await library.screenshot({path:path.join(screenshots,'library-light.png')});await library.emulateMedia({colorScheme:'dark'});await library.screenshot({path:path.join(screenshots,'library-dark.png')});}
  // Real bundled OCR/WASM with a synthetic local bitmap and no external network.
