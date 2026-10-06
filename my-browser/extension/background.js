@@ -32,7 +32,7 @@ async function fetchJSON(base,path,session,body,timeout = 5000) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),timeout);
   try {
     const response = await fetch(base+path,{method:body === undefined ? 'GET' : 'POST',
-      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':wireVersion,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':wireVersion,'X-My-Browser-Installed-Version':VERSION,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
       ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'BRIDGE_REQUEST_FAILED');
@@ -48,7 +48,7 @@ async function discover() {
     try {
       let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
       if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
       if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
       bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};

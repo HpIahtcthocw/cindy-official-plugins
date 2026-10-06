@@ -17,11 +17,11 @@ function createBridge(options = {}) {
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map();
-  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3'].includes(version) || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4'].includes(version) || /^0\.3\.\d+$/.test(version);
   const session = crypto.randomUUID();
   const live = c => Date.now()-c.seen < 35000;
   const connected = () => [...clients.values()].filter(c => c.trusted && live(c) && compatible(c.version));
-  const publicClient = c => ({id:c.id,browser:c.browser,version:c.version,connected:c.trusted && live(c) && compatible(c.version),trusted:c.trusted,origin:c.origin,extensionId:c.extensionId});
+  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:c.trusted && live(c) && compatible(c.version),trusted:c.trusted,origin:c.origin,extensionId:c.extensionId});
   // An isolated embedding/test can pin its own extension identity; the stdio runtime exposes no such override.
   const primaryId = options.extensionId || EXT_ID;
   const knownIds = new Set([primaryId,...[distribution.chrome.extensionId,distribution.edge.extensionId].filter(Boolean)]);
@@ -135,7 +135,7 @@ function createBridge(options = {}) {
     if (req.method === 'GET' && req.url === '/health') {
       for (const [key,c] of clients) if (Date.now()-c.seen > 180000 && ![...jobs.values()].some(j => j.clientId === key)) clients.delete(key);
       if (!client && clients.size >= 16) return send(res,failure('TOO_MANY_BROWSERS','Close unused browser connections.'),429);
-      client = {id,origin,extensionId,browser:['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : 'chrome',version:String(h['x-my-browser-version'] || '').slice(0,30),seen:Date.now()};
+      client = {id,origin,extensionId,browser:['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : 'chrome',version:String(h['x-my-browser-version'] || '').slice(0,30),installedVersion:/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(h['x-my-browser-installed-version']||'')?h['x-my-browser-installed-version']:null,seen:Date.now()};
       client.trusted = approved(client); clients.set(id,client);
       return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!client.trusted,capabilities:['learning-v1'],...(client.trusted ? {session} : {})});
     }

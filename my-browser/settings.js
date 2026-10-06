@@ -114,7 +114,7 @@ function renderBrowsers(result) {
   const profiles=$('#profiles');profiles.replaceChildren();
   for (const client of result.clients || []) {
     const row=document.createElement('div');row.className='profile';
-    const label=document.createElement('span');label.textContent=client.browser+' · '+client.id.slice(0,8)+' · v'+client.version;row.append(label);
+    const label=document.createElement('span');label.textContent=client.browser+' · '+client.id.slice(0,8)+(client.version?' · v'+client.version:'');row.append(label);
     if (!client.trusted) {
       const button=document.createElement('button');button.textContent=T.pair;button.disabled=setupBusy;
       button.onclick=async () => {setupBusy=true;button.disabled=true;$('#install-hint').textContent=T.pairing;

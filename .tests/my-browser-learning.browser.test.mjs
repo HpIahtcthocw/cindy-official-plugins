@@ -21,9 +21,10 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false;
  const service=createLearningService({core,locale:()=> 'zh-CN',model:async r=>{
   modelCalls.push(r);const material=JSON.parse(r.prompt.split('\n').at(-1));
+  if(material.text==='BrokenSubtitle'&&!allowBroken)return {ok:true,text:''};
   if(material.words){
     const text=core.joinWords(material.words);
-    if(text.includes('Broken subtitle')&&!allowBroken)return {ok:true,text:'{"segments":[]}'};
+    if(text.includes('BrokenSubtitle')&&!allowBroken)return {ok:true,text:'{"segments":[]}'};
     if(text.includes('and I think you can relate to this,')&&!subtitleMismatch){subtitleMismatch=true;return {ok:true,text:'{"segments":[]}'};}
     const segments=[];let start=0;
     for(let i=0;i<material.words.length;i++)if(material.words[i].text==='subtitle'||i===material.words.length-1){const text=core.joinWords(material.words.slice(start,i+1));segments.push({end:i,translation:text==='and I think you can relate to this,'?'而且我觉得你也能对此产生共鸣，':'译文：'+text});start=i+1;}
@@ -101,15 +102,21 @@ test('Chrome learning: selection, bilingual page, persistent review, PDF and loc
  await page.evaluate(()=>{const old=document.querySelector('.ytp-caption-window-container'),next=old.cloneNode(true);next.style.removeProperty('visibility');old.replaceWith(next);});await page.waitForTimeout(100);
  assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>getComputedStyle(n).visibility),'hidden');
  if(screenshots)await page.screenshot({path:path.join(screenshots,'subtitles-dark.png')});
+ // Syntactically valid grouping that crosses a pause must recover automatically in smaller passages.
+ await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'Repairfirst phrase.'));track.addCue(new VTTCue(1.8,2.6,'Repairsecond phrase.'));document.querySelector('video').currentTime=2;});
+ for(let i=0;i<60&&!(await panelText()).includes('译文：Repairsecond phrase.');i++)await page.waitForTimeout(100);
+ assert.equal((await captions()).original,'Repairsecond phrase.');assert.equal((await captions()).translation,'译文：Repairsecond phrase.');
+ const repairedCalls=modelCalls.map(r=>JSON.parse(r.prompt.split('\n').at(-1))).filter(m=>m.words&&core.joinWords(m.words).includes('Repair'));
+ assert.equal(repairedCalls.length,3);assert.ok(repairedCalls[0].words.some(w=>w.breakBefore));
  // Persistent malformed output stops automatic model retries and exposes a local retry.
- await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,3,'Broken subtitle'));});
- for(let i=0;i<60&&!(await panelText()).includes('暂未取得完整译文');i++)await page.waitForTimeout(100);
- assert.match(await panelText(),/暂未取得完整译文/);
- const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words).includes('Broken subtitle');}).length;
- assert.equal(brokenCalls(),2);await page.waitForTimeout(1400);assert.equal(brokenCalls(),2);
+ await page.evaluate(()=>{const track=document.querySelector('video').textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,1,'BrokenSubtitle'));track.addCue(new VTTCue(1.8,2.6,'HealthySubtitle'));});
+ for(let i=0;i<60&&!(await panelText()).includes('部分字幕译文为空或无法读取');i++)await page.waitForTimeout(100);
+ assert.match(await panelText(),/部分字幕译文为空或无法读取/);
+ const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words).includes('BrokenSubtitle');}).length;
+ for(let i=0;i<40&&(await captions()).translation!=='译文：HealthySubtitle';i++)await page.waitForTimeout(100);assert.equal((await captions()).translation,'译文：HealthySubtitle');assert.equal(brokenCalls(),4);await page.evaluate(()=>{document.querySelector('video').currentTime=.5;});await page.waitForTimeout(100);assert.equal((await captions()).original,'BrokenSubtitle');assert.equal((await captions()).translation,'');await page.waitForTimeout(1400);assert.equal(brokenCalls(),4);
  allowBroken=true;await click('字幕设置');await click('重试字幕翻译');await click('字幕设置');
- for(let i=0;i<40&&!(await panelText()).includes('译文：Broken subtitle');i++)await page.waitForTimeout(100);
- assert.match(await panelText(),/译文：Broken subtitle/);
+ for(let i=0;i<40&&!(await panelText()).includes('译文：BrokenSubtitle');i++)await page.waitForTimeout(100);
+ assert.match(await panelText(),/译文：BrokenSubtitle/);assert.equal(modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.words&&core.joinWords(m.words)==='HealthySubtitle';}).length,1,'manual retry preserves already translated passages');
  await click('关闭');assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>getComputedStyle(n).visibility),'visible');assert.equal(await page.locator('video').evaluate(n=>n.textTracks[0].mode),'showing');assert.equal(await page.locator('[data-cindy-captions]').count(),0);
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
  // Refresh restores the user's subtitle mode, but explicit close clears it.

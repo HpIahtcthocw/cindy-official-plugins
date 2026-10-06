@@ -208,3 +208,11 @@ The model supplies word-index ranges and translations only. Code reconstructs th
 **Both the Chrome extension and Cindy Chrome plugin need version 0.4.4 for semantic segmentation.** The new host retains older extension support. A new extension connected to an old host shows an update message instead of sending an unsupported operation; normal browser control stays compatible.
 
 Validation uses isolated Chromium with the actual extension and bridge, fixture media and explicit model responses: five source fragments become two bilingual captions; playback, fullscreen and retry work; the complete YouTube JSON3 is fetched even when a partial native track exists. The user's actual video and selected model have not been validated in this environment.
+
+## 0.4.5 Subtitle recovery and accurate version reporting
+
+Fixes the 0.4.4 behavior where one invalid segment stopped the entire subtitle workflow after the model had returned content. Format/index repair now includes the specific reason. A short caption can use direct translation without model-generated word indices. Larger failed passages are split near pauses/punctuation and retried with surrounding context; completed captions stay intact and original text remains visible while translation is unavailable. Manual retry targets unfinished passages only. Recovery is bounded to eight splits and four levels per original window; two persistently failing passages stop automatic model calls with an actionable reason. The chosen model, word coverage and overlap checks are preserved.
+
+Errors distinguish structure, coverage, missing translation, pause boundaries, duration and text length, without logging model/page content. Connection `version` is now the explicitly reported installed extension version; compatibility negotiation is separately reported as `protocolVersion`. Older extensions without installation-version reporting return `null` instead of a misleading installation number.
+
+Both the Cindy plugin and Chrome extension are packaged as 0.4.5. Targeted tests and isolated Chromium verify recovery from invalid groups in valid JSON, retention of completed captions, original-text display, retry of unfinished passages, cancellation and compatibility. Model responses and website data are explicit fixtures; the user's live video and configured model remain unverified.

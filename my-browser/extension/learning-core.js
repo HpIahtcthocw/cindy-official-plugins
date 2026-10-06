@@ -118,21 +118,33 @@
       chunks.push({start,end,words:words.slice(start,end),nextStart:words[end]?.start});start=end;
     }return chunks;
   }
+  // These codes describe structure only; never include model output or page text in errors.
   function subtitleSegments(words,groups,nextStart) {
-    if(!Array.isArray(groups)||!groups.length||groups.length>words.length)throw Error('BAD_MODEL_OUTPUT');
+    if(!Array.isArray(groups)||!groups.length||groups.length>words.length)throw Error('SUBTITLE_FORMAT');
     const cues=[];let first=0;
     for(const group of groups){
-      const last=group.end;
-      if(!Number.isInteger(last)||last<first||last>=words.length||typeof group.translation!=='string'||!group.translation.trim()||group.translation.length>300)throw Error('BAD_MODEL_OUTPUT');
+      const last=group?.end;
+      if(!Number.isInteger(last)||last<first||last>=words.length||(group.start!==undefined&&group.start!==first))throw Error('SUBTITLE_COVERAGE');
+      if(typeof group.translation!=='string'||!group.translation.trim())throw Error('SUBTITLE_TRANSLATION');
       const segment=words.slice(first,last+1),text=joinWords(segment),start=segment[0].start,speechEnd=Math.min(segment.at(-1).end,start+8.5);
-      if(segment.slice(1).some(w=>w.breakBefore)||segment.at(-1).start-start>=8.5||text.length>110||group.translation.length>110)throw Error('BAD_MODEL_OUTPUT');
+      if(segment.slice(1).some(w=>w.breakBefore))throw Error('SUBTITLE_PAUSE');
+      if(segment.at(-1).start-start>=8.5)throw Error('SUBTITLE_DURATION');
+      if(text.length>110||group.translation.trim().length>110)throw Error('SUBTITLE_LENGTH');
       const boundary=words[last+1]?.start??nextStart??speechEnd+.5;
       const reading=Math.max(1.2,Math.min(7,Math.max(text.length/20,group.translation.length/12)));
       const end=Math.min(boundary,start+8.5,speechEnd+.7,Math.max(speechEnd+.15,start+reading));
-      if(end<=start)throw Error('BAD_MODEL_OUTPUT');
+      if(end<=start)throw Error('SUBTITLE_DURATION');
       cues.push({start,end,text,translation:group.translation.trim()});first=last+1;
     }
-    if(first!==words.length)throw Error('BAD_MODEL_OUTPUT');return cues;
+    if(first!==words.length)throw Error('SUBTITLE_COVERAGE');return cues;
+  }
+  function splitSubtitleChunk(chunk) {
+    const {words}=chunk;if(words.length<2)return [];
+    const middle=Math.floor(words.length/2),candidates=[];
+    for(let i=1;i<words.length;i++)if(words[i].breakBefore||/[.!?。！？,，;；]["”’]?$/u.test(words[i-1].text))candidates.push(i);
+    const cut=candidates.sort((a,b)=>Math.abs(a-middle)-Math.abs(b-middle))[0]||middle;
+    const depth=(chunk.depth||0)+1,start=chunk.start||0;
+    return [{start,end:start+cut,words:words.slice(0,cut),nextStart:words[cut].start,depth},{start:start+cut,end:start+words.length,words:words.slice(cut),nextStart:chunk.nextStart,depth}];
   }
   function clock(seconds) {
     const ms=Math.max(0,Math.round(seconds*1000)), sec=Math.floor(ms/1000);
@@ -145,7 +157,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments};
+  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);
