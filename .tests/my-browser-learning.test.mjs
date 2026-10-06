@@ -130,6 +130,50 @@ test('model failures retain their code and do not falsely diagnose a disconnecte
   assert.match(ui.error('SOME_NEW_FAILURE','zh-CN'),/尚无法确定具体原因.*SOME_NEW_FAILURE/);
   assert.doesNotMatch(ui.error('Error: token=private-value https:\/\/example.test','zh-CN'),/private-value|example.test/);
   assert.match(ui.error('Error: token=private-value','zh-CN'),/UNKNOWN_ERROR/);
-  assert.match(ui.error('CINDY_DISCONNECTED','zh-CN'),/打开 Cindy/);
+  assert.match(ui.error('CINDY_DISCONNECTED','zh-CN'),/未找到本机 Cindy 桥接服务/);
   assert.doesNotMatch(ui.error('TIMEOUT','zh-CN'),/核对结果|重新提交/);
+});
+
+test('model concurrency stays bounded across clients and cancellation while stale queued work never launches',async()=>{
+ const gates=[],started=[];let running=0,peak=0;
+ const service=createLearningService({core,model:async args=>{
+   started.push(JSON.parse(args.prompt.split('\n').at(-1)).texts[0]);running++;peak=Math.max(peak,running);
+   await new Promise(resolve=>gates.push(resolve));running--;return {ok:true,text:'answer'};
+ }});
+ const a=crypto.randomUUID(),b=crypto.randomUUID();let active=true,queuedActive=true;
+ const result=p=>p.then(value=>({value}),error=>({error:error.message}));
+ const first=result(service.handle(a,{op:'explain',text:'old running'},async()=>active));
+ const second=result(service.handle(b,{op:'explain',text:'other running'}));
+ const cancelled=result(service.handle(a,{op:'explain',text:'cancel before dispatch'},async()=>queuedActive));
+ const latest=result(service.handle(a,{op:'explain',text:'new request'}));
+ await new Promise(r=>setImmediate(r));assert.deepEqual(started,['old running','other running']);
+ active=false;queuedActive=false;await new Promise(r=>setImmediate(r));assert.equal(running,2,'cancel cannot release an upstream call that is still running');
+ gates.shift()();await new Promise(r=>setImmediate(r));assert.deepEqual(started,['old running','other running','new request']);
+ while(gates.length)gates.shift()();
+ assert.equal((await first).error,'REQUEST_CANCELLED');assert.equal((await cancelled).error,'REQUEST_CANCELLED');
+ assert.equal((await second).value.ok,true);assert.equal((await latest).value.ok,true);assert.equal(peak,2);
+});
+
+test('occupied local ports are skipped and exhaustion can recover without restarting the worker',async t=>{
+ const http=await import('node:http');
+ const occupied=http.createServer();await new Promise(r=>occupied.listen(0,'127.0.0.1',r));
+ const port=occupied.address().port;t.after(()=>occupied.close());
+ const bridge=createBridge({ports:[port,0]});t.after(()=>bridge.close());
+ const status=await bridge.request('status');assert.equal(status.ok,true);assert.notEqual(status.port,port);
+ const exhausted=createBridge({ports:[port]});t.after(()=>exhausted.close());
+ const failure=await exhausted.request('status');assert.equal(failure.error,'BRIDGE_PORTS_BUSY');assert.equal(failure.execution,'not_executed');
+ await new Promise(r=>occupied.close(r));assert.equal((await exhausted.request('status')).port,port);
+});
+test('default listener allocation reaches the expanded range while binding only loopback',async()=>{
+ const {EventEmitter}=await import('node:events');const candidates=[];let denied=false;
+ class Server extends EventEmitter {
+   listen(port,host,resolve){candidates.push(port);assert.equal(host,'127.0.0.1');this.port=port;queueMicrotask(()=>port<18820||denied?this.emit('error',Object.assign(Error('fixture'),{code:denied?'EACCES':'EADDRINUSE'})):resolve());}
+   address(){return {port:this.port};}close(cb){cb?.();}closeAllConnections(){}
+ }
+ const code=fs.readFileSync(new URL('../my-browser/node/bridge.cjs',import.meta.url),'utf8');
+ const localRequire=createRequire(new URL('../my-browser/node/bridge.cjs',import.meta.url));
+ const context={require:name=>name==='node:http'?{createServer:()=>new Server()}:localRequire(name),module:{exports:{}},Buffer,setTimeout,clearTimeout,__dirname:new URL('../my-browser/node',import.meta.url).pathname};
+ vm.runInNewContext(code,context);const bridge=context.module.exports.createBridge();
+ assert.equal((await bridge.request('status')).port,18820);assert.deepEqual(candidates,Array.from({length:11},(_,i)=>18810+i));await bridge.close();
+ denied=true;assert.equal((await context.module.exports.createBridge().request('status')).error,'BRIDGE_LISTEN_DENIED');
 });

@@ -188,9 +188,9 @@
     for(const cue of cues){text.push(cue.text);translation.push(cue.translation||'');if(cue.paragraphEnd)flush();}flush();return paragraphs;
   }
   // Coverage comes from finished preparation windows, not caption density: genuine silence is ready too.
-  function pendingSubtitleChunks(chunks,time,rate=1) {
+  function pendingSubtitleChunks(chunks,time,rate=1,now=Date.now()) {
     const until=time+90*Math.max(.25,rate);
-    return (chunks||[]).filter(c=>!c.done&&!c.error&&!c.busy&&c.words.at(-1).end>time&&c.words[0].start<=until);
+    return (chunks||[]).filter(c=>!c.done&&!c.error&&!c.busy&&!(c.retryAt>now)&&c.words.at(-1).end>time&&c.words[0].start<=until);
   }
   function subtitleBuffer(chunks,time,rate=1) {
     if(!chunks?.length)return {ahead:0,ready:false,complete:false};

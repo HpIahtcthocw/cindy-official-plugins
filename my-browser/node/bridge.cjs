@@ -144,7 +144,7 @@ function createBridge(options = {}) {
     if (req.method === 'POST' && req.url === '/learning/start') {
       const b=await body(req);
       if(typeof b.id!=='string'||!/^[a-f0-9-]{36}$/.test(b.id))return send(res,failure('INVALID_ID','Invalid request.'),400);
-      for(const [key,item] of learning)if(Date.now()-item.created>120000)learning.delete(key);
+      for(const [key,item] of learning)if(Date.now()-item.created>330000)learning.delete(key);
       const previous=learning.get(b.id);
       if(previous)return send(res,previous.clientId===id?{ok:true,id:b.id}:failure('INVALID_ID','Request belongs to another profile.'),previous.clientId===id?200:403);
       if(learning.size>=64 || [...learning.values()].filter(x=>!x.result&&x.clientId===id).length>=4)return send(res,failure('BUSY','Wait for the current requests.'),429);
@@ -205,13 +205,13 @@ function createBridge(options = {}) {
   async function start() {
     if (server) return; if (starting) return starting;
     starting = (async () => {
-      for (const candidate of options.ports || [18810,18811,18812,18813,18814,18815,18816,18817,18818,18819]) {
+      for (const candidate of options.ports || Array.from({length:100},(_,i)=>18810+i)) {
         const srv = http.createServer((req,res) => route(req,res).catch(() => send(res,failure('INVALID_REQUEST','Invalid bridge request.'),400)));
         srv.requestTimeout = 30000; srv.headersTimeout = 10000;
         try { await new Promise((resolve,reject) => { srv.once('error',reject); srv.listen(candidate,'127.0.0.1',resolve); }); server = srv; port = srv.address().port; return; }
         catch (e) { srv.close(); if (e.code !== 'EADDRINUSE') throw e; }
       }
-      throw new Error('Cindy Chrome ports are occupied. Close stale plugin instances.');
+      throw Object.assign(new Error('All Cindy Chrome loopback ports are occupied.'),{code:'BRIDGE_PORTS_BUSY'});
     })();
     try { await starting; } finally { starting = null; }
   }
@@ -240,7 +240,7 @@ function createBridge(options = {}) {
     }
     if(method==='learningActive'||method==='learningResult') {
       const item=learning.get(params.id),client=item&&clients.get(item.clientId);
-      const valid=!!item && !!client?.trusted && Date.now()-item.created<=120000 && (!item.payload.source.url||P.check(policy,'text',item.payload.source.url).ok);
+      const valid=!!item && !!client?.trusted && Date.now()-item.created<=330000 && (!item.payload.source.url||P.check(policy,'text',item.payload.source.url).ok);
       if(method==='learningActive')return {ok:true,active:valid&&!item?.result};
       if(!valid)return failure('REQUEST_CANCELLED','Request no longer active.');
       if(!item.result)item.result=params.result;
@@ -252,7 +252,7 @@ function createBridge(options = {}) {
       for (const c of clients.values()) c.trusted = approved(c);
       return {ok:true};
     }
-    await start();
+    try{await start();}catch(e){return failure(e.code==='BRIDGE_PORTS_BUSY'?'BRIDGE_PORTS_BUSY':e.code==='EACCES'||e.code==='EPERM'?'BRIDGE_LISTEN_DENIED':'BRIDGE_START_FAILED',e.message);}
     if (method === 'status') return {ok:true,version:manifest.version,protocol:PROTOCOL,port,extension_connected:connected().length>0,extension_id:primaryId,extension_dir:path.resolve(__dirname,'../extension'),policy,pending:jobs.size,clients:[...clients.values()].filter(live).map(publicClient)};
     if (method !== 'act') return failure('UNKNOWN_METHOD','Choose a supported bridge method.');
     const payload = P.validate(params.action,params.payload || {}), gate = P.check(policy,params.action,payload.url);

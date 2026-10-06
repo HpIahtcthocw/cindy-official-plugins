@@ -39,7 +39,7 @@
     if(videoLanguage){prefs.videoTarget=value;resetSubtitleTranslation();videoSession?.overlay?.update();}else{target=value;prefs.webTarget=value;request({op:'preferences',target:value}).catch(report);if(translated){restorePage();togglePage();}}
     savePreferences().catch(report);
   }});}
-  function resetSubtitleTranslation(){if(!videoSession)return;cancel();for(const chunk of videoSession.chunks||[]){chunk.done=false;delete chunk.error;delete chunk.recovery;delete chunk.context;}cues=[];videoSession.paused=false;videoSession.failed=false;videoHandler?.();translateCues();}
+  function resetSubtitleTranslation(){if(!videoSession)return;cancel();for(const chunk of videoSession.chunks||[]){chunk.done=false;delete chunk.error;delete chunk.recovery;delete chunk.retryAt;delete chunk.retries;delete chunk.context;}cues=[];videoSession.paused=false;videoSession.failed=false;videoHandler?.();translateCues();}
   function applyVideoMode(mode){prefs.videoMode=mode;savePreferences().catch(report);if(!needsTranslation())cancel();else if(videoSession){videoSession.paused=false;videoSession.failed=false;translateCues();}videoSession?.playback?.update();videoHandler?.();videoSession?.overlay?.update();}
   function stopPage(){translated=false;observer?.disconnect();observer=null;clearTimeout(translateTimer);}
   function rememberVideo(enabled){api.runtime.sendMessage({type:'cindy-video-state',enabled}).catch(()=>{});}
@@ -162,7 +162,7 @@
   function jump(i){if(!video||!cues[i])return;video.currentTime=cues[i].start;activeCue=i;previousCue=i;video.play().catch(report);}
   async function translateCues(){
     const session=videoSession;if(!needsTranslation()||!session||session.running||session.paused||session.failed||!L.pendingSubtitleChunks(session.chunks,video.currentTime,video.playbackRate).length)return;
-    if(!subtitleSegmentation||!subtitleEditorial){session.failed=true;session.retryButton.hidden=false;report('UPDATE_CINDY_CHROME');return;}
+    if(!subtitleSegmentation||!subtitleEditorial){session.failed=true;session.retryButton.hidden=false;report('UPDATE_CINDY_CHROME');session.playback?.update();return;}
     session.running=true;const g=generation,revision=session.revision;
     const current=()=>session===videoSession&&g===generation&&revision===session.revision&&!session.paused;
     try {
@@ -179,7 +179,18 @@
             if(!session.playback?.buffering)note(`${t.progress} ${session.chunks.filter(c=>c.done).length} / ${session.chunks.length}`);
           }catch(e){
             if(!current())return;
-            if(!['BAD_MODEL_OUTPUT','SUBTITLE_FORMAT','SUBTITLE_COVERAGE','SUBTITLE_TRANSLATION','SUBTITLE_PAUSE','SUBTITLE_DURATION','SUBTITLE_LENGTH'].includes(e.message)){session.failed=true;session.retryButton.hidden=false;report(e);return;}
+            if(['TIMEOUT','BUSY','BRIDGE_REQUEST_FAILED','SESSION_CHANGED'].includes(e.message)){
+              chunk.retries=(chunk.retries||0)+1;
+              if(chunk.retries<=2){
+                if(e.message==='TIMEOUT'&&chunk.retries===1){
+                  const parts=L.splitSubtitleChunk(chunk);
+                  if(parts.length){for(const part of parts){part.context=context;part.retries=2;part.recovery=chunk.recovery;}session.chunks.splice(session.chunks.indexOf(chunk),1,...parts);continue;}
+                }
+                chunk.retryAt=Date.now()+1500*chunk.retries;continue;
+              }
+              chunk.error=e.message;session.retryButton.hidden=false;report(e);session.playback?.update();continue;
+            }
+            if(!['BAD_MODEL_OUTPUT','SUBTITLE_FORMAT','SUBTITLE_COVERAGE','SUBTITLE_TRANSLATION','SUBTITLE_PAUSE','SUBTITLE_DURATION','SUBTITLE_LENGTH'].includes(e.message)){chunk.error=e.message;session.failed=true;session.retryButton.hidden=false;report(e);session.playback?.update();return;}
             const recovery=chunk.recovery||(chunk.recovery={count:0});
             if((chunk.depth||0)<4&&recovery.count<8){const parts=L.splitSubtitleChunk(chunk);if(parts.length){recovery.count++;for(const part of parts){part.recovery=recovery;part.context=context;}session.chunks.splice(session.chunks.indexOf(chunk),1,...parts);if(!session.playback?.buffering)note(t.repairingSubtitles);continue;}}
             chunk.error=e.message;session.retryButton.hidden=false;report(e);
@@ -201,7 +212,8 @@
     cancel();cues=[];cueList();videoHandler?.();note(words.length?t.organizingSubtitles:t.waitSubtitles);
   }
   async function readCues(session){
-    if(session!==videoSession)return;
+    if(session!==videoSession||session.reading)return;
+    session.reading=true;clearTimeout(videoTimer);
     try {
       if(!video.isConnected||(video.currentSrc&&video.currentSrc!==session.src)){showVideo();return;}
       if(!session.imported){
@@ -217,7 +229,7 @@
       }
       if(session.words?.length){session.noCaptions=false;translateCues();}else if(!session.readBlocked){session.noCaptions=session.attempts>=3;note(session.noCaptions?t.noCaptions:t.waitSubtitles);session.playback?.update();}
     }catch(e){if(session===videoSession){session.readBlocked=e.message!=='SUBTITLE_UNAVAILABLE';session.noCaptions=session.readBlocked||session.attempts>=3;session.playback?.update();session.retryButton.hidden=false;report(e);}}
-    finally{if(session===videoSession)videoTimer=setTimeout(()=>readCues(session),1200);}
+    finally{session.reading=false;if(session===videoSession)videoTimer=setTimeout(()=>readCues(session),1200);}
   }
   function videoSettings(){
     const session=videoSession;if(!session)return;body.replaceChildren();const modes=el('div',undefined,'mode-grid');
@@ -236,7 +248,7 @@
     const media=video;
     if(cueMedia!==media||media.currentSrc!==cueMediaSource){cues=[];cueMedia=media;cueMediaSource=media.currentSrc;}
     cues=[];const session=videoSession={src:media.currentSrc,running:false,paused:false,failed:false,imported:false,attempts:0,nextRead:0};
-    session.retry=async()=>{if(!subtitleSegmentation||!subtitleEditorial)await configure();session.retryButton.hidden=true;for(const chunk of session.chunks||[]){delete chunk.error;delete chunk.recovery;}session.failed=false;session.paused=false;session.attempts=0;session.nextRead=0;session.readBlocked=false;clearTimeout(videoTimer);return readCues(session);};
+    session.retry=async()=>{if(!subtitleSegmentation||!subtitleEditorial)await configure();session.retryButton.hidden=true;for(const chunk of session.chunks||[]){delete chunk.error;delete chunk.recovery;delete chunk.retryAt;delete chunk.retries;}session.failed=false;session.paused=false;session.attempts=0;session.nextRead=0;session.readBlocked=false;clearTimeout(videoTimer);return readCues(session);};
     if(!/(^|\.)youtube\.com$/.test(location.hostname))rememberVideo(true);
     session.retryButton=button(t.retrySubtitles,session.retry);session.retryButton.hidden=true;videoSettings();session.overlay=mountVideoCaptions(media);note(t.waitSubtitles);
     videoHandler=()=>{
@@ -245,7 +257,7 @@
       const i=cues.findIndex(c=>media.currentTime>=c.start&&media.currentTime<c.end),changed=i!==activeCue;activeCue=i;if(i>=0)previousCue=i;
       const pending=session.chunks?.some(c=>!c.done&&media.currentTime>=c.words[0].start&&media.currentTime<c.words.at(-1).end);const raw=session.originalCues?.find(c=>media.currentTime>=c.start&&media.currentTime<c.end);const shown=prefs.videoMode==='original'?raw:cues[i]||((pending||session.failed)?raw:undefined);session.overlay?.render(shown);
       if(changed)for(const b of body.querySelectorAll('[data-index]'))b.classList.toggle('active',Number(b.dataset.index)===i);
-    };media.addEventListener('timeupdate',videoHandler);session.playback=globalThis.CindySubtitlePlayback.create(media,{state:()=>!needsTranslation()||!prefs.bufferPause||session.paused||session.noCaptions?{ready:true,ahead:Infinity}:session.failed?{blocked:true}:!session.words?.length?{ahead:0,ready:false}:L.subtitleBuffer(session.chunks,media.currentTime,media.playbackRate),waiting:()=>note(t.bufferingSubtitles),ready:()=>{if(!session.failed)note(t.subtitlesReady);},error:report});
+    };media.addEventListener('timeupdate',videoHandler);session.playback=globalThis.CindySubtitlePlayback.create(media,{state:()=>!needsTranslation()||!prefs.bufferPause||session.paused||session.noCaptions?{ready:true,ahead:Infinity}:session.failed||session.chunks?.some(c=>c.error&&c.words.at(-1).end>media.currentTime&&c.words[0].start<=media.currentTime+15*media.playbackRate)?{blocked:true}:!session.words?.length?{ahead:0,ready:false}:L.subtitleBuffer(session.chunks,media.currentTime,media.playbackRate),waiting:()=>note(t.bufferingSubtitles),ready:()=>{if(!session.failed)note(t.subtitlesReady);},error:report});
     session.seekHandler=()=>{const time=media.currentTime,until=time+90*media.playbackRate,busy=(session.chunks||[]).filter(c=>c.busy);if(busy.length&&!busy.some(c=>c.words.at(-1).end>time&&c.words[0].start<=until))cancel();if(L.pendingSubtitleChunks(session.chunks,time,media.playbackRate).length)session.failed=false;translateCues();};media.addEventListener('seeked',session.seekHandler);videoHandler();readCues(session);
     body.onkeydown=e=>{if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;const actions={a:()=>jump(Math.max(0,activeCue-1)),s:()=>jump(Math.max(0,activeCue)),d:()=>jump(Math.min(cues.length-1,activeCue+1)),q:()=>autoPause=!autoPause,r:()=>repeat=!repeat};if(actions[e.key]&&e.isTrusted){e.preventDefault();actions[e.key]();}};
   }

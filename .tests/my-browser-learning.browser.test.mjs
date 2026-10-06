@@ -18,13 +18,15 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  const {publicKey}=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'}}),extensionId=createHash('sha256').update(publicKey).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
  const manifest=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8'));manifest.key=publicKey.toString('base64');await fs.writeFile(path.join(extension,'manifest.json'),JSON.stringify(manifest));
  const bg=path.join(extension,'background.js');await fs.writeFile(bg,`const nativeCompleted=chrome.webRequest.onCompleted.addListener.bind(chrome.webRequest.onCompleted);chrome.webRequest.onCompleted.addListener=(fn,...a)=>nativeCompleted(d=>fn(['example.test','www.youtube.com'].includes(new URL(d.url).hostname)?{...d,ip:'8.8.8.8'}:d),...a);\n`+await fs.readFile(bg,'utf8'));
- const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false;const prefetchGates=new Map(),prefetchStarted=[];
+ const files=new Map(),modelCalls=[];let subtitleMismatch=false,allowBroken=false,transientFailures=0;const prefetchGates=new Map(),prefetchStarted=[];
  const service=createLearningService({core,locale:()=> 'zh-CN',model:async r=>{
   modelCalls.push(r);const material=JSON.parse(r.prompt.split('\n').at(-1));
   if(material.transcript)return {ok:true,text:'Editorial brief: preserve the source meaning and produce consistent natural Chinese prose.'};
   if(material.text==='BrokenSubtitle'&&!allowBroken)return {ok:true,text:''};
   if(material.turns){
     const text=material.turns.map(t=>t.text).join(' ');
+    if(text.includes('TransientSubtitle')&&transientFailures++===0)return {ok:false,errorCode:'TIMEOUT'};
+    if(text.includes('UnavailableSubtitle'))return {ok:false,errorCode:'INTERNAL'};
     if(text.includes('and I think you can relate to this,')&&!subtitleMismatch){subtitleMismatch=true;return {ok:true,text:'{"turns":[]}'};}
     const turns=material.turns.map(t=>{
       const words=t.text.split(' '),captions=[];let start=0;
@@ -130,11 +132,33 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  for(let i=0;i<60&&prefetchStarted.length<2;i++)await page.waitForTimeout(100);
  assert.deepEqual(prefetchStarted,['Buffer0','Buffer180']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true);
  prefetchGates.get('Buffer0')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
- await page.locator('video').evaluate(v=>{v.currentTime=120});for(let i=0;i<40&&!prefetchStarted.includes('Buffer540');i++)await page.waitForTimeout(100);assert.ok(prefetchStarted.includes('Buffer540'));
+ await page.locator('video').evaluate(v=>{v.currentTime=120});
+ // Host model calls cannot be aborted. Finish an old provider call before the
+ // seek can consume its slot; the obsolete result must never reach the captions.
+ await page.waitForTimeout(150);assert.equal(prefetchStarted.includes('Buffer540'),false,'seeking cannot bypass occupied provider slots');
+ prefetchGates.get('Buffer180')();for(let i=0;i<40&&!prefetchStarted.includes('Buffer540');i++)await page.waitForTimeout(100);assert.ok(prefetchStarted.includes('Buffer540'));
  await click('仅原文');for(let i=0;i<30&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'original mode releases Cindy-owned buffer pause');
  assert.equal(modelCalls.some(r=>JSON.parse(r.prompt.split('\n').at(-1)).transcript),false);
+ for(const release of prefetchGates.values())release();await page.waitForTimeout(100);
+ // Recover one model timeout on a smaller passage; a permanent failure must
+ // release the buffering pause while preserving source captions and its code.
+ await page.goto('http://example.test/recovery');await page.waitForTimeout(100);
+ await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;v.muted=true;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';track.addCue(new VTTCue(0,1,'TransientSubtitle'));track.addCue(new VTTCue(1.5,2.8,'RecoveryHealthy'));await v.play()},wav.toString('base64'));
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);await click('双语');
+ await waitText('译文：TransientSubtitle');assert.equal(transientFailures,2,'the timed-out passage retries only its missing part');
+ await page.evaluate(async()=>{const v=document.querySelector('video'),track=v.textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,2.8,'UnavailableSubtitle'));v.currentTime=.2;await v.play();});
+ await waitText('(INTERNAL)');assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'failed translation cannot strand the buffering pause');
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'close'}),tabId);
  const reader=await context.newPage();await reader.goto('chrome-extension://'+extensionId+'/library.html');await reader.getByRole('button',{name:'打开 PDF / 文本 / Markdown'}).waitFor();assert.equal(await reader.getByRole('button',{name:'收藏',exact:true}).count(),0);
  const ocr=await reader.evaluate(async()=>{const {createOCR}=await import('./ocr.js');const c=document.createElement('canvas');c.width=1000;c.height=180;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,c.width,c.height);x.fillStyle='black';x.font='60px Arial';x.fillText('CINDY READING TEST',25,100);const o=createOCR();try{return await o.recognize(c,'eng')}finally{o.close()}});assert.match(ocr,/CINDY READING TEST/);
- const printPage=await context.newPage();await printPage.setContent('<h1>Cindy PDF reading</h1><p>Hello from the PDF text layer.</p>');const pdf=await printPage.pdf();await printPage.close();const choosing=reader.waitForEvent('filechooser');await reader.getByRole('button',{name:'打开 PDF / 文本 / Markdown'}).click();await(await choosing).setFiles({name:'fixture.pdf',mimeType:'application/pdf',buffer:pdf});await reader.locator('canvas').waitFor();await reader.getByText('1 / 1',{exact:true}).waitFor();await reader.getByRole('button',{name:'翻译',exact:true}).last().click();await reader.getByText('译文：Hello from the PDF text layer.',{exact:false}).waitFor();
+ const printPage=await context.newPage();await printPage.setContent('<h1>Cindy PDF reading</h1><p>Hello from the PDF text layer.</p>');const pdf=await printPage.pdf();await printPage.close();const choosing=reader.waitForEvent('filechooser');await reader.getByRole('button',{name:'打开 PDF / 文本 / Markdown'}).click();await(await choosing).setFiles({name:'fixture.pdf',mimeType:'application/pdf',buffer:pdf});await reader.locator('canvas').waitFor();await reader.getByText('1 / 1',{exact:true}).waitFor();await worker.evaluate(()=>{const original=globalThis.fetch;let dropped=false;globalThis.fetch=(...args)=>{if(!dropped&&String(args[0]).endsWith('/learning/result')){dropped=true;return Promise.reject(new TypeError('fixture lost response'));}return original(...args);};});
+ await reader.getByRole('button',{name:'翻译',exact:true}).last().click();await reader.getByText('译文：Hello from the PDF text layer.',{exact:false}).waitFor();
+ assert.equal(modelCalls.filter(r=>JSON.parse(r.prompt.split('\n').at(-1)).texts?.includes('Hello from the PDF text layer.')).length,1,'a lost result poll never resubmits the model request');
+ // Finish a slow old PDF after a new text file is selected: its UI must stay detached.
+ await reader.evaluate(()=>{const original=File.prototype.arrayBuffer;File.prototype.arrayBuffer=async function(){if(this.name==='slow.pdf')await new Promise(r=>setTimeout(r,400));return original.call(this);};});
+ const chooseFile=async file=>{const choosing=reader.waitForEvent('filechooser');await reader.getByRole('button',{name:'打开 PDF / 文本 / Markdown'}).click();await(await choosing).setFiles(file);};
+ await chooseFile({name:'slow.pdf',mimeType:'application/pdf',buffer:pdf});
+ await chooseFile({name:'latest.txt',mimeType:'text/plain',buffer:Buffer.from('Latest reader document')});await reader.waitForTimeout(700);
+ assert.equal(await reader.locator('textarea').inputValue(),'Latest reader document');assert.equal(await reader.locator('canvas').count(),0);
  if(screenshots)await reader.screenshot({path:path.join(screenshots,'pdf.png')});
 });

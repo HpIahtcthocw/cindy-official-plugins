@@ -89,7 +89,7 @@ async function handleTool(name,args) {
   await sync(); // Every call: a restarted worker must not silently lose stored permissions.
   if (name === 'browser_status') {
     const status=await node('status'), installation=await node('installation');
-    if (!status?.ok) return fail('STATUS_UNAVAILABLE','Cannot check browser connections. Re-enable Cindy Chrome and refresh its settings.');
+    if (!status?.ok) return status||fail('STATUS_UNAVAILABLE','Cannot check browser connections. Re-enable Cindy Chrome and refresh its settings.');
     // Tool output is an explicit projection. The settings channel below retains
     // policy, extension_dir and pairing identity details without sending them to AI.
     return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,

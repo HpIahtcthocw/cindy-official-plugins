@@ -6,6 +6,7 @@ const P = globalThis.MyBrowserPolicy;
 const network = globalThis.MyBrowserNetwork.create(chrome);
 const VERSION = chrome.runtime.getManifest().version;
 let bridge = null;
+let discovery;
 let wireVersion=VERSION;
 let running = false;
 // Requested-URL aliases survive redirects, failed loads and user focus. Only created tabs consume the opening budget.
@@ -28,35 +29,46 @@ async function connection(state) {
   await chrome.action.setBadgeText({text:state.connected ? '' : '!'});
   await chrome.action.setBadgeBackgroundColor({color:state.connected ? '#287ad7' : '#b87820'});
 }
-async function fetchJSON(base,path,session,body,timeout = 5000) {
+async function fetchJSON(base,path,session,body,timeout = 5000,version = wireVersion) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),timeout);
   try {
     const response = await fetch(base+path,{method:body === undefined ? 'GET' : 'POST',
-      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':wireVersion,'X-My-Browser-Installed-Version':VERSION,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
-      ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal});
-    const data = await response.json();
+      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':version,'X-My-Browser-Installed-Version':VERSION,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal}).catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
+    const data = await response.json().catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
     if (!response.ok) throw new Error(data.error || 'BRIDGE_REQUEST_FAILED');
     return data;
   } finally { clearTimeout(timer); }
 }
-async function discover() {
+function discover() {
+  if(discovery)return discovery;
+  discovery=discoverBridge().finally(()=>{discovery=null;});
+  return discovery;
+}
+async function discoverBridge() {
   await restore;
   if (bridge) return bridge;
   let diagnostic;
-  for (let port = 18810; port <= 18819; port++) {
-    const base = 'http://127.0.0.1:'+port;
-    try {
-      let r = await fetchJSON(base,'/health',null,undefined,450);
-      if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
-      if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
-      if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
-      bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
-      await connection({connected:true,port});
-      return bridge;
-    } catch { /* Other/closed ports are not our bridge. Never accept a generic 200. */ }
+  // Preserve the original ports first. Probe bounded batches so a silent firewall
+  // does not turn a larger fallback range into a minute-long serial scan.
+  for (let first = 18810; first <= 18909; first+=10) {
+    const candidates=await Promise.all(Array.from({length:10},async(_,offset)=>{
+      const port=first+offset,base='http://127.0.0.1:'+port;
+      try{
+        let r=await fetchJSON(base,'/health',null,undefined,450,VERSION);
+        if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id)return null;
+        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
+        const version=r.version;
+        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
+        if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
+        if(typeof r.session!=='string'||!r.session)return null;
+        return {base,port,version,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
+      }catch{return null;}
+    }));
+    const found=candidates.find(Boolean);
+    if(found){wireVersion=found.version;bridge={base:found.base,session:found.session,learning:found.learning};await connection({connected:true,port:found.port});return bridge;}
   }
-  await connection({connected:false,message:diagnostic || 'Open Cindy Chrome settings in Cindy, or call browser_status. Reload this extension after updating Cindy’s plugin.'});
+  await connection({connected:false,error:diagnostic||'CINDY_DISCONNECTED'});
   return null;
 }
 async function release(tabId) {
@@ -556,10 +568,22 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse) => {
 
 // Only our extension pages and isolated top-frame content scripts can enter here.
 const learningCalls=new Map();
+// Only learning endpoints are retried, with the same id and authenticated session.
+// Never replay browser actions or move an uncertain request to a new session.
+async function learningFetch(target,path,body,active,deadline){
+  for(let attempt=0;;attempt++){
+    await active();if(Date.now()>=deadline)throw Error('TIMEOUT');
+    try{return await fetchJSON(target.base,path,target.session,body);}
+    catch(error){
+      if(error.message!=='BRIDGE_REQUEST_FAILED'||attempt>=2)throw error;
+      await sleep(250*(attempt+1));
+    }
+  }
+}
 async function learningRequest(message,sender) {
   await restore;
   const target=await discover();
-  if(!target)throw Error('CINDY_DISCONNECTED');
+  if(!target)throw Error((await sessionStore.get('connection')).connection?.error||'CINDY_DISCONNECTED');
   if(!target.learning)throw Error('UPDATE_CINDY_CHROME');
   const internal=sender.url?.startsWith(chrome.runtime.getURL(''));
   const request=globalThis.CindyLearning.validate(message.request);
@@ -576,20 +600,27 @@ async function learningRequest(message,sender) {
   const id=message.id;
   if(typeof id!=='string'||!/^[a-f0-9-]{36}$/.test(id))throw Error('INVALID_ID');
   const owner=sender.documentId||sender.url;
+  if(learningCalls.has(id))throw Error('BUSY');
   learningCalls.set(id,{target,owner,cancelled:false});
+  async function checkCurrent(){
+    const call=learningCalls.get(id);
+    if(!call||call.cancelled)throw Error('REQUEST_CANCELLED');
+    if(page && ((await chrome.tabs.get(page.id)).url!==page.url || await network.document(page.id)!==sender.documentId))throw Error('PAGE_CHANGED');
+  }
   try {
-    await fetchJSON(target.base,'/learning/start',target.session,{id,request});
-    const deadline=Date.now()+85000;
+    // Legacy subtitle repair can make three 60s Host calls, each with up to
+    // 30s queueing. The bridge retains the result for a further 30s.
+    const deadline=Date.now()+300000;
+    await learningFetch(target,'/learning/start',{id,request},()=>checkCurrent(),deadline);
     while(Date.now()<deadline) {
-      const call=learningCalls.get(id);
-      if(!call||call.cancelled)throw Error('REQUEST_CANCELLED');
-      if(page && ((await chrome.tabs.get(page.id)).url!==page.url || await network.document(page.id)!==sender.documentId))throw Error('PAGE_CHANGED');
-      const result=await fetchJSON(target.base,'/learning/result',target.session,{id});
+      await checkCurrent();
+      const result=await learningFetch(target,'/learning/result',{id},()=>checkCurrent(),deadline);
       if(result.done)return result.result;
       await sleep(450);
     }
     throw Error('TIMEOUT');
   } catch(error) {
+    if(['SESSION_CHANGED','BRIDGE_REQUEST_FAILED'].includes(error.message)&&bridge===target){bridge=null;await connection({connected:false});}
     await fetchJSON(target.base,'/learning/cancel',target.session,{id}).catch(()=>{});
     throw error;
   } finally {learningCalls.delete(id);}

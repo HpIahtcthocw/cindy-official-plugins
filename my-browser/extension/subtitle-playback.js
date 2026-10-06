@@ -5,7 +5,12 @@
     const source=media.currentSrc;let owned=false,expectedPause=false,wantsPlay=!media.paused,started=false,disposed=false;
     function update(){
       if(disposed)return;
-      const buffer=state();if(buffer.blocked)return;
+      const buffer=state();
+      if(buffer.blocked){
+        // A failed translation must not strand a pause that Cindy introduced.
+        if(owned){owned=false;if(wantsPlay)media.play().catch(e=>{wantsPlay=false;error?.(e);});}
+        return;
+      }
       if(owned&&buffer.ready){owned=false;started=true;ready?.(buffer);if(wantsPlay)media.play().catch(e=>{wantsPlay=false;error?.(e);});return;}
       if(!owned&&wantsPlay&&!buffer.ready&&(!started||buffer.ahead<3)){
         owned=true;waiting?.(buffer);

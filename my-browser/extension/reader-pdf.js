@@ -8,7 +8,7 @@ export async function openPDF({file,container,call,target,t,report}) {
     cMapUrl:new URL('./vendor/pdfjs/cmaps/',import.meta.url).href,cMapPacked:true,
     standardFontDataUrl:new URL('./vendor/pdfjs/standard_fonts/',import.meta.url).href,
     wasmUrl:new URL('./vendor/pdfjs/wasm/',import.meta.url).href});
-  const pdf=await task.promise;let number=1,generation=0,renderTask,texts=[],ocrBusy=false,selectedRegion;
+  const pdf=await task.promise;let number=1,generation=0,translationRevision=0,renderTask,texts=[],ocrBusy=false,selectedRegion;
   const progress=el('p'),ocr=createOCR(n=>{progress.textContent=`OCR ${Math.round(n*100)}%`;});
   container.replaceChildren();const navigation=el('div');navigation.className='row';const label=el('span'),canvas=el('canvas'),text=el('div');text.className='stack';canvas.style.cssText='max-width:100%;height:auto;border:1px solid var(--board);touch-action:none;cursor:crosshair';
   const language=el('select');language.setAttribute('aria-label',t.ocrLanguage);
@@ -32,10 +32,10 @@ export async function openPDF({file,container,call,target,t,report}) {
     if(ocrBusy)throw Error('BUSY');const g=generation;ocrBusy=true;
     try{let input=canvas;
       if(crop){if(!selectedRegion||selectedRegion.w<5||selectedRegion.h<5)throw Error('SELECT_REGION');const r=selectedRegion;input=el('canvas');input.width=r.w;input.height=r.h;input.getContext('2d').drawImage(canvas,r.x,r.y,r.w,r.h,0,0,r.w,r.h);}
-      const result=await ocr.recognize(input,language.value);if(g!==generation)return;texts=result.match(/[\s\S]{1,1000}/g)||[];text.replaceChildren(el('p',result||t.ocrEmpty));progress.textContent='';
+      const result=await ocr.recognize(input,language.value);if(g!==generation)return;translationRevision++;texts=result.match(/[\s\S]{1,1000}/g)||[];text.replaceChildren(el('p',result||t.ocrEmpty));progress.textContent='';
     }finally{ocrBusy=false;}
   }
-  async function translate(){const g=generation,textParts=[...texts];text.replaceChildren();for(let i=0;i<textParts.length;i+=12){const batch=textParts.slice(i,i+12);const r=await call({op:'translate',texts:batch,target:target()});if(g!==generation)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
+  async function translate(){const g=generation,revision=++translationRevision,textParts=[...texts],language=target();text.replaceChildren();for(let i=0;i<textParts.length;i+=12){if(g!==generation||revision!==translationRevision)return;const batch=textParts.slice(i,i+12);const r=await call({op:'translate',texts:batch,target:language});if(g!==generation||revision!==translationRevision)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
   try{await page();}catch(e){ocr.close();await task.destroy();throw e;}
   return ()=>{generation++;renderTask?.cancel();ocr.close();task.destroy();};
 }

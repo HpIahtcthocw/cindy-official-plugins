@@ -59,3 +59,18 @@ test('incremental scheduling skips the past and distant future, and reprioritize
  assert.equal(core.pendingSubtitleChunks(chunks,400,2).at(-1).start,570);
  assert.equal(core.subtitleBuffer([chunk(0,25,true),chunk(25,60,false)],0).ready,true);
 });
+
+test('failed subtitle preparation releases only a buffering-owned pause',()=>{
+ const media=new Media();let buffer={ahead:0,ready:false};const controller=playback.create(media,{state:()=>buffer});
+ controller.update();assert.equal(media.paused,true);
+ buffer={blocked:true};controller.update();assert.equal(media.paused,false);assert.equal(controller.buffering,false);
+ controller.update();assert.equal(media.plays,1,'a persistent failure does not repeatedly play');
+ media.pause();controller.update();assert.equal(media.paused,true);controller.dispose();
+ const paused=new Media(true),other=playback.create(paused,{state:()=>({blocked:true})});other.update();other.dispose();assert.equal(paused.paused,true);
+});
+test('transient retry backoff leaves other preparation windows available',()=>{
+ const chunks=[chunk(0,30,false),chunk(30,60,false)];chunks[0].retryAt=3000;
+ assert.deepEqual(core.pendingSubtitleChunks(chunks,0,1,1000),[chunks[1]]);
+ assert.deepEqual(core.pendingSubtitleChunks(chunks,0,1,3000),chunks);
+ chunks[1].done=true;chunks[0].error='TIMEOUT';assert.deepEqual(core.pendingSubtitleChunks(chunks,0,1,4000),[]);
+});

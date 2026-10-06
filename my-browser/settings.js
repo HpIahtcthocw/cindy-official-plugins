@@ -56,8 +56,9 @@ async function refresh() {
   try {
     const wake = await fetch('/wake'); if (!wake.ok) throw new Error(T.timeout);
     const result = await rpc('status-request');
-    if (!result.ok) throw new Error(result.message || T.failed);
+    if (!result.ok) throw new Error(globalThis.CindyUI.error(result.error,T===STRINGS['zh-CN']?'zh-CN':'en'));
     $('#status').textContent=result.extension_connected ? T.ready : T.noExt;
+    $('.version').textContent='v'+result.version;
     $('#dot').classList.toggle('ready',!!result.extension_connected);
     $('#diagnostic').textContent='v'+result.version+' · '+(result.clients || []).filter(c => c.connected).length+' connected';
     $('#extdir').value=result.extension_dir || '';
