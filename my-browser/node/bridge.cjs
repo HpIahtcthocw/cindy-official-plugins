@@ -17,7 +17,7 @@ function createBridge(options = {}) {
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map();
-  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8'].includes(version) || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9'].includes(version) || /^0\.3\.\d+$/.test(version);
   const session = crypto.randomUUID();
   const live = c => Date.now()-c.seen < 35000;
   const connected = () => [...clients.values()].filter(c => c.trusted && live(c) && compatible(c.version));

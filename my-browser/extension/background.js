@@ -48,7 +48,7 @@ async function discover() {
     try {
       let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
       if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
       if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
       bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
