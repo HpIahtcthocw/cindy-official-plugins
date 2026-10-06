@@ -5,8 +5,13 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 root = Path(__file__).resolve().parent.parent / 'my-browser'
 files = ['manifest.json', 'background.js', 'policy.js', 'network-guard.js', 'popup.html', 'popup.js',
-         'ui.js', 'learning-core.js', 'content.js', 'library.html', 'library.js', 'reader-pdf.js', 'ocr.js', 'icons/16.png', 'icons/32.png', 'icons/48.png', 'icons/128.png']
+         'ui.js', 'learning-core.js', 'subtitle-playback.js', 'content.js', 'library.html', 'library.js', 'reader-pdf.js', 'ocr.js', 'icons/16.png', 'icons/32.png', 'icons/48.png', 'icons/128.png']
 files += json.loads((root / 'extension/vendor-files.json').read_text())
+manifest = json.loads((root / 'extension/manifest.json').read_text())
+for content_script in manifest.get('content_scripts', []):
+    for asset in content_script.get('js', []) + content_script.get('css', []):
+        if asset not in files:
+            raise ValueError(f'Missing content script asset in ZIP: {asset}')
 if any(Path(name).is_absolute() or '..' in Path(name).parts for name in files):
     raise ValueError('Unsafe extension asset path')
 files.append('THIRD-PARTY-LICENSES.txt')
