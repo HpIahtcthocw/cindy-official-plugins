@@ -86,7 +86,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   });
   proxy.on('connect',(_req,socket)=>{socket.on('error',()=>{});socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');});
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r));t.after(()=>{proxy.closeAllConnections();proxy.close();});
-  context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:['--proxy-server=http://127.0.0.1:'+proxy.address().port,'--proxy-bypass-list=<-loopback>','--disable-extensions-except='+extensionDir,'--load-extension='+extensionDir]});
+  context=await chromium.launchPersistentContext(profile,{channel:'chromium',...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{}),headless:true,args:['--proxy-server=http://127.0.0.1:'+proxy.address().port,'--proxy-bypass-list=<-loopback>','--disable-extensions-except='+extensionDir,'--load-extension='+extensionDir]});
   const fixture=await fs.readFile(path.join(import.meta.dirname,'fixtures/my-browser-page.html'),'utf8');
   await context.route('http://example.test/**',route=>route.fulfill({status:200,contentType:'text/html',body:fixture}));
   await context.route('http://blocked.test/**',route=>route.fulfill({status:200,contentType:'text/html',body:'<h1>Blocked fixture</h1>'}));
@@ -108,7 +108,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   assert.equal('policy' in status,false);assert.equal('extension_dir' in status,false);assert.equal('port' in status,false);
   assert.equal('origin' in status.clients[0],false);assert.equal('extensionId' in status.clients[0],false);
   assert.ok(status.clients[0].id);assert.equal(status.installation.browsers[0].browser,'chrome');
-  const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionId+'/popup.html');await popup.getByText('Ready · chrome connected',{exact:true}).waitFor();await popup.close();
+  const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionId+'/popup.html');await popup.getByText('Connected to Cindy',{exact:true}).waitFor();await popup.close();
   // Establish interception before this page's first request (extension-created targets may navigate before Playwright attaches).
   const xPage=await context.newPage();await xPage.goto('https://x.com/notifications/mentions');
   const started=Date.now();const mentions=await tool('browser_read',{recipe:'x_mentions',limit:5,maxChars:2000});

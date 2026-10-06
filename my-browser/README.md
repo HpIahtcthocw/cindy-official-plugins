@@ -1,8 +1,24 @@
-# My Browser
+# Cindy Chrome
 
 [简体中文](README.zh-CN.md)
 
-A local candidate plugin connecting Cindy to your everyday signed-in browser. Version **0.3.x** adds content-first reading, browser/profile-bound routing, a minimal Art-generated icon and browser-specific setup. It is **not yet a publicly distributed consumer release**.
+A unified Cindy browser companion candidate. **0.4.0** adds reading and learning to browser control. The Chrome extension is **Cindy**; the Cindy plugin is **Cindy Chrome**, both using the official Cindy icon. The `my-browser` identity, extension key and five existing tools are preserved. **Not published to a browser store; this version still requires installed Cindy verification.**
+
+## Reading and learning
+
+- Selection translation, contextual explanation, summary, speech and saved words/sentences; bilingual pages with dynamic content and restore.
+- Native HTML5 video/audio captions, a YouTube caption adapter, SRT/VTT import, sentence navigation/replay, loop, auto pause, speed, bilingual export and timestamped saves. Live YouTube and services such as Netflix have not been individually verified; universal coverage is not claimed.
+- Searchable vocabulary, import/export, flashcards and spaced review in the browser and Cindy main view. Saved in Cindy Library per browser profile; not cloud sync. Uses a simple interval algorithm, not FSRS.
+- Local PDF.js reading/text extraction and Tesseract OCR for English, Chinese, Japanese, Korean, French, German, Spanish, Italian, Portuguese and Russian. Select a region, recognize text and ask questions about that text. This is not visual chart understanding. Text and Markdown reading are included.
+- Scenario conversation, expression feedback and browser speech input. Browser speech may use an online service. Professional pronunciation scoring, AI audio/video transcription, content subscriptions, EPUB and cross-device learning data remain incomplete parts of the product backlog; this package is not a full Trancy replacement.
+- New Cindy task: uses the ordinary task API, creates an explicitly owned task and separates user instructions from quoted webpage material. It never takes over an unrelated active task; uncertain submissions retain their request keys.
+
+Requires **Cindy 0.1.97+**, a configured text model and Library. The plugin logic and local bridge remain resident to receive user clicks. Model credentials stay in Cindy. Task permission follows the existing Host approval flow; refusing it does not prevent ordinary reading.
+
+Shortcuts: `Alt+Shift+T` toggles page translation; `Alt+Shift+C` opens Cindy. Pages open before installation need a user refresh to load content scripts and establish current-document address evidence.
+
+New plugin versions negotiate the 0.3.x extension control protocol. New extensions connected to an old plugin keep control working and require a plugin update for learning. Pairing and site policies retain their existing storage. Chrome handles incremental extension permissions through its normal update flow.
+
 
 ## Reading vs interaction
 
@@ -32,7 +48,7 @@ Installation cards appear only for connected browsers or installed browsers with
 ## Security and limitations
 
 - New installations allow reading and interaction on all public websites. Saved restrictions are preserved until explicitly removed in settings: old policies lack provenance, so matching the legacy preset does not prove user intent; the all-sites switch enables broad interaction, while read blocks and interaction exclusions still take precedence. Domain grants include subdomains; `=host.example.test` is exact-only. New grants/unblocking require real confirmation; cancellation changes nothing.
-- Only `127.0.0.1:18810–18819` is bound. HTTP cannot enqueue work or modify policy. Host, extension origin, profile identity and current bridge session are checked; no CORS. Unknown extension identities get no session/jobs before approval. This is browser-origin protection, not a defense against malicious same-user native software or already-trusted extensions.
+- Only `127.0.0.1:18810–18819` is bound. HTTP cannot enqueue browser-control actions or modify policy; trusted extensions can submit validated learning requests. Host, extension origin, profile identity and current bridge session are checked; no CORS. Unknown extension identities get no session/jobs before approval. This is browser-origin protection, not a defense against malicious same-user native software or already-trusted extensions.
 - Jobs and acknowledgments/results are bound to one profile. Delivered actions are never replayed. `execution:executed` proves DOM dispatch, not successful sending/purchase; `unknown` requires checking before repetition.
 - No cookie export, arbitrary JS tool, debugger or credential extraction. Hidden/password/payment-code fields are excluded, but arbitrary page text may still contain private information. AI may receive this data off-device. Visits/reads contact websites and may affect server-side notification read state.
 - Public-looking hostnames are insufficient: before reading or acting, the extension requires a public peer IP reported by `webRequest` for the current main document, correlates navigation/request timestamps, and targets that exact `documentId`. Private/missing addresses, unobserved older tabs and ambiguous navigation evidence fail closed with `ADDRESS_UNVERIFIED`; tab metadata is redacted. No automatic refresh or replacement tab is attempted. A manually refreshed public page can supply new evidence. Cache/proxy/browser configurations that cannot provide public peer evidence are unsupported for that page. This prevents extraction from private main documents; it is not a network firewall: navigation may already have contacted the destination, and arbitrary page content can originate elsewhere. `webRequest` and `webNavigation` observe main-document address/identity only; no cookie/header capture.
@@ -42,7 +58,7 @@ Installation cards appear only for connected browsers or installed browsers with
 
 ## Build and verification
 
-First-party JS and Node built-ins only. No runtime dependency installation. `node/worker.cjs` activates unconditionally because Cindy requires the entry rather than running it as `require.main`. Runtime subprocesses are restricted to fixed browser/app launchers and Safari signature checks.
+The bridge uses first-party JS and Node built-ins. PDF.js and Tesseract are bundled, integrity-verified browser components; no runtime dependency installation or CDN code/model loading. `node/worker.cjs` activates unconditionally because Cindy requires the entry rather than running it as `require.main`. Runtime subprocesses are restricted to fixed browser/app launchers and Safari signature checks.
 
 ```sh
 python3 scripts/package-my-browser-zip.py
@@ -131,7 +147,7 @@ Review regressions: public hostname served by a real loopback fixture returns no
 
 ## Runtime source evidence
 
-`node/worker.cjs` is the reviewed first-party source entry, shipped byte-for-byte without transpilation or a separate generated/vendor copy. Its dependency graph is `worker.cjs` → `node:readline`, `node/bridge.cjs`, `node/installation.cjs`, `extension/policy.js`; these require only Node built-ins and the bundled manifest/distribution JSON. There is no external package name/version or upstream binary to reconstruct. `.github/scripts/package-plugin.sh my-browser <output.cindy>` packages the committed source; compare the extracted entry with `git show HEAD:my-browser/node/worker.cjs` to verify provenance.
+`node/worker.cjs` is the reviewed first-party source entry, shipped byte-for-byte without transpilation or a separate generated/vendor copy. Its dependency graph is `worker.cjs` → `node:readline`, `node/bridge.cjs`, `node/installation.cjs`, `extension/policy.js` and `extension/learning-core.js`; these require only Node built-ins and the bundled manifest/distribution JSON. There is no external package name/version or upstream binary to reconstruct. `.github/scripts/package-plugin.sh my-browser <output.cindy>` packages the committed source; compare the extracted entry with `git show HEAD:my-browser/node/worker.cjs` to verify provenance.
 
 Network/launch inventory: the worker creates only a loopback HTTP listener on 18810–18819; the extension polls those exact ports. Website navigation is HTTP(S) for the requested browser task. Installation opens fixed extension-manager URLs, bundled files, or configured store URLs validated against `chromewebstore.google.com`, `microsoftedge.microsoft.com`, `apps.apple.com`; the current store URLs are unset. Installation/signature checks use fixed executables and argv, not shell commands. Source inspection found no eval/Function/string-code execution or Math.random; the only base64 runtime decode is the public extension identity key. Loopback contract approval and bridge authentication remain unresolved review items; this evidence does not waive them.
 
@@ -161,4 +177,12 @@ Read failures after starting navigation report `execution: unknown`: the website
 
 0.3.47 treats the leftover after a same-segment context word as one credential string, so hyphenated alphabetic tokens (`/verify-abcdefghijkl-mnopqrstuv`) are masked without enumerating shapes.
 
-0.3.48 reports local `browser_act` validation failures as `not_executed`. Only worker transport failures after an act request remain `unknown`.
+0.4.0 reports local `browser_act` validation failures as `not_executed`. Only worker transport failures after an act request remain `unknown`.
+
+## 0.4.0 verification and dependency review
+
+2026-10-06: 77 targeted/localization/provisioning/workflow tests passed. Isolated Chromium control and learning suites passed separately. Learning tests exercise the actual extension, bridge, DOM and local OCR/PDF engines, with explicit model/Library fixtures; this is not installed Cindy, real model billing/permission, or public video-site validation. Screenshots cover light/dark reading and Library, plus PDF.
+
+PDF.js uses the official legacy build and `isEvalSupported:false`. Only user-selected local PDFs are opened; its Worker, CMaps, fonts and WASM resolve inside the package. Tesseract uses bundled workers, core and language files with persistent OCR cache disabled, never the default CDN. Extension CSP enables local WASM, not remote scripts or `unsafe-eval`. Unmodified Tesseract Core reads `navigator.languages` solely to build Emscripten C-runtime LANG; it does not select the UI or user-chosen OCR language. The localization check permits only that exact expression in that SHA-256-pinned vendor file and continues checking all other reads.
+
+Upstream packages contain unused Node/download/dynamic-execution branches. No provider credentials, arbitrary remote document URL or server execution entry is exposed to them. Sources, npm SHA-512 integrity and full licenses are recorded in `THIRD-PARTY-LICENSES.txt`.

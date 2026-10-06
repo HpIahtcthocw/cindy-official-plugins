@@ -14,10 +14,11 @@ for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
   const dir=path.join(out,browser+'-extension');
   try{await fs.access(dir);throw new Error('Output already exists: '+dir);}catch(e){if(e.code!=='ENOENT')throw e;}
   await fs.cp(path.join(root,'extension'),dir,{recursive:true});
+  await fs.copyFile(path.join(root,'THIRD-PARTY-LICENSES.txt'),path.join(dir,'THIRD-PARTY-LICENSES.txt'));
   const m=structuredClone(manifest);
   if(browser==='safari') {
     delete m.key;delete m.minimum_chrome_version;
-    m.background={scripts:['policy.js','network-guard.js','background.js'],persistent:false};
+    m.background={scripts:['policy.js','network-guard.js','learning-core.js','background.js'],persistent:false};
   }
   await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(m,null,2)+'\n');
   if(browser!=='safari') {

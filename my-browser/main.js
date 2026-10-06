@@ -14,9 +14,9 @@ async function node(method, params = {}) {
   try {
     r = await cindy.node.request({method,params,timeoutMs:['act','setPolicy'].includes(method) ? 65000 : method === 'openInstallation' ? 45000 : 10000});
   } catch (e) {
-    return fail('NODE_UNAVAILABLE',e.message || 'Re-enable My Browser and check its connection.',reach);
+    return fail('NODE_UNAVAILABLE',e.message || 'Re-enable Cindy Chrome and check its connection.',reach);
   }
-  if (!r.ok) return fail('NODE_UNAVAILABLE', r.message || 'Re-enable My Browser and check its connection.', reach);
+  if (!r.ok) return fail('NODE_UNAVAILABLE', r.message || 'Re-enable Cindy Chrome and check its connection.', reach);
   return r.result;
 }
 async function load() {
@@ -85,17 +85,17 @@ async function handleTool(name,args) {
       return save(policy);
     });
   }
-  if (!['browser_status','browser_tabs','browser_read','browser_act'].includes(name)) return fail('UNKNOWN_TOOL','Use a declared My Browser tool.');
-  await sync(); // Every call: a restarted on-demand worker must not silently lose stored permissions.
+  if (!['browser_status','browser_tabs','browser_read','browser_act'].includes(name)) return fail('UNKNOWN_TOOL','Use a declared Cindy Chrome tool.');
+  await sync(); // Every call: a restarted worker must not silently lose stored permissions.
   if (name === 'browser_status') {
     const status=await node('status'), installation=await node('installation');
-    if (!status?.ok) return fail('STATUS_UNAVAILABLE','Cannot check browser connections. Re-enable My Browser and refresh its settings.');
+    if (!status?.ok) return fail('STATUS_UNAVAILABLE','Cannot check browser connections. Re-enable Cindy Chrome and refresh its settings.');
     // Tool output is an explicit projection. The settings channel below retains
     // policy, extension_dir and pairing identity details without sending them to AI.
     return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,
       clients:(status.clients || []).map(c=>({id:c.id,browser:c.browser,version:c.version,connected:c.connected,trusted:c.trusted})),
       installation:{ok:!!installation?.ok,browsers:(installation?.browsers || []).map(b=>({browser:b.browser,supported:b.supported,installed:b.installed,published:b.published,zip:b.zip,bundled:b.bundled}))},
-      how_to_install:'Open My Browser plugin settings. Chrome/Edge: enable Developer mode in the extensions manager, then drop the bundled ZIP on that page (Chromium unpacks it there) or use Load unpacked on the bundled directory. A refusal of the dropped ZIP is normal on some builds; fall back to the directory. Wait for a live connection.'};
+      how_to_install:'Open Cindy Chrome plugin settings. Chrome/Edge: enable Developer mode in the extensions manager, then drop the bundled ZIP on that page (Chromium unpacks it there) or use Load unpacked on the bundled directory. A refusal of the dropped ZIP is normal on some builds; fall back to the directory. Wait for a live connection.'};
   }
   if (name === 'browser_tabs') return node('act',{action:'tabs',payload:P.validate('tabs',args)});
   if (name === 'browser_read') {
@@ -113,24 +113,30 @@ async function handleTool(name,args) {
   return result;
 }
 cindy.onHostMessage(async msg => {
-  if (msg.type !== 'tool-call') return;
+  if (msg.type !== 'tool-call') return handleLearningHostMessage(msg);
   let result;
   try { result = await handleTool(msg.tool,msg.args || {}); }
   catch (e) {
     // Throws here are local validation or orchestration failures. Worker transport
     // already maps in-flight act failures to unknown inside node(); do not upgrade a
     // pre-dispatch error into an unknown side effect.
-    result = fail('PLUGIN_ERROR',e.message || 'Reload My Browser settings and check the connection.','not_executed');
+    result = fail('PLUGIN_ERROR',e.message || 'Reload Cindy Chrome settings and check the connection.','not_executed');
   }
   // Business errors stay structured so an unknown side-effect outcome is never lost in prose.
   await cindy.send({type:'tool-result',callId:msg.callId,ok:true,result});
 });
 channel.onmessage = async ev => {
   const m = ev.data || {};
-  if (!['status-request','save-request','install-request','pair-request'].includes(m.type) || typeof m.id !== 'string') return;
+  if (!['status-request','save-request','install-request','pair-request','learning-panel'].includes(m.type) || typeof m.id !== 'string') return;
   let result;
   try {
-    if (m.type === 'save-request') result = await serialize(() => save(m.policy,m.base));
+    if (m.type === 'learning-panel') {
+      const {cfg}=await load();
+      const allowed=[...(cfg.learningProfiles||[]),...(cfg.pairedClients||[])];
+      if(!allowed.some(c=>c.id===m.clientId))return channel.postMessage({type:'response',id:m.id,result:fail('BROWSER_REQUIRED','Connect a browser first.')});
+      result=await (await getLearningService()).handle(m.clientId,m.request);
+    }
+    else if (m.type === 'save-request') result = await serialize(() => save(m.policy,m.base));
     else if (m.type === 'install-request') result = await node('openInstallation',{browser:m.browser,mode:m.mode});
     else if (m.type === 'pair-request') result = await serialize(async () => {
       const status=await node('status');
@@ -147,7 +153,36 @@ channel.onmessage = async ev => {
       if (!saved.ok) return fail('SAVE_FAILED','Browser authorization was not saved.');
       return node('setTrustedClients',{clients:pairedClients});
     });
-    else { await sync(); result = {...await node('status'),installation:await node('installation')}; }
-  } catch (e) { result = fail('SETTINGS_ERROR',e.message || 'Reload plugin settings.'); }
+    else { await sync(); const {cfg}=await load();result = {...await node('status'),installation:await node('installation'),learningProfiles:cfg.learningProfiles||[]}; }
+  } catch (e) { result = m.type==='learning-panel'?{ok:false,error:e.message||'LEARNING_UNAVAILABLE'}:fail('SETTINGS_ERROR',e.message || 'Reload plugin settings.'); }
   channel.postMessage({type:'response',id:m.id,result});
 };
+
+// Browser-initiated learning requests are delivered by the paired local bridge.
+let learningService,hostLocale='en';
+async function getLearningService() {
+  if(!learningService)learningService=Promise.all([import('/extension/learning-core.js'),import('/learning-service.js')]).then(([,module])=>module.createLearningService({
+    core:globalThis.CindyLearning,locale:()=>hostLocale,tasks:cindy.tasks,
+    model:args=>cindy.send({type:'cindy-request',kind:'oneshot_text',...args}),
+    library:args=>cindy.send({type:'library-request',...args})
+  }));
+  return learningService;
+}
+async function handleLearningHostMessage(msg){
+  if(msg.type==='host-context-changed'){hostLocale=msg.context?.locale||hostLocale;return;}
+  if(msg.type!=='event'||msg.name!=='node-notification'||msg.method!=='learning-request')return;
+  const {id,clientId,request}=msg.params||{};
+  let result;
+  try {
+    await sync();
+    await serialize(async()=>{const {cfg}=await load();if(!(cfg.learningProfiles||[]).some(c=>c.id===clientId)){const profiles=[...(cfg.learningProfiles||[]),{id:clientId}];const r=await fetch('/kv',{method:'PUT',body:JSON.stringify({...cfg,learningProfiles:profiles})});if(!r.ok)throw Error('SAVE_FAILED');}});
+    const service=await getLearningService();
+    result=await service.handle(clientId,request,async()=> (await node('learningActive',{id})).active===true);
+  }catch(e){result={ok:false,error:e.message||'LEARNING_UNAVAILABLE'};}
+  await node('learningResult',{id,result});
+}
+// Resident logic establishes the bridge after saved permissions are loaded.
+if(typeof document!=='undefined') {
+  fetch('/app-context').then(r=>r.json()).then(r=>{hostLocale=r.context?.locale||'en';}).catch(()=>{});
+  sync().then(()=>node('status')).catch(()=>{});
+}

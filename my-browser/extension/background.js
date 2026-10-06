@@ -1,11 +1,12 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('policy.js','network-guard.js');
+if (typeof importScripts === 'function') importScripts('policy.js','network-guard.js','learning-core.js');
 // A lexical `const chrome` masks Chromium's lazy API initialization; use a var alias.
 var chrome = globalThis.browser || globalThis.chrome;
 const P = globalThis.MyBrowserPolicy;
 const network = globalThis.MyBrowserNetwork.create(chrome);
 const VERSION = chrome.runtime.getManifest().version;
 let bridge = null;
+let wireVersion=VERSION;
 let running = false;
 // Requested-URL aliases survive redirects, failed loads and user focus. Only created tabs consume the opening budget.
 const owned = new Map();
@@ -31,7 +32,7 @@ async function fetchJSON(base,path,session,body,timeout = 5000) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),timeout);
   try {
     const response = await fetch(base+path,{method:body === undefined ? 'GET' : 'POST',
-      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':VERSION,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':wireVersion,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
       ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'BRIDGE_REQUEST_FAILED');
@@ -45,16 +46,17 @@ async function discover() {
   for (let port = 18810; port <= 18819; port++) {
     const base = 'http://127.0.0.1:'+port;
     try {
-      const r = await fetchJSON(base,'/health',null,undefined,450);
+      let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION) {diagnostic='Update this browser extension to match Cindy v'+r.version+'.'; continue;}
-      if (r.pairing_required) {diagnostic='Confirm this browser connection in My Browser settings in Cindy.'; continue;}
-      bridge = {base,session:r.session};
+      if (r.version !== VERSION && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
+      if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
+      bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
       await connection({connected:true,port});
       return bridge;
     } catch { /* Other/closed ports are not our bridge. Never accept a generic 200. */ }
   }
-  await connection({connected:false,message:diagnostic || 'Open My Browser settings in Cindy, or call browser_status. Reload this extension after updating Cindy’s plugin.'});
+  await connection({connected:false,message:diagnostic || 'Open Cindy Chrome settings in Cindy, or call browser_status. Reload this extension after updating Cindy’s plugin.'});
   return null;
 }
 async function release(tabId) {
@@ -551,4 +553,109 @@ chrome.runtime.onMessage.addListener((msg,_sender,sendResponse) => {
   discover().then(() => sessionStore.get('connection')).then(sendResponse).catch(() => sendResponse({connection:{connected:false}}));
   return true;
 });
+
+// Only our extension pages and isolated top-frame content scripts can enter here.
+const learningCalls=new Map();
+async function learningRequest(message,sender) {
+  await restore;
+  const target=await discover();
+  if(!target)throw Error('CINDY_DISCONNECTED');
+  if(!target.learning)throw Error('UPDATE_CINDY_CHROME');
+  const internal=sender.url?.startsWith(chrome.runtime.getURL(''));
+  const request=globalThis.CindyLearning.validate(message.request);
+  let page;
+  if(!internal) {
+    if(!sender.tab?.id || sender.frameId!==0)throw Error('INVALID_SOURCE');
+    page=await chrome.tabs.get(sender.tab.id);
+    const documentId=await network.document(page.id);
+    if(sender.documentId!==documentId || page.url!==sender.url)throw Error('PAGE_CHANGED');
+    request.source={...request.source,url:page.url,title:(page.title||'').slice(0,500)};
+  }
+  const id=message.id;
+  if(typeof id!=='string'||!/^[a-f0-9-]{36}$/.test(id))throw Error('INVALID_ID');
+  const owner=sender.documentId||sender.url;
+  learningCalls.set(id,{target,owner,cancelled:false});
+  try {
+    await fetchJSON(target.base,'/learning/start',target.session,{id,request});
+    const deadline=Date.now()+85000;
+    while(Date.now()<deadline) {
+      const call=learningCalls.get(id);
+      if(!call||call.cancelled)throw Error('REQUEST_CANCELLED');
+      if(page && ((await chrome.tabs.get(page.id)).url!==page.url || await network.document(page.id)!==sender.documentId))throw Error('PAGE_CHANGED');
+      const result=await fetchJSON(target.base,'/learning/result',target.session,{id});
+      if(result.done)return result.result;
+      await sleep(450);
+    }
+    throw Error('TIMEOUT');
+  } catch(error) {
+    await fetchJSON(target.base,'/learning/cancel',target.session,{id}).catch(()=>{});
+    throw error;
+  } finally {learningCalls.delete(id);}
+}
+chrome.runtime.onMessage.addListener((message,sender,reply)=>{
+  if(sender.id!==chrome.runtime.id)return;
+  if(message?.type==='cindy-learning') {
+    learningRequest(message,sender).then(reply).catch(e=>reply({ok:false,error:e.message}));return true;
+  }
+  if(message?.type==='cindy-cancel') {
+    const call=learningCalls.get(message.id);
+    if(call && call.owner===(sender.documentId||sender.url)) {call.cancelled=true;fetchJSON(call.target.base,'/learning/cancel',call.target.session,{id:message.id}).catch(()=>{});}
+    reply({ok:true});return;
+  }
+});
+async function openOnTab(tabId,action='open') {
+  try {await chrome.tabs.sendMessage(tabId,{type:'cindy-ui',action});}
+  catch {await chrome.action.setBadgeText({text:'!'});}
+}
+if(chrome.contextMenus) {
+  chrome.runtime.onInstalled.addListener(()=>{
+    chrome.contextMenus.removeAll(()=>{
+      chrome.contextMenus.create({id:'cindy-selection',title:'Cindy',contexts:['selection']});
+      chrome.contextMenus.create({id:'cindy-page',title:'Cindy · Translate page',contexts:['page']});
+    });
+  });
+  chrome.contextMenus.onClicked.addListener((info,tab)=>{if(tab?.id)openOnTab(tab.id,info.menuItemId==='cindy-selection'?'selection':'translate-page');});
+}
+chrome.commands?.onCommand.addListener(async command=>{
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  if(tab?.id)openOnTab(tab.id,command==='translate-page'?'translate-page':'open');
+});
+
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{
+  if(sender.id===chrome.runtime.id&&m?.type==='cindy-open-library') {
+    chrome.tabs.create({url:chrome.runtime.getURL('library.html')}).then(()=>reply({ok:true}));return true;
+  }
+});
+// YouTube exposes timed caption metadata through its own player. Read only this
+// fixed field; no arbitrary page JavaScript and no cookies leave the browser.
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{
+  if(m?.type!=='cindy-captions'||sender.id!==chrome.runtime.id)return;
+  (async()=>{
+    await learningRequest({id:crypto.randomUUID(),request:{op:'config'}},sender);
+    const tab=await chrome.tabs.get(sender.tab.id),documentId=await network.document(tab.id);
+    if(!/(^|\.)youtube\.com$/.test(new URL(tab.url).hostname))return {ok:true,cues:[]};
+    const result=await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[documentId]},world:'MAIN',func:()=>{
+      const p=document.querySelector('#movie_player');
+      const response=p?.getPlayerResponse?.()||globalThis.ytInitialPlayerResponse;
+      return (response?.captions?.playerCaptionsTracklistRenderer?.captionTracks||[]).slice(0,20).map(t=>({url:t.baseUrl,language:t.languageCode,kind:t.kind}));
+    }});
+    const tracks=result?.[0]?.documentId===documentId?result[0].result:[];
+    const track=tracks.find(t=>t.language===m.language)||tracks.find(t=>t.kind!=='asr')||tracks[0];
+    if(!track)return {ok:true,cues:[]};
+    const url=new URL(track.url);
+    if(url.protocol!=='https:'||!/(^|\.)youtube\.com$/.test(url.hostname)||url.pathname!=='/api/timedtext'||url.username||url.password)throw Error('INVALID_SUBTITLE_SOURCE');
+    url.searchParams.set('fmt','json3');
+    const response=await fetch(url.href,{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15000)});
+    if(!response.ok)throw Error('SUBTITLE_UNAVAILABLE');
+    const reader=response.body.getReader(),parts=[];let bytes=0;
+    try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('SUBTITLE_TOO_LARGE');parts.push(value);}}finally{await reader.cancel().catch(()=>{});}
+    const data=new Uint8Array(bytes);let at=0;for(const part of parts){data.set(part,at);at+=part.length;}
+    const parsed=JSON.parse(new TextDecoder().decode(data));
+    const cues=(parsed.events||[]).filter(e=>Array.isArray(e.segs)&&Number.isFinite(e.tStartMs)&&Number.isFinite(e.dDurationMs)).slice(0,10000).map(e=>({start:e.tStartMs/1000,end:(e.tStartMs+e.dDurationMs)/1000,text:e.segs.map(s=>s.utf8||'').join('').trim().slice(0,4000)})).filter(e=>e.text&&e.end>e.start);
+    await learningRequest({id:crypto.randomUUID(),request:{op:'config'}},sender);
+    if((await chrome.tabs.get(tab.id)).url!==tab.url)throw Error('PAGE_CHANGED');
+    return {ok:true,cues,language:track.language};
+  })().then(reply).catch(e=>reply({ok:false,error:e.message}));return true;
+});
+
 chain();
