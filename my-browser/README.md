@@ -192,3 +192,9 @@ Upstream packages contain unused Node/download/dynamic-execution branches. No pr
 Opening Subtitles now reads and translates automatically, starting near the playhead; delayed captions and imported SRT/VTT continue without refreshing the page or pressing Translate. Invalid model formatting or item counts get one automatic repair attempt. If that fails, original and completed lines remain with an inline retry action; the selected model is never silently changed. Closing the panel or cancelling stops translation.
 
 Reloading the same URL in the same tab restores subtitle mode. Explicit close, changing modes, or navigating elsewhere clears that choice. This state lives only in extension session storage, and resumed learning still uses the existing site and document authorization checks.
+
+## 0.4.3 in-player bilingual subtitles
+
+Subtitles are injected into the YouTube player: original above translation, on a content-sized translucent background. They follow playback, seeking, player resizing and fullscreen; the right floating panel is no longer the default subtitle surface. Language, repeat, import, export, transcript and saving remain in the in-player Subtitle settings.
+
+The YouTube caption container is hidden only while a current injected caption is available. Closing, switching modes or leaving the page restores original visibility and HTML5 track modes; replacement caption containers are handled too. Extension 0.4.3 can connect to plugin 0.4.2, so this display fix does not require a simultaneous host plugin upgrade. Isolated Chromium validates player/timeline fixtures, not the user's live YouTube video.

@@ -4,7 +4,7 @@
   "name": "Cindy Chrome",
   "description": "Cindy’s browser companion: bilingual webpages, contextual explanations, subtitles, PDF/OCR, vocabulary review and new Cindy tasks. Also reads signed-in Chrome/Edge pages and operates authorized sites. Page text goes to your configured AI; cookies are not exported.",
   "whenToUse": "Use Cindy Chrome for browser reading and control, translation, subtitle learning, PDF reading and saved vocabulary. Browser learning is initiated from the Cindy extension; agent tools retain signed-in page reading and authorized interactions. Safari is not installable from this package.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "minCindyVersion": "0.1.97",
   "icon": "assets/icon.png",
   "entry": "main.js",
