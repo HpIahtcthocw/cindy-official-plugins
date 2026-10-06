@@ -2,6 +2,12 @@
 // Shared, deterministic input and subtitle handling. No network or host access.
 (function(root) {
   const languages = {auto:'Auto',en:'English','zh-CN':'简体中文','zh-TW':'繁體中文',ja:'日本語',ko:'한국어',fr:'Français',de:'Deutsch',es:'Español',it:'Italiano',pt:'Português',ru:'Русский',ar:'العربية',hi:'हिन्दी',th:'ไทย',vi:'Tiếng Việt'};
+  // A language directory is not a claim about any model's translation capability.
+  const commonLanguages=Object.keys(languages).filter(code=>code!=='auto');
+  const codes='aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zu'.split(' ');
+  for(const code of codes)if(!languages[code]){try{languages[code]=new Intl.DisplayNames([code],{type:'language'}).of(code);}catch{languages[code]=code;}}
+  function validTarget(value){return typeof value==='string'&&((Object.hasOwn(languages,value)&&value!=='auto')||/^custom:[\p{L}\p{M}][\p{L}\p{M}\p{N} ()’'·-]{0,79}$/u.test(value));}
+  function languageName(value){return Object.hasOwn(languages,value)?languages[value]:validTarget(value)?value.slice(7):'';}
   const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles','subtitle-document']);
   function string(value,max,required=false) {
     if (typeof value !== 'string' || value.length>max || (required && !value.trim())) throw Error('INVALID_INPUT');
@@ -19,7 +25,7 @@
     if (!input || !operations.has(input.op)) throw Error('INVALID_OPERATION');
     const out={op:input.op,source:source(input.source)};
     if (input.target!==undefined) {
-      if (!Object.hasOwn(languages,input.target) || input.target==='auto') throw Error('INVALID_LANGUAGE');
+      if (!validTarget(input.target)) throw Error('INVALID_LANGUAGE');
       out.target=input.target;
     }
     if (input.language!==undefined) {
@@ -214,7 +220,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks};
+  const api={uuid,languages,commonLanguages,validTarget,languageName,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);

@@ -48,7 +48,7 @@ async function discover() {
     try {
       let r = await fetchJSON(base,'/health',null,undefined,450);
       if (r.plugin !== 'my-browser' || r.protocol !== 3 || r.extensionId !== chrome.runtime.id) continue;
-      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
+      if (r.version !== VERSION && !['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8'].includes(r.version) && !/^0\.3\.\d+$/.test(r.version)) {diagnostic='Update Cindy Chrome and the browser extension.'; continue;}
       if(wireVersion!==r.version){wireVersion=r.version;r=await fetchJSON(base,'/health',null,undefined,450);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==wireVersion)continue;}
       if (r.pairing_required) {diagnostic='Confirm this browser connection in Cindy Chrome settings in Cindy.'; continue;}
       bridge = {base,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
@@ -568,7 +568,9 @@ async function learningRequest(message,sender) {
     if(!sender.tab?.id || sender.frameId!==0)throw Error('INVALID_SOURCE');
     page=await chrome.tabs.get(sender.tab.id);
     const documentId=await network.document(page.id);
-    if(sender.documentId!==documentId || page.url!==sender.url)throw Error('PAGE_CHANGED');
+    // Chrome retains the content script's initial sender URL across pushState.
+    // Bind to the live document and origin, and reject material from a previous route.
+    if(sender.documentId!==documentId || new URL(page.url).origin!==new URL(sender.url).origin || (request.source.url&&request.source.url!==page.url))throw Error('PAGE_CHANGED');
     request.source={...request.source,url:page.url,title:(page.title||'').slice(0,500)};
   }
   const id=message.id;
@@ -616,13 +618,14 @@ if(chrome.contextMenus) {
   });
   chrome.contextMenus.onClicked.addListener((info,tab)=>{if(tab?.id)openOnTab(tab.id,info.menuItemId==='cindy-selection'?'selection':'translate-page');});
 }
+chrome.action.onClicked?.addListener(tab=>{if(tab?.id)openOnTab(tab.id);});
 chrome.commands?.onCommand.addListener(async command=>{
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   if(tab?.id)openOnTab(tab.id,command==='translate-page'?'translate-page':'open');
 });
 
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{
-  if(sender.id===chrome.runtime.id&&m?.type==='cindy-open-library') {
+  if(sender.id===chrome.runtime.id&&['cindy-open-library','cindy-open-reader'].includes(m?.type)) {
     chrome.tabs.create({url:chrome.runtime.getURL('library.html')}).then(()=>reply({ok:true}));return true;
   }
 });
@@ -664,7 +667,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
   if(!['cindy-video-state','cindy-video-resume'].includes(m?.type)||sender.id!==chrome.runtime.id||!sender.tab?.id||sender.frameId!==0)return;
   (async()=>{
     const tab=await chrome.tabs.get(sender.tab.id);
-    if(tab.url!==sender.url)return {enabled:false};
+    if(new URL(tab.url).origin!==new URL(sender.url).origin||await network.document(tab.id)!==sender.documentId)return {enabled:false};
     const key='cindy-video-'+tab.id;
     if(m.type==='cindy-video-state'){
       if(typeof m.enabled!=='boolean')return {enabled:false};

@@ -108,7 +108,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   assert.equal('policy' in status,false);assert.equal('extension_dir' in status,false);assert.equal('port' in status,false);
   assert.equal('origin' in status.clients[0],false);assert.equal('extensionId' in status.clients[0],false);
   assert.ok(status.clients[0].id);assert.equal(status.installation.browsers[0].browser,'chrome');
-  const popup=await context.newPage();await popup.goto('chrome-extension://'+extensionId+'/popup.html');await popup.getByText('Connected to Cindy',{exact:true}).waitFor();await popup.close();
+  const connection=await context.serviceWorkers()[0].evaluate(()=>chrome.storage.session.get('connection'));assert.equal(connection.connection.connected,true);
   // Establish interception before this page's first request (extension-created targets may navigate before Playwright attaches).
   const xPage=await context.newPage();await xPage.goto('https://x.com/notifications/mentions');
   const started=Date.now();const mentions=await tool('browser_read',{recipe:'x_mentions',limit:5,maxChars:2000});

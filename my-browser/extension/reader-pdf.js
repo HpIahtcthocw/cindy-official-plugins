@@ -35,7 +35,7 @@ export async function openPDF({file,container,call,target,t,report}) {
       const result=await ocr.recognize(input,language.value);if(g!==generation)return;texts=result.match(/[\s\S]{1,1000}/g)||[];text.replaceChildren(el('p',result||t.ocrEmpty));progress.textContent='';
     }finally{ocrBusy=false;}
   }
-  async function translate(){const g=generation,pageNumber=number,textParts=[...texts];text.replaceChildren();for(let i=0;i<textParts.length;i+=12){const batch=textParts.slice(i,i+12);const r=await call({op:'translate',texts:batch,target:target()});if(g!==generation)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]),button(t.save,()=>call({op:'save',text:original,translation:r.translations[j],source:{url:'',title:`${file.name} · ${pageNumber}`}})));text.append(section);});}}
+  async function translate(){const g=generation,textParts=[...texts];text.replaceChildren();for(let i=0;i<textParts.length;i+=12){const batch=textParts.slice(i,i+12);const r=await call({op:'translate',texts:batch,target:target()});if(g!==generation)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
   try{await page();}catch(e){ocr.close();await task.destroy();throw e;}
   return ()=>{generation++;renderTask?.cancel();ocr.close();task.destroy();};
 }

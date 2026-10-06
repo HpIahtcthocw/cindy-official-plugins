@@ -1,7 +1,7 @@
 {
   "name": "Cindy Chrome",
-  "description": "Cindy 浏览器助手：整页双语、划词解释、字幕学习、PDF/OCR、词句收藏复习及新建 Cindy 任务；保留 Chrome/Edge 登录页读取与授权网页操作。页面文字交给已配置的 AI，不导出 Cookie。",
-  "whenToUse": "浏览器阅读、翻译、字幕学习、PDF、收藏复习及网页控制时使用。学习入口位于 Cindy 浏览器扩展；Agent 工具保留登录页读取与已授权交互。本包暂不能安装 Safari。",
+  "description": "Cindy 浏览器伴侣：整页双语、上下文解释、播放器内自动字幕、PDF/OCR 与浏览器控制。网页文字交给已配置的 AI，不导出 Cookie。",
+  "whenToUse": "用于浏览器阅读与控制、翻译、播放器内字幕和 PDF 阅读。翻译从 Cindy 扩展发起；Agent 保留已登录页面读取与授权交互。此包暂不支持安装 Safari。",
   "tools": {
     "browser_status": {
       "description": "检查实际连接的浏览器／用户配置与安装就绪情况，不读页面。多个配置同时连接时必须指定 browser id，不猜测账号。安装连接使用插件设置页；打开商店不代表安装成功。 Chrome／Edge 可在插件设置页按 ZIP 拖入引导安装。"
