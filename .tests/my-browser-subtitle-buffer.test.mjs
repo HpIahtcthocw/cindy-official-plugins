@@ -45,7 +45,7 @@ test('editorial captions clean source prose, retain timing anchors and join shor
  assert.deepEqual(core.subtitleDocument(cues),[{text:'I agree. It works.',translation:'我同意。这可行。'}]);
 });
 test('document brief and editorial requests use bounded prompts and keep separate cache entries',async()=>{
- const calls=[];const service=createLearningService({core,model:async r=>{calls.push(r);assert.ok(r.prompt.length<=32768);const input=JSON.parse(r.prompt.split('\n').at(-1));if(input.transcript)return {ok:true,text:'Consistent names and argument flow.'};return {ok:true,text:JSON.stringify({segments:input.words.map((w,i)=>({end:i,text:w.text,translation:'译文',paragraphEnd:i===input.words.length-1}))})};}});
+ const calls=[];const service=createLearningService({core,model:async r=>{calls.push(r);assert.ok(r.prompt.length<=32768);const input=JSON.parse(r.prompt.split('\n').at(-1));if(input.transcript)return {ok:true,text:'Consistent names and argument flow.'};return {ok:true,text:JSON.stringify({turns:input.turns.map(t=>({id:t.id,captions:t.text.split(' ').map(text=>({text,translation:'译文'}))}))})};}});
  const client=crypto.randomUUID();const guide=await service.handle(client,{op:'subtitle-document',text:'Entire source transcript.'});assert.match(guide.guide,/Consistent/);
  const words=Array.from({length:360},(_,i)=>({text:'fairlylongsourceword',start:i,end:i+.5}));
  const result=await service.handle(client,{op:'subtitles',editorial:true,words,context:'context '.repeat(1000)});assert.equal(result.cues.length,360);assert.match(calls[1].prompt,/Reconstruct polished, faithful prose first/);assert.match(calls[1].prompt,/not English fragment boundaries/);

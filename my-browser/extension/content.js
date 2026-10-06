@@ -35,7 +35,7 @@
     row.append(el('h1','Cindy','grow'));
     const language=el('select');language.setAttribute('aria-label',t.target);
     for(const [value,label]of Object.entries(L.languages)){if(value==='auto')continue;const o=el('option',label);o.value=value;language.append(o);}language.value=target;
-    language.onchange=()=>{cancel();target=language.value;request({op:'preferences',target}).catch(report);for(const c of cues)delete c.translation;if(videoSession){videoSession.documentReady=false;videoSession.guide='';for(const chunk of videoSession.chunks||[]){chunk.done=false;delete chunk.error;delete chunk.recovery;}cues=[];}if(translated)restorePage();if(videoSession){videoSession.paused=false;videoSession.failed=false;cueList();videoHandler?.();translateCues();}};
+    language.onchange=()=>{cancel();target=language.value;request({op:'preferences',target}).catch(report);for(const c of cues)delete c.translation;if(videoSession){videoSession.documentReady=false;videoSession.guide='';for(const chunk of videoSession.chunks||[]){chunk.done=false;delete chunk.error;delete chunk.recovery;delete chunk.context;}cues=[];}if(translated)restorePage();if(videoSession){videoSession.paused=false;videoSession.failed=false;cueList();videoHandler?.();translateCues();}};
     row.append(language,iconButton(t.theme,'M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Z M12 3v18 M12 3a9 9 0 0 1 0 18Z',()=>{panel.dataset.theme=panel.dataset.theme==='dark'?'light':'dark';}),iconButton(t.close,'M6 6l12 12M18 6 6 18',close));header.append(row);
     nav=el('nav');for(const [mode,label,action]of [['selection',t.translate,showSelection],['page',t.page,togglePage],['video',t.video,showVideo],['practice',t.practice,showPractice],['library',t.library,()=>api.runtime.sendMessage({type:'cindy-open-library'})]]){const b=button(label,action,'quiet');b.dataset.mode=mode;b.setAttribute('aria-pressed','false');nav.append(b);}header.append(nav);
     body=el('main',undefined,'stack');status=el('div','', 'status');status.setAttribute('role','status');footer=el('footer');cancelButton=button(t.cancel,()=>{if(videoSession){videoSession.paused=true;videoSession.retryButton.hidden=false;}cancel();videoSession?.playback?.update();stopPage();note(t.cancel);},'quiet');footer.append(status,cancelButton);panel.append(header,body,footer);shadow.append(panel);document.documentElement.append(host);updateFooter();
@@ -148,7 +148,7 @@
           const pending=session.chunks.filter(c=>!c.done&&!c.error&&!c.busy);if(!pending.length)return;
           const chunk=pending.find(c=>c.words.at(-1).end>video.currentTime)||pending[0];chunk.busy=true;
           const nearby=L.joinWords(session.words.slice(Math.max(0,chunk.start-120),Math.min(session.words.length,chunk.end+120)));
-          const context=('Whole-video editorial brief: '+session.guide+'\nSurrounding transcript: '+nearby).slice(0,8000);
+          const context=chunk.context||=('Whole-video editorial brief: '+session.guide+'\nSurrounding transcript: '+nearby).slice(0,8000);
           try{
             const r=await request({op:'subtitles',editorial:true,words:chunk.words,nextStart:chunk.nextStart,context});if(!current())return;
             chunk.done=true;chunk.cues=r.cues;cues=session.chunks.flatMap(c=>c.done?c.cues:[]).sort((a,b)=>a.start-b.start);previousCue=-1;activeCue=-1;cueList();videoHandler?.();
@@ -157,7 +157,7 @@
             if(!current())return;
             if(!['BAD_MODEL_OUTPUT','SUBTITLE_FORMAT','SUBTITLE_COVERAGE','SUBTITLE_TRANSLATION','SUBTITLE_PAUSE','SUBTITLE_DURATION','SUBTITLE_LENGTH'].includes(e.message)){session.failed=true;session.retryButton.hidden=false;report(e);return;}
             const recovery=chunk.recovery||(chunk.recovery={count:0});
-            if((chunk.depth||0)<4&&recovery.count<8){const parts=L.splitSubtitleChunk(chunk);if(parts.length){recovery.count++;for(const part of parts)part.recovery=recovery;session.chunks.splice(session.chunks.indexOf(chunk),1,...parts);if(!session.playback?.buffering)note(t.repairingSubtitles);continue;}}
+            if((chunk.depth||0)<4&&recovery.count<8){const parts=L.splitSubtitleChunk(chunk);if(parts.length){recovery.count++;for(const part of parts){part.recovery=recovery;part.context=context;}session.chunks.splice(session.chunks.indexOf(chunk),1,...parts);if(!session.playback?.buffering)note(t.repairingSubtitles);continue;}}
             chunk.error=e.message;session.retryButton.hidden=false;report(e);
             if(session.chunks.filter(c=>c.error).length>=2)session.failed=true;
           }finally{chunk.busy=false;}

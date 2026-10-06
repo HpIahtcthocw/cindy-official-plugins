@@ -83,15 +83,16 @@
     return parts.map(text=>{const a=start+(end-start)*offset/total;offset+=text.length;return {text,start:a,end:start+(end-start)*offset/total};});
   }
   function youtubeSubtitles(data) {
-    const cues=[];
-    for(const e of (Array.isArray(data.events)?data.events:[])){
+    const cues=[],events=(Array.isArray(data.events)?data.events:[]).filter(e=>Array.isArray(e?.segs)&&Number.isFinite(e.tStartMs)&&Number.isFinite(e.dDurationMs)&&e.tStartMs>=0&&e.dDurationMs>0&&e.segs.some(s=>typeof s.utf8==='string'&&s.utf8.trim()));
+    for(let eventIndex=0;eventIndex<events.length;eventIndex++){
+      const e=events[eventIndex];
       if(!Array.isArray(e.segs)||!Number.isFinite(e.tStartMs)||!Number.isFinite(e.dDurationMs)||e.tStartMs<0||e.dDurationMs<=0)continue;
       const start=e.tStartMs/1000,end=(e.tStartMs+e.dDurationMs)/1000,segs=e.segs.filter(s=>typeof s.utf8==='string'&&s.utf8.trim());
       if(segs.length&&segs[0].tOffsetMs===undefined)segs[0]={...segs[0],tOffsetMs:0};
       const text=segs.map(s=>s.utf8).join('').trim();if(!text)continue;if(text.length>4000||cues.length>=10000)throw Error('SUBTITLE_TOO_LARGE');
       let words;
       if(segs.every((s,i)=>Number.isFinite(s.tOffsetMs)&&s.tOffsetMs>=0&&s.tOffsetMs<e.dDurationMs&&(!i||s.tOffsetMs>=segs[i-1].tOffsetMs))){
-        words=[];for(let i=0;i<segs.length;){let j=i+1;while(j<segs.length&&segs[j].tOffsetMs===segs[i].tOffsetMs)j++;words.push(...timedWords(segs.slice(i,j).map(s=>s.utf8).join(''),start+segs[i].tOffsetMs/1000,j<segs.length?start+segs[j].tOffsetMs/1000:end));i=j;}
+        words=[];for(let i=0;i<segs.length;){let j=i+1;while(j<segs.length&&segs[j].tOffsetMs===segs[i].tOffsetMs)j++;const group=segs.slice(i,j),speakerChange=group.some(s=>s.isSpeakerChange===1||/^\s*>>/.test(s.utf8)),a=start+segs[i].tOffsetMs/1000,b=j<segs.length?start+segs[j].tOffsetMs/1000:Math.max(a+.01,Math.min(end,(events[eventIndex+1]?.tStartMs??end*1000)/1000)),part=timedWords(group.map(s=>s.utf8).join('').replace(/^\s*>>\s*/,''),a,b);if(part.length)part[0].breakBefore=speakerChange;words.push(...part);i=j;}
       }
       cues.push({start,end,text,...(words?{words}:{})});
     }
@@ -102,11 +103,11 @@
     for(const cue of [...raw].sort((a,b)=>a.start-b.start)){
       if(!cue.text?.trim()||!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.end<=cue.start)continue;
       if(previous&&cue.start===previous.start&&cue.end===previous.end&&cue.text===previous.text)continue;
-      let words=cue.words?.length?cue.words.map(w=>({...w})):timedWords(cue.text,cue.start,cue.end);
+      let words=cue.words?.length?cue.words.map(w=>({...w})):timedWords(editorial?cue.text.replace(/^\s*>>\s*/,''):cue.text,cue.start,cue.end);
       if(editorial)words=words.filter(w=>!/^(?:>>|[♪♫]+)$/.test(w.text.trim()));
       // Remove the repeated prefix of an overlapping rolling-caption window, not spoken repetitions.
-      if(previous&&cue.start<previous.end&&words.length>2){let overlap=0;for(let n=2;n<words.length&&n<=Math.min(result.length,30);n++)if(words.slice(0,n).every((w,i)=>w.text.trim()===result[result.length-n+i].text.trim()))overlap=n;if(overlap)words=words.slice(overlap);}
-      if(words.length){words[0].breakBefore=Boolean(result.length&&(words[0].start-result.at(-1).end>=(editorial?1.2:.65)||/^\s*(?:>>|[-–—]\s|\[)/u.test(cue.text)||/\]\s*$/.test(previous?.text||'')));result.push(...words);}
+      if(!cue.words?.length&&previous&&cue.start<previous.end&&words.length>2){let overlap=0;for(let n=2;n<words.length&&n<=Math.min(result.length,30);n++)if(words.slice(0,n).every((w,i)=>w.text.trim()===result[result.length-n+i].text.trim()))overlap=n;if(overlap)words=words.slice(overlap);}
+      if(words.length){words[0].breakBefore=Boolean(words[0].breakBefore||result.length&&(words[0].start-result.at(-1).end>=(editorial?1.2:.65)||/^\s*(?:>>|[-–—]\s)/u.test(cue.text)||!editorial&&(/^\s*\[/u.test(cue.text)||/\]\s*$/.test(previous?.text||''))));result.push(...words);}
       previous=cue;
     }
     // Conflicting source timestamps must not silently drop words or reorder spoken text.
@@ -147,6 +148,34 @@
   function cleanSubtitleText(text) {
     return typeof text==='string'?text.replace(/<\/?[a-z][^>]*>/gi,'').replace(/^\s*>>\s*/,'').replace(/[♪♫]+/g,'').replace(/\s+/g,' ').trim():'';
   }
+  function subtitleTurns(words) {
+    const turns=[];let start=0;
+    for(let i=1;i<=words.length;i++)if(i===words.length||words[i].breakBefore){turns.push({id:turns.length,start,end:i,words:words.slice(start,i)});start=i;}
+    return turns;
+  }
+  // Align edited prose to original speech using monotonic lexical anchors. The model
+  // writes language, never indices or timestamps. Removed fillers remain inside the
+  // neighbouring caption's source range; speaker boundaries are applied before this.
+  function alignSubtitleTurn(words,captions,nextStart) {
+    if(!Array.isArray(captions)||!captions.length||captions.length>words.length)throw Error('SUBTITLE_FORMAT');
+    const normalize=text=>text.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+    const source=words.map(w=>normalize(w.text)),edited=[],ends=[];
+    for(const caption of captions){const text=cleanSubtitleText(caption.text);if(!text)throw Error('SUBTITLE_TRANSLATION');for(const w of timedWords(text,0,1))edited.push(normalize(w.text));ends.push(edited.length);}
+    if(edited.length>words.length*3+20)throw Error('SUBTITLE_COVERAGE');
+    const rows=Array.from({length:source.length+1},()=>new Uint16Array(edited.length+1));
+    for(let i=source.length-1;i>=0;i--)for(let j=edited.length-1;j>=0;j--)rows[i][j]=source[i]&&source[i]===edited[j]?1+rows[i+1][j+1]:Math.max(rows[i+1][j],rows[i][j+1]);
+    const anchors=new Map();let i=0,j=0;
+    while(i<source.length&&j<edited.length){if(source[i]&&source[i]===edited[j]){anchors.set(j,i);i++;j++;}else if(rows[i+1][j]>=rows[i][j+1])i++;else j++;}
+    const groups=[];let from=0,last=-1;
+    for(let k=0;k<captions.length;k++){
+      const matches=[];for(let p=from;p<ends[k];p++)if(anchors.has(p))matches.push(anchors.get(p));
+      // Refuse a paraphrase with no lexical alignment instead of inventing timing.
+      if(!matches.length)throw Error('SUBTITLE_COVERAGE');
+      const end=k===captions.length-1?words.length-1:matches.at(-1);
+      if(end<=last)throw Error('SUBTITLE_COVERAGE');groups.push({...captions[k],end});last=end;from=ends[k];
+    }
+    return subtitleSegments(words,groups,nextStart,true);
+  }
   function transcriptPages(words) {
     const pages=[];let page=[],size=0;
     for(const word of words){if(size+word.text.length+1>12000&&page.length){pages.push(joinWords(page));page=[];size=0;}page.push(word);size+=word.text.length+1;}
@@ -186,7 +215,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,transcriptPages,subtitleDocument,subtitleBuffer};
+  const api={uuid,languages,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,transcriptPages,subtitleDocument,subtitleBuffer};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);
