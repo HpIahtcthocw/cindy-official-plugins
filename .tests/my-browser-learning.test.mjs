@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {createLearningService} from '../my-browser/learning-service.js';
+import {createSubtitleCache} from '../my-browser/subtitle-cache.js';
 const require=createRequire(import.meta.url),core=require('../my-browser/extension/learning-core.js');
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
 const version=require('../my-browser/extension/manifest.json').version;
@@ -58,6 +59,11 @@ test('learning requests are authenticated, deduplicated, cancellable and revoked
   assert.equal((await request('/learning/start',job,{Origin:'https://example.test'})).status,403);
   assert.equal((await request('/learning/start',job)).ok,true);await request('/learning/start',job);assert.equal(notices.length,1);
   assert.equal((await bridge.request('learningActive',{id:job.id})).active,true);
+  await bridge.request('learningProgress',{id:job.id,progress:{stage:'model',attempt:2,prompt:'must not escape'}});
+  const progress=(await request('/learning/result',{id:job.id})).progress;
+  assert.equal(progress.stage,'model');assert.equal(progress.attempt,2);assert.equal(progress.prompt,undefined);
+  await bridge.request('learningProgress',{id:job.id,progress:{stage:'untrusted arbitrary text'}});
+  assert.equal((await request('/learning/result',{id:job.id})).progress.stage,'model');
   await bridge.request('setPolicy',{policy:{read:{block:['example.test']},interact:{allow:[]}}});
   assert.equal((await bridge.request('learningActive',{id:job.id})).active,false);
   assert.equal((await request('/learning/result',{id:job.id})).status,403);
@@ -176,4 +182,54 @@ test('default listener allocation reaches the expanded range while binding only 
  vm.runInNewContext(code,context);const bridge=context.module.exports.createBridge();
  assert.equal((await bridge.request('status')).port,18820);assert.deepEqual(candidates,Array.from({length:11},(_,i)=>18810+i));await bridge.close();
  denied=true;assert.equal((await context.module.exports.createBridge().request('status')).error,'BRIDGE_LISTEN_DENIED');
+});
+
+test('subtitle cache survives service restart, isolates language and transcript, and can be explicitly refreshed',async()=>{
+ const files=new Map(),stages=[];let modelCalls=0;
+ const library=async r=>r.op==='open'?{ok:true}:r.op==='read'?(files.has(r.path)?{ok:true,content:files.get(r.path)}:{ok:false,errorCode:'NOT_FOUND'}):(files.set(r.path,r.content),{ok:true});
+ const model=async r=>{modelCalls++;const input=JSON.parse(r.prompt.split('\n').at(-1));return {ok:true,model:'fixture',text:JSON.stringify({turns:input.turns.map(t=>({id:t.id,captions:[{text:t.text,translation:'译文'}]}))})};};
+ const client=crypto.randomUUID(),req={op:'subtitles',editorial:true,target:'zh-CN',source:{url:'https://www.youtube.com/watch?v=fixture&t=12'},words:[{text:'Hello',start:0,end:1},{text:'world.',start:1,end:2}]};
+ let service=createLearningService({core,library,model});let result=await service.handle(client,req,undefined,p=>stages.push(p.stage));
+ assert.equal(result.cache.state,'saved');assert.deepEqual(stages,['cache','queued','model','validating','saving']);assert.equal(files.size,1);
+ service=createLearningService({core,library,model});result=await service.handle(client,{...req,context:'different preceding window',source:{url:'https://www.youtube.com/watch?v=fixture&t=55'}});
+ assert.equal(result.cache.state,'hit');assert.equal(modelCalls,1);assert.deepEqual(result.cues.map(c=>c.translation),['译文']);
+ await service.handle(client,{...req,target:'ja'});assert.equal(modelCalls,2);
+ await service.handle(client,{...req,words:[{text:'Changed.',start:0,end:2}]});assert.equal(modelCalls,3);
+ await service.handle(client,{op:'subtitle-cache-clear',target:req.target,source:req.source});
+ await service.handle(client,req);assert.equal(modelCalls,4);
+ await service.handle(crypto.randomUUID(),req);assert.equal(modelCalls,5);
+});
+test('subtitle cache failure preserves translation and corrupted cache data is never overwritten',async()=>{
+ const req={op:'subtitles',editorial:true,source:{url:'https://example.test/video'},words:[{text:'Hello.',start:0,end:1}]};
+ const model=async()=>({ok:true,text:JSON.stringify({turns:[{id:0,captions:[{text:'Hello.',translation:'你好。'}]}]})});
+ let writes=0;const service=createLearningService({core,model,library:async r=>{if(r.op==='write')writes++;return r.op==='open'?{ok:true}:{ok:true,content:'broken JSON'};}});
+ const r=await service.handle(crypto.randomUUID(),req);assert.equal(r.ok,true);assert.equal(r.cache.state,'unavailable');assert.equal(r.cache.error,'CACHE_CORRUPT');assert.equal(writes,0);
+ const denied=createLearningService({core,model,library:async r=>r.op==='open'?{ok:true}:r.op==='read'?{ok:false,errorCode:'NOT_FOUND'}:{ok:false,errorCode:'DISK_FULL'}});
+ const d=await denied.handle(crypto.randomUUID(),req);assert.equal(d.cues[0].translation,'你好。');assert.equal(d.cache.error,'DISK_FULL');assert.equal(d.cache.state,'unavailable');
+});
+
+test('new video progress identifies slots held by cancelled old upstream requests',async()=>{
+ const gates=[],stages=[];let oldActive=true;
+ const service=createLearningService({core,model:async r=>{await new Promise(resolve=>gates.push(resolve));const input=JSON.parse(r.prompt.split('\n').at(-1));return {ok:true,text:input.turns?JSON.stringify({turns:input.turns.map(t=>({id:t.id,captions:[{text:t.text,translation:'译文'}]}))}):'old response'};}});
+ const client=crypto.randomUUID(),settle=p=>p.catch(e=>e.message);
+ const old=[1,2].map(i=>settle(service.handle(client,{op:'explain',text:'old video '+i},async()=>oldActive)));
+ await new Promise(r=>setImmediate(r));oldActive=false;
+ const latest=service.handle(client,{op:'subtitles',editorial:true,words:[{text:'New.',start:0,end:1}]},undefined,p=>stages.push(p.stage));
+ await new Promise(r=>setImmediate(r));assert.ok(stages.includes('waiting-previous'));assert.equal(gates.length,2);
+ gates.shift()();await new Promise(r=>setImmediate(r));assert.equal(stages.at(-1),'model');
+ while(gates.length)gates.shift()();assert.equal((await latest).cues[0].translation,'译文');assert.deepEqual(await Promise.all(old),['REQUEST_CANCELLED','REQUEST_CANCELLED']);
+});
+
+test('clearing cached subtitles invalidates an older writer without removing other video files',async()=>{
+ const files=new Map(),library=async r=>r.op==='open'?{ok:true}:r.op==='read'?(files.has(r.path)?{ok:true,content:files.get(r.path)}:{ok:false,errorCode:'NOT_FOUND'}):(files.set(r.path,r.content),{ok:true});
+ const cache=createSubtitleCache({library,core}),client=crypto.randomUUID(),req={source:{url:'https://example.test/one'},target:'zh-CN'},words=[{text:'Hello.',start:0,end:1}],cues=[{text:'Hello.',translation:'你好。'}];
+ const old=await cache.open(client,req),other=await cache.open(client,{...req,source:{url:'https://example.test/two'}});await other.put(words,undefined,cues);
+ await cache.clear(client,req);await assert.rejects(old.put(words,undefined,cues),/CACHE_INVALIDATED/);
+ assert.equal(await(await cache.open(client,req)).get(words),null);assert.ok(await(await cache.open(client,{...req,source:{url:'https://example.test/two'}})).get(words));
+});
+
+test('a model timeout is reported in the model stage, never as a validation failure',async()=>{
+ const stages=[],service=createLearningService({core,model:async()=>({ok:false,errorCode:'TIMEOUT'})});
+ await assert.rejects(service.handle(crypto.randomUUID(),{op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]},undefined,p=>stages.push(p.stage)),/TIMEOUT/);
+ assert.equal(stages.at(-1),'model');assert.equal(stages.includes('validating'),false);
 });

@@ -610,12 +610,13 @@ async function learningRequest(message,sender) {
   try {
     // Legacy subtitle repair can make three 60s Host calls, each with up to
     // 30s queueing. The bridge retains the result for a further 30s.
-    const deadline=Date.now()+300000;
+    const deadline=Date.now()+300000;let lastProgress;
     await learningFetch(target,'/learning/start',{id,request},()=>checkCurrent(),deadline);
     while(Date.now()<deadline) {
       await checkCurrent();
       const result=await learningFetch(target,'/learning/result',{id},()=>checkCurrent(),deadline);
       if(result.done)return result.result;
+      if(page&&result.progress){const serialized=JSON.stringify(result.progress);if(serialized!==lastProgress){lastProgress=serialized;await chrome.tabs.sendMessage(page.id,{type:'cindy-learning-progress',id,progress:result.progress},{documentId:sender.documentId}).catch(()=>{});}}
       await sleep(450);
     }
     throw Error('TIMEOUT');

@@ -151,7 +151,7 @@ function createBridge(options = {}) {
       let payload;
       try{payload=L.validate(b.request);}catch{return send(res,failure('INVALID_INPUT','Check the selected text or file.'),400);}
       if(payload.source.url){const gate=P.check(policy,'text',payload.source.url);if(!gate.ok)return send(res,gate,403);payload.source.url=P.redactUrl(payload.source.url);}
-      const item={id:b.id,clientId:id,payload,created:Date.now(),result:null};
+      const item={id:b.id,clientId:id,payload,created:Date.now(),result:null,progress:{stage:'accepted',startedAt:Date.now(),updatedAt:Date.now(),attempt:1}};
       learning.set(b.id,item);
       options.notify?.('learning-request',{id:b.id,clientId:id,request:payload});
       return send(res,{ok:true,id:b.id});
@@ -162,7 +162,7 @@ function createBridge(options = {}) {
       if(req.url==='/learning/cancel'){learning.delete(b.id);return send(res,{ok:true});}
       const gate=item.payload.source.url?P.check(policy,'text',item.payload.source.url):{ok:true};
       if(!gate.ok){learning.delete(b.id);return send(res,gate,403);}
-      return send(res,item.result?{ok:true,done:true,result:item.result}:{ok:true,done:false});
+      return send(res,item.result?{ok:true,done:true,result:item.result}:{ok:true,done:false,progress:item.progress});
     }
     if (req.method === 'GET' && req.url === '/poll') {
       const job = take(id); if (job) return send(res,{job});
@@ -238,11 +238,18 @@ function createBridge(options = {}) {
       }
       return {ok:true,policy};
     }
-    if(method==='learningActive'||method==='learningResult') {
+    if(method==='learningActive'||method==='learningResult'||method==='learningProgress') {
       const item=learning.get(params.id),client=item&&clients.get(item.clientId);
       const valid=!!item && !!client?.trusted && Date.now()-item.created<=330000 && (!item.payload.source.url||P.check(policy,'text',item.payload.source.url).ok);
       if(method==='learningActive')return {ok:true,active:valid&&!item?.result};
       if(!valid)return failure('REQUEST_CANCELLED','Request no longer active.');
+      if(method==='learningProgress'){
+        if(!item.result&&['cache','queued','waiting-previous','model','validating','saving'].includes(params.progress?.stage)){
+          const previous=item.progress||{},attempt=Number.isInteger(params.progress.attempt)?Math.min(3,Math.max(1,params.progress.attempt)):previous.attempt||1;
+          item.progress={stage:params.progress.stage,attempt,startedAt:previous.startedAt||item.created,updatedAt:previous.stage===params.progress.stage&&previous.attempt===attempt?previous.updatedAt:Date.now()};
+        }
+        return {ok:true};
+      }
       if(!item.result)item.result=params.result;
       return {ok:true};
     }

@@ -74,3 +74,11 @@ test('transient retry backoff leaves other preparation windows available',()=>{
  assert.deepEqual(core.pendingSubtitleChunks(chunks,0,1,3000),chunks);
  chunks[1].done=true;chunks[0].error='TIMEOUT';assert.deepEqual(core.pendingSubtitleChunks(chunks,0,1,4000),[]);
 });
+
+test('progress reports completed source coverage and real stage time without counting in-flight work',()=>{
+ const chunks=[chunk(0,30,true),chunk(30,60,false)];chunks[0].cache={state:'hit'};chunks[1].busy=true;chunks[1].progress={stage:'model',updatedAt:1000,attempt:2};
+ let p=core.subtitlePreparation(chunks,10,43000);assert.equal(p.percent,50);assert.equal(p.stage,'model');assert.equal(p.elapsed,42);assert.equal(p.cached,1);assert.equal(p.saved,1);assert.equal(p.ahead,20);
+ p=core.subtitlePreparation(chunks,10,58000);assert.equal(p.percent,50);assert.equal(p.elapsed,57,'time advances but completion does not');
+ chunks[1].error='TIMEOUT';assert.equal(core.subtitlePreparation(chunks,40).stage,'failed');
+ chunks[1].done=true;chunks[1].cache={state:'unavailable',error:'DISK_FULL'};p=core.subtitlePreparation(chunks,40);assert.equal(p.percent,100);assert.equal(p.cacheError,'DISK_FULL');
+});

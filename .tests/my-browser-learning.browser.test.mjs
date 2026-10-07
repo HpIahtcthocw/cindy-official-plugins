@@ -39,7 +39,7 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
   return {ok:true,text:r.expectJson?JSON.stringify({translations:material.texts.map(x=>'译文：'+x)}):'这是结合上下文的解释。'};
  },library:async r=>r.op==='open'?{ok:true}:r.op==='read'?(files.has(r.path)?{ok:true,content:files.get(r.path)}:{ok:false,errorCode:'NOT_FOUND'}):(files.set(r.path,r.content),{ok:true})});
 
- bridge=createBridge({ports:[18819],extensionId,notify:(_method,p)=>{service.handle(p.clientId,p.request,async()=> (await bridge.request('learningActive',{id:p.id})).active).then(result=>bridge.request('learningResult',{id:p.id,result}),e=>bridge.request('learningResult',{id:p.id,result:{ok:false,error:e.message}}));}});await bridge.request('status');
+ bridge=createBridge({ports:[18819],extensionId,notify:(_method,p)=>{service.handle(p.clientId,p.request,async()=> (await bridge.request('learningActive',{id:p.id})).active,progress=>bridge.request('learningProgress',{id:p.id,progress})).then(result=>bridge.request('learningResult',{id:p.id,result}),e=>bridge.request('learningResult',{id:p.id,result:{ok:false,error:e.message}}));}});await bridge.request('status');
  const fixture='<title>Reading fixture</title><main style="max-width:600px;padding:40px;font:20px/1.8 sans-serif"><h1>Learning with Cindy</h1><p>Hello world. Reading gives us new ideas.</p><p>Practice makes progress.</p><div id="movie_player" class="html5-video-player" style="position:relative;width:960px;height:540px;background:linear-gradient(125deg,#977c66,#293d3d)"><video controls style="width:100%;height:100%;display:block"></video><div class="ytp-caption-window-container" style="position:absolute;bottom:30px;left:25%;color:white">Original YouTube caption</div></div></main>';
  const proxy=http.createServer((req,res)=>{let url;try{url=new URL(req.url);}catch{res.writeHead(403);return res.end();}if(['example.test','www.youtube.com'].includes(url.hostname)){res.setHeader('content-type','text/html');return res.end(fixture);}if(url.hostname!=='127.0.0.1'||url.port!=='18819'){res.writeHead(403);return res.end();}const upstream=http.request({hostname:'127.0.0.1',port:18819,path:url.pathname,method:req.method,headers:req.headers},r=>{res.writeHead(r.statusCode,r.headers);r.pipe(res);});upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);});
  proxy.on('connect',(_r,s)=>s.end('HTTP/1.1 403 Forbidden\r\n\r\n'));await new Promise(r=>proxy.listen(0,'127.0.0.1',r));t.after(()=>{proxy.closeAllConnections();proxy.close();});
@@ -130,12 +130,23 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;v.muted=true;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';for(let i=0;i<72;i++)track.addCue(new VTTCue(i*2,(i+1)*2,Array.from({length:10},(_,j)=>'Buffer'+(i*10+j)).join(' ')));await v.play()},longWav.toString('base64'));
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
  for(let i=0;i<60&&prefetchStarted.length<2;i++)await page.waitForTimeout(100);
+ await waitText('等待模型返回');assert.equal(await readNode('DIV','preparation-track','function(){return this.getAttribute("aria-valuenow")}'),'0');
+ if(screenshots){
+   await click('字幕设置');await page.screenshot({path:path.join(screenshots,'subtitle-progress-waiting.png')});
+   await click('字幕设置');await click('模型设置');
+   await readNode('SELECT','外观','function(){this.value="dark";this.dispatchEvent(new Event("change"))}');
+   assert.equal(await readNode('DIV','caption-notice','function(){return getComputedStyle(this).backgroundColor}'),'rgb(31, 31, 30)');
+   await click('关闭设置');await page.screenshot({path:path.join(screenshots,'subtitle-progress-dark.png')});
+   await click('字幕设置');await click('模型设置');
+   await readNode('SELECT','外观','function(){this.value="light";this.dispatchEvent(new Event("change"))}');await click('返回');
+ }
  assert.deepEqual(prefetchStarted,['Buffer0','Buffer180']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true);
  prefetchGates.get('Buffer0')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
  await page.locator('video').evaluate(v=>{v.currentTime=120});
  // Host model calls cannot be aborted. Finish an old provider call before the
  // seek can consume its slot; the obsolete result must never reach the captions.
- await page.waitForTimeout(150);assert.equal(prefetchStarted.includes('Buffer540'),false,'seeking cannot bypass occupied provider slots');
+ await waitText('等待先前模型请求结束');assert.equal(prefetchStarted.includes('Buffer540'),false,'seeking cannot bypass occupied provider slots');
+ if(screenshots)await page.screenshot({path:path.join(screenshots,'subtitle-progress-previous.png')});
  prefetchGates.get('Buffer180')();for(let i=0;i<40&&!prefetchStarted.includes('Buffer540');i++)await page.waitForTimeout(100);assert.ok(prefetchStarted.includes('Buffer540'));
  await click('仅原文');for(let i=0;i<30&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'original mode releases Cindy-owned buffer pause');
  assert.equal(modelCalls.some(r=>JSON.parse(r.prompt.split('\n').at(-1)).transcript),false);
@@ -147,7 +158,7 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);await click('双语');
  await waitText('译文：TransientSubtitle');assert.equal(transientFailures,2,'the timed-out passage retries only its missing part');
  await page.evaluate(async()=>{const v=document.querySelector('video'),track=v.textTracks[0];for(const c of [...track.cues])track.removeCue(c);track.addCue(new VTTCue(0,2.8,'UnavailableSubtitle'));v.currentTime=.2;await v.play();});
- await waitText('(INTERNAL)');assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'failed translation cannot strand the buffering pause');
+ await waitText('(INTERNAL)');if(screenshots)await page.screenshot({path:path.join(screenshots,'subtitle-progress-error.png')});assert.equal(await page.locator('video').evaluate(v=>v.paused),false,'failed translation cannot strand the buffering pause');
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'close'}),tabId);
  const reader=await context.newPage();await reader.goto('chrome-extension://'+extensionId+'/library.html');await reader.getByRole('button',{name:'打开 PDF / 文本 / Markdown'}).waitFor();assert.equal(await reader.getByRole('button',{name:'收藏',exact:true}).count(),0);
  const ocr=await reader.evaluate(async()=>{const {createOCR}=await import('./ocr.js');const c=document.createElement('canvas');c.width=1000;c.height=180;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,c.width,c.height);x.fillStyle='black';x.font='60px Arial';x.fillText('CINDY READING TEST',25,100);const o=createOCR();try{return await o.recognize(c,'eng')}finally{o.close()}});assert.match(ocr,/CINDY READING TEST/);

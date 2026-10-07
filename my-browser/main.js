@@ -172,13 +172,13 @@ async function handleLearningHostMessage(msg){
   if(msg.type==='host-context-changed'){hostLocale=msg.context?.locale||hostLocale;return;}
   if(msg.type!=='event'||msg.name!=='node-notification'||msg.method!=='learning-request')return;
   const {id,clientId,request}=msg.params||{};
-  let result;
+  let result,stage='accepted';
   try {
     await sync();
     await serialize(async()=>{const {cfg}=await load();if(!(cfg.learningProfiles||[]).some(c=>c.id===clientId)){const profiles=[...(cfg.learningProfiles||[]),{id:clientId}];const r=await fetch('/kv',{method:'PUT',body:JSON.stringify({...cfg,learningProfiles:profiles})});if(!r.ok)throw Error('SAVE_FAILED');}});
     const service=await getLearningService();
-    result=await service.handle(clientId,request,async()=> (await node('learningActive',{id})).active===true);
-  }catch(e){result={ok:false,error:e.message||'LEARNING_UNAVAILABLE'};}
+    result=await service.handle(clientId,request,async()=> (await node('learningActive',{id})).active===true,progress=>{stage=progress.stage;return node('learningProgress',{id,progress});});
+  }catch(e){result={ok:false,error:e.message||'LEARNING_UNAVAILABLE',stage};}
   await node('learningResult',{id,result});
 }
 // Resident logic establishes the bridge after saved permissions are loaded.

@@ -8,7 +8,7 @@
   for(const code of codes)if(!languages[code]){try{languages[code]=new Intl.DisplayNames([code],{type:'language'}).of(code);}catch{languages[code]=code;}}
   function validTarget(value){return typeof value==='string'&&((Object.hasOwn(languages,value)&&value!=='auto')||/^custom:[\p{L}\p{M}][\p{L}\p{M}\p{N} ()’'·-]{0,79}$/u.test(value));}
   function languageName(value){return Object.hasOwn(languages,value)?languages[value]:validTarget(value)?value.slice(7):'';}
-  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles','subtitle-document']);
+  const operations = new Set(['translate','explain','summary','conversation','save','list','remove','review','import','preferences','config','task','subtitles','subtitle-document','subtitle-cache-clear']);
   function string(value,max,required=false) {
     if (typeof value !== 'string' || value.length>max || (required && !value.trim())) throw Error('INVALID_INPUT');
     return value;
@@ -201,6 +201,18 @@
     const ahead=Math.max(0,until-time)/Math.max(.25,rate);
     return {ahead,ready:complete||ahead>=15,complete};
   }
+  function subtitlePreparation(chunks,time=0,now=Date.now()){
+    const all=chunks||[],total=all.reduce((n,c)=>n+c.words.length,0),done=all.filter(c=>c.done),completed=done.reduce((n,c)=>n+c.words.length,0);
+    const pending=all.filter(c=>!c.done&&c.words.at(-1).end>time),chunk=pending.find(c=>c.words[0].start<=time)||pending.find(c=>c.busy||c.error||c.retryAt>now);
+    const p=chunk?.progress;
+    return {percent:total?Math.floor(completed/total*100):0,done:done.length,total:all.length,
+      ahead:all.length?subtitleBuffer(all,time).ahead:0,complete:total>0&&completed===total,
+      stage:chunk?.error?'failed':chunk?.retryAt>now?'retry':p?.stage||(all.length?'prepared':'reading'),
+      errorStage:chunk?.error?p?.stage:undefined,elapsed:p?Math.max(0,Math.floor(((p.finishedAt||now)-p.updatedAt)/1000)):0,attempt:p?.attempt||1,
+      range:chunk?[chunk.words[0].start,chunk.words.at(-1).end]:null,
+      cached:done.filter(c=>c.cache?.state==='hit').length,saved:done.filter(c=>['hit','saved'].includes(c.cache?.state)).length,
+      cacheError:done.find(c=>c.cache?.state==='unavailable')?.cache?.error};
+  }
   function splitSubtitleChunk(chunk) {
     const {words}=chunk;if(words.length<2)return [];
     const middle=Math.floor(words.length/2),candidates=[];
@@ -220,7 +232,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,commonLanguages,validTarget,languageName,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks};
+  const api={uuid,languages,commonLanguages,validTarget,languageName,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks,subtitlePreparation};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);
