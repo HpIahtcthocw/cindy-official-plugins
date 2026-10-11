@@ -12,6 +12,11 @@ await fs.mkdir(out,{recursive:true});
 process.chdir(repository);
 const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json'),'utf8'));
 const run=(file,args,opts={})=>execFileSync(file,args,{encoding:'utf8',maxBuffer:32*1024*1024,stdio:['ignore','pipe','pipe'],...opts});
+const relativePath=(value,base=repository)=>{
+  const relative=path.relative(base,value);
+  if(!relative||relative.includes('\0'))throw new Error('Invalid child-process path.');
+  return relative;
+};
 const dependencyStage=await fs.mkdtemp(path.join(out,'.my-browser-dependencies-'));
 try {
   // Assemble pinned resources once and copy them inside each extension root.
@@ -22,7 +27,7 @@ try {
   run('/bin/bash',['.github/scripts/package-plugin.sh','my-browser',dependencyOutput],{shell:false});
   const dependencyUnpacked=path.join(dependencyStage,'unpacked');
   await fs.mkdir(dependencyUnpacked);
-  run('/usr/bin/unzip',['-q',dependencyPackage,'-d',dependencyUnpacked]);
+  run('/usr/bin/unzip',['-q',relativePath(dependencyPackage),'-d',relativePath(dependencyUnpacked)]);
   const generatedVendor=path.join(dependencyUnpacked,'extension','vendor');
   await fs.access(generatedVendor);
   for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
@@ -43,13 +48,13 @@ try {
   if(browser!=='safari') {
     const zip=path.join(out,'my-browser-'+browser+'-'+manifest.version+'.zip');
     process.chdir(dir);
-    try { run('/usr/bin/zip',['-qr',zip,'.'],{shell:false}); }
+    try { run('/usr/bin/zip',['-qr',relativePath(zip,dir),'.'],{shell:false}); }
     finally { process.chdir(repository); }
     console.log(browser+': '+zip);continue;
   }
   if(process.platform!=='darwin') throw new Error('Safari packaging requires a macOS build machine.');
   const project=path.join(out,'safari');
-  run('/usr/bin/xcrun',['safari-web-extension-converter',dir,'--project-location',project,'--app-name','My Browser','--bundle-identifier','com.makecindy.mybrowser','--macos-only','--copy-resources','--no-open','--no-prompt']);
+  run('/usr/bin/xcrun',['safari-web-extension-converter',relativePath(dir),'--project-location',relativePath(project),'--app-name','My Browser','--bundle-identifier','com.makecindy.mybrowser','--macos-only','--copy-resources','--no-open','--no-prompt']);
   const xcodeProject=path.join(project,'My Browser','My Browser.xcodeproj');
   // Some converter releases derive the container id from the display name instead of --bundle-identifier.
   const pbx=path.join(xcodeProject,'project.pbxproj');
@@ -58,24 +63,24 @@ try {
     .replace(/MARKETING_VERSION = [^;]+;/g,'MARKETING_VERSION = '+manifest.version+';')
     .replace(/CURRENT_PROJECT_VERSION = [^;]+;/g,'CURRENT_PROJECT_VERSION = '+manifest.version.split('.').reduce((n,p)=>n*1000+Number(p),0)+';');
   await fs.writeFile(pbx,projectSource);
-  const list=JSON.parse(run('/usr/bin/xcodebuild',['-list','-json','-project',xcodeProject]));
+  const list=JSON.parse(run('/usr/bin/xcodebuild',['-list','-json','-project',relativePath(xcodeProject)]));
   const scheme=list.project.schemes.find(x=>x.includes('macOS')) || list.project.schemes[0];
   const log=path.join(out,'safari-build.log');
   try {
     const identity=process.env.MY_BROWSER_SIGN_IDENTITY, team=process.env.MY_BROWSER_DEVELOPMENT_TEAM;
     if (identity && !team) throw new Error('A signing identity also requires MY_BROWSER_DEVELOPMENT_TEAM.');
     const signing=identity ? ['CODE_SIGNING_ALLOWED=YES','CODE_SIGN_STYLE=Manual','CODE_SIGN_IDENTITY='+identity,'DEVELOPMENT_TEAM='+team] : ['CODE_SIGNING_ALLOWED=NO'];
-    const output=run('/usr/bin/xcodebuild',['-project',xcodeProject,'-scheme',scheme,'-configuration','Release','-derivedDataPath',path.join(out,'derived'),...signing,'MACOSX_DEPLOYMENT_TARGET=12.0','ARCHS=arm64 x86_64','ONLY_ACTIVE_ARCH=NO','build']);
+    const output=run('/usr/bin/xcodebuild',['-project',relativePath(xcodeProject),'-scheme',scheme,'-configuration','Release','-derivedDataPath',relativePath(path.join(out,'derived')),...signing,'MACOSX_DEPLOYMENT_TARGET=12.0','ARCHS=arm64 x86_64','ONLY_ACTIVE_ARCH=NO','build']);
     await fs.writeFile(log,output);
   } catch(e) {await fs.writeFile(log,String(e.stdout || '')+'\n'+String(e.stderr || ''));throw new Error('Safari build failed; inspect '+log);}
   const app=path.join(out,'derived/Build/Products/Release/My Browser.app');
   const notary=process.env.MY_BROWSER_NOTARY_PROFILE;
   if (process.env.MY_BROWSER_SIGN_IDENTITY && notary) {
     const archive=path.join(out,'My Browser.zip');
-    run('/usr/bin/ditto',['-c','-k','--keepParent',app,archive]);
-    run('/usr/bin/xcrun',['notarytool','submit',archive,'--keychain-profile',notary,'--wait']);
-    run('/usr/bin/xcrun',['stapler','staple',app]);
-    run('/usr/sbin/spctl',['--assess','--type','execute',app]);
+    run('/usr/bin/ditto',['-c','-k','--keepParent',relativePath(app),relativePath(archive)]);
+    run('/usr/bin/xcrun',['notarytool','submit',relativePath(archive),'--keychain-profile',notary,'--wait']);
+    run('/usr/bin/xcrun',['stapler','staple',relativePath(app)]);
+    run('/usr/sbin/spctl',['--assess','--type','execute',relativePath(app)]);
     const native=path.join(out,'native');await fs.mkdir(native);await fs.cp(app,path.join(native,'My Browser.app'),{recursive:true});
     console.log('Safari: signed and notarized app at '+native+'. Copy native/ into the plugin before packing.');
   } else console.log('Safari: universal Release app built. NOT READY FOR CONSUMER DISTRIBUTION: signing/notarization not completed.');
