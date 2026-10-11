@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-A unified Cindy browser companion candidate. **0.4.10** brings compact reading controls and automatic in-player translation to browser control. The Chrome extension is **Cindy**; the Cindy plugin is **Cindy Chrome**, both using the official Cindy icon. The `my-browser` identity, extension key and five existing tools are preserved. **Not published to a browser store; this version still requires installed Cindy verification.**
+A unified Cindy browser companion candidate. **0.4.10** brings compact reading controls and automatic in-player translation to browser control. The Chrome extension is **Cindy**; the Cindy plugin is **Cindy Chrome**, both using the official Cindy icon. The `my-browser` identity, extension key and five existing tools are preserved. Chrome installation uses the published Chrome Web Store listing and still requires a running Cindy client.
 
 ## Reading and learning
 
@@ -42,11 +42,11 @@ The on-demand workflow manual is `manual/browser/MANUAL.md`. Parameter names and
 | Edge | Shared Chromium extension, separate store artifact and profile routing | Protocol and Windows launcher tests; no real Windows/Edge device verification yet. |
 | Safari | WebExtension adapter + generated macOS container app | Universal arm64/x86_64 Release build and identity-pairing tests; no signed consumer installation or real Safari extension execution yet. |
 
-Settings opens the official Chrome Web Store as the primary Chrome installation route. Finish the store install, return to settings and let the live connection check complete. Developer ZIP/directory loading remains an explicit fallback; it is not the normal consumer path.
+Settings opens the official Chrome Web Store as the primary Chrome installation route. Finish the store install, return to settings and let the live connection check complete. Developer directory loading remains an explicit fallback; it is not the normal consumer path.
 
 Safari still requires a store release or signed/notarized app, neither configured yet. Chrome Web Store installation uses the published extension identity and receives browser-managed updates. Unknown extension identities still require real Cindy pairing confirmation. Developer installations remain separate and should keep only one copy.
 
-Installation cards appear only for connected browsers or installed browsers with a deliverable ZIP/store route. Unpublished Safari and browsers absent from this device are hidden, with no coming-soon placeholder.
+Installation cards appear only for connected browsers or installed browsers with a published store route. Unpublished browsers and browsers absent from this device are hidden, with no coming-soon placeholder.
 
 ## Security and limitations
 

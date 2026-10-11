@@ -73,7 +73,7 @@
     body=el('main',undefined,'stack');status=el('div','','status');status.setAttribute('role','status');footer=el('footer');cancelButton=button(t.cancel,()=>{if(videoSession){videoSession.paused=true;videoSession.retryButton.hidden=false;}cancel();videoSession?.playback?.update();stopPage();note(t.cancel);},'quiet');footer.append(status,cancelButton);panel.append(header,body,footer);shadow.append(panel);document.documentElement.append(host);updateFooter();
   }
   function clear(mode){if(mode!=='settings'){cancel();stopVideo();}body.onkeydown=null;body.replaceChildren();note('');}
-  function showPageHome(){clear('page');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()),button(translated?t.restore:t.translatePage,async()=>{await togglePage();if(host)showPageHome();},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences();})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
+  function showPageHome(){clear('page');const media=document.querySelector('video,audio');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()),media&&button(t.video,()=>showVideo(),'primary full'),button(translated?t.restore:t.translatePage,async()=>{await togglePage();if(host)showPageHome();},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences();})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
   function showSettings(){clear('settings');body.append(button(t.back,()=>videoSession?videoSettings():showPageHome(),'quiet'),el('h2',t.settings),field(t.webLanguage,languageControl()));
     body.append(field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences();})),field(t.bufferPause,switchControl(t.bufferPause,prefs.bufferPause,v=>{prefs.bufferPause=v;videoSession?.playback?.update();return savePreferences();})));
     const theme=el('select');theme.setAttribute('aria-label',t.appearance);for(const [value,label]of [['light',t.light],['dark',t.dark]]){const o=el('option',label);o.value=value;theme.append(o);}theme.value=prefs.theme||pageTheme();theme.onchange=()=>{prefs.theme=theme.value;shadow.querySelector('.cindy-root').dataset.theme=prefs.theme;videoSession?.overlay?.update();savePreferences().catch(report);};body.append(field(t.appearance,theme),el('h2',t.modelSettings),el('p',t.modelHint,'muted'));
@@ -124,7 +124,7 @@
   window.addEventListener('scroll',()=>{if(translated)queueTranslate();},{passive:true,signal:lifecycle.signal});
   function stopVideo(){if(videoSession)rememberVideo(false);clearTimeout(videoTimer);if(video&&videoSession?.seekHandler)video.removeEventListener('seeked',videoSession.seekHandler);videoSession?.playback?.dispose();videoSession?.overlay?.destroy();videoSession=null;if(video&&videoHandler)video.removeEventListener('timeupdate',videoHandler);videoHandler=null;video=null;activeCue=-1;previousCue=-1;}
   function ensureVideoEntry(){
-    if(!runtimeReady()||!/(^|\.)youtube\.com$/.test(location.hostname))return;
+    if(!runtimeReady())return;
     const media=document.querySelector('video'),player=media?.closest('#movie_player,.html5-video-player')||media?.parentElement;
     if(!player)return;
     let host=player.querySelector('[data-cindy-player-entry]');
@@ -349,7 +349,9 @@
     if(cueMedia!==media||media.currentSrc!==cueMediaSource){cues=[];cueMedia=media;cueMediaSource=media.currentSrc;}
     cues=[];const session=videoSession={src:media.currentSrc,running:false,paused:false,failed:false,imported:false,attempts:0,nextRead:0};
     session.retry=async()=>{if(!subtitleSegmentation||!subtitleEditorial)await configure();session.retryButton.hidden=true;for(const chunk of session.chunks||[]){delete chunk.error;delete chunk.recovery;delete chunk.retryAt;delete chunk.retries;}session.failed=false;session.paused=false;session.attempts=0;session.nextRead=0;session.readBlocked=false;clearTimeout(videoTimer);return readCues(session);};
-    if(!/(^|\.)youtube\.com$/.test(location.hostname))rememberVideo(true);
+    // A manually opened player session is restorable on every supported site,
+    // including YouTube when automatic opening is disabled.
+    rememberVideo(true);
     session.retryButton=button(t.retrySubtitles,session.retry);session.retryButton.hidden=true;videoSettings();session.overlay=mountVideoCaptions(media);note(t.waitSubtitles);
     videoHandler=()=>{
       session.playback?.update();
@@ -388,7 +390,7 @@
   async function autoOpen(){
     if(!runtimeReady()||autoOpening||videoSession)return;
     const youtube=/(^|\.)youtube\.com$/.test(location.hostname)&&!!document.querySelector('video');
-    if(youtube)ensureVideoEntry();
+    if(document.querySelector('video,audio'))ensureVideoEntry();
     let stored;
     try{stored=(await extensionCall(()=>api.storage.local.get('cindyReadingPreferences'))).cindyReadingPreferences||{};}catch{return;}
     // YouTube subtitles are enabled on a fresh install. An explicit false is
@@ -398,8 +400,8 @@
     autoOpening=true;nextAutoAttempt=Date.now()+5000;
     try{await configure();if(youtube&&prefs.autoVideo){makePanel();await showVideo();}else if(prefs.autoSites[location.origin]===true){await togglePage();}}catch{}finally{autoOpening=false;}
   }
-  sendMessage({type:'cindy-video-resume'}).then(r=>{if(r?.enabled&&!/(^|\.)youtube\.com$/.test(location.hostname))open('video').catch(()=>{});else autoOpen();}).catch(()=>{});
-  let lastURL=location.href;navigationTimer=setInterval(()=>{if(!runtimeReady())return;const youtube=/(^|\.)youtube\.com$/.test(location.hostname);if(youtube&&!videoSession)ensureVideoEntry();if(lastURL!==location.href){lastURL=location.href;restorePage();close();selectionButton?.remove();selected='';cues=[];autoOpen();}else if(!videoSession&&youtube&&prefs.autoVideo&&Date.now()>=nextAutoAttempt)autoOpen();},1000);
+  sendMessage({type:'cindy-video-resume'}).then(r=>{if(r?.enabled)open('video').catch(()=>{});else autoOpen();}).catch(()=>{});
+  let lastURL=location.href;navigationTimer=setInterval(()=>{if(!runtimeReady())return;const youtube=/(^|\.)youtube\.com$/.test(location.hostname);if(document.querySelector('video,audio')&&!videoSession)ensureVideoEntry();if(lastURL!==location.href){lastURL=location.href;restorePage();close();selectionButton?.remove();selected='';cues=[];autoOpen();}else if(!videoSession&&youtube&&prefs.autoVideo&&Date.now()>=nextAutoAttempt)autoOpen();},1000);
   document.addEventListener('yt-navigate-finish',()=>{ensureVideoEntry();autoOpen();},{signal:lifecycle.signal});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){videoSession?.overlay?.closeSettings();if(!videoSession)hidePanel();selectionButton?.remove();}},{signal:lifecycle.signal});
 })();

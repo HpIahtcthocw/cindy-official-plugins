@@ -252,5 +252,10 @@
   "library": true,
   "agent": {
     "tasks": true
+  },
+  "network": {
+    "hosts": [
+      "youtube.com"
+    ]
   }
 }

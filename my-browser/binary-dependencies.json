@@ -1,0 +1,1132 @@
+{
+  "schemaVersion": 1,
+  "dependencies": [
+    {
+      "name": "pdfjs",
+      "version": "5.7.284",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/78-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/78-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/78-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/78-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/78-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/78-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/78-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/78ms-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/78ms-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/78ms-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/78ms-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/83pv-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/83pv-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/90ms-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/90ms-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/90ms-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/90ms-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/90msp-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/90msp-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/90msp-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/90msp-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/90pv-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/90pv-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/90pv-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/90pv-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Add-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/Add-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/Add-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/Add-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/Add-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/Add-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Add-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/Add-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-0.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-0.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-1.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-1.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-3.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-3.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-4.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-4.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-5.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-5.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-6.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-6.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-CNS1-UCS2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-CNS1-UCS2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-0.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-0.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-1.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-1.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-3.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-3.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-4.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-4.bcmap"
+            }
+          ]
+        },
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/Adobe-GB1-5.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-5.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-GB1-UCS2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-GB1-UCS2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-0.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-0.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-1.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-1.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-3.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-3.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-4.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-4.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-5.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-5.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-6.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-6.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Japan1-UCS2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Japan1-UCS2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Korea1-0.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Korea1-0.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Korea1-1.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Korea1-1.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Korea1-2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Korea1-2.bcmap"
+            },
+            {
+              "source": "package/cmaps/Adobe-Korea1-UCS2.bcmap",
+              "target": "vendor/pdfjs/cmaps/Adobe-Korea1-UCS2.bcmap"
+            },
+            {
+              "source": "package/cmaps/B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/B5pc-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/B5pc-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/B5pc-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/B5pc-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS1-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS1-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS1-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS1-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS2-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS2-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/CNS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/CNS2-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETHK-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETHK-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETHK-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETHK-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETen-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETen-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETen-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETen-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETenms-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETenms-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/ETenms-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/ETenms-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/EUC-V.bcmap"
+            }
+          ]
+        },
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/Ext-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/Ext-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/Ext-RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/Ext-RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/Ext-RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/Ext-RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Ext-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/Ext-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GB-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GB-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GB-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GB-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GB-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GB-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GB-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GB-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBK-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBK-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBK-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBK-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBK2K-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBK2K-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBK2K-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBK2K-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBKp-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBKp-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBKp-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBKp-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBT-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBT-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBT-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBT-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBT-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBT-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBT-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBT-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBTpc-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBTpc-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBTpc-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBTpc-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBpc-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBpc-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/GBpc-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/GBpc-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/H.bcmap",
+              "target": "vendor/pdfjs/cmaps/H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKdla-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKdla-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKdla-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKdla-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKdlb-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKdlb-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKdlb-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKdlb-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKgccs-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKgccs-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKgccs-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKgccs-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKm314-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKm314-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKm314-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKm314-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKm471-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKm471-B5-H.bcmap"
+            }
+          ]
+        },
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/HKm471-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKm471-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKscs-B5-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKscs-B5-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/HKscs-B5-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/HKscs-B5-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Hankaku.bcmap",
+              "target": "vendor/pdfjs/cmaps/Hankaku.bcmap"
+            },
+            {
+              "source": "package/cmaps/Hiragana.bcmap",
+              "target": "vendor/pdfjs/cmaps/Hiragana.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-Johab-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-Johab-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-Johab-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-Johab-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCms-UHC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCms-UHC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCms-UHC-HW-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCms-UHC-HW-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCms-UHC-HW-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCms-UHC-HW-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCms-UHC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCms-UHC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCpc-EUC-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCpc-EUC-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/KSCpc-EUC-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/KSCpc-EUC-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Katakana.bcmap",
+              "target": "vendor/pdfjs/cmaps/Katakana.bcmap"
+            },
+            {
+              "source": "package/cmaps/NWP-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/NWP-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/NWP-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/NWP-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/RKSJ-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/RKSJ-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/RKSJ-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/RKSJ-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/Roman.bcmap",
+              "target": "vendor/pdfjs/cmaps/Roman.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UCS2-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UCS2-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UCS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UCS2-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF16-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF16-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF16-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF16-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF8-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF8-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniCNS-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniCNS-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UCS2-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UCS2-H.bcmap"
+            }
+          ]
+        },
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/UniGB-UCS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UCS2-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF16-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF16-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF16-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF16-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF8-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF8-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniGB-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniGB-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UCS2-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UCS2-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UCS2-HW-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UCS2-HW-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UCS2-HW-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UCS2-HW-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UCS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UCS2-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF16-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF16-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF16-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF16-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF8-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF8-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF16-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF16-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF16-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF16-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF8-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF8-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJIS2004-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJIS2004-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISPro-UCS2-HW-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISPro-UCS2-HW-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISPro-UCS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISPro-UCS2-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISPro-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISPro-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISX0213-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISX0213-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISX0213-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISX0213-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISX02132004-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISX02132004-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniJISX02132004-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniJISX02132004-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UCS2-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UCS2-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UCS2-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UCS2-V.bcmap"
+            }
+          ]
+        },
+        {
+          "url": "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.7.284.tgz",
+          "sha256": "f14db72530dec74fe666910e246242b9bb698df30f0e06622c4471b340a0413d",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/cmaps/UniKS-UTF16-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF16-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UTF16-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF16-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UTF32-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF32-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UTF32-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF32-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UTF8-H.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF8-H.bcmap"
+            },
+            {
+              "source": "package/cmaps/UniKS-UTF8-V.bcmap",
+              "target": "vendor/pdfjs/cmaps/UniKS-UTF8-V.bcmap"
+            },
+            {
+              "source": "package/cmaps/V.bcmap",
+              "target": "vendor/pdfjs/cmaps/V.bcmap"
+            },
+            {
+              "source": "package/cmaps/WP-Symbol.bcmap",
+              "target": "vendor/pdfjs/cmaps/WP-Symbol.bcmap"
+            },
+            {
+              "source": "package/standard_fonts/FoxitDingbats.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitDingbats.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitFixed.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitFixed.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitFixedBold.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitFixedBold.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitFixedBoldItalic.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitFixedBoldItalic.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitFixedItalic.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitFixedItalic.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitSerif.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitSerif.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitSerifBold.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitSerifBold.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitSerifBoldItalic.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitSerifBoldItalic.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitSerifItalic.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitSerifItalic.pfb"
+            },
+            {
+              "source": "package/standard_fonts/FoxitSymbol.pfb",
+              "target": "vendor/pdfjs/standard_fonts/FoxitSymbol.pfb"
+            },
+            {
+              "source": "package/standard_fonts/LiberationSans-Bold.ttf",
+              "target": "vendor/pdfjs/standard_fonts/LiberationSans-Bold.ttf"
+            },
+            {
+              "source": "package/standard_fonts/LiberationSans-BoldItalic.ttf",
+              "target": "vendor/pdfjs/standard_fonts/LiberationSans-BoldItalic.ttf"
+            },
+            {
+              "source": "package/standard_fonts/LiberationSans-Italic.ttf",
+              "target": "vendor/pdfjs/standard_fonts/LiberationSans-Italic.ttf"
+            },
+            {
+              "source": "package/standard_fonts/LiberationSans-Regular.ttf",
+              "target": "vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf"
+            },
+            {
+              "source": "package/wasm/jbig2.wasm",
+              "target": "vendor/pdfjs/wasm/jbig2.wasm"
+            },
+            {
+              "source": "package/wasm/openjpeg.wasm",
+              "target": "vendor/pdfjs/wasm/openjpeg.wasm"
+            },
+            {
+              "source": "package/wasm/qcms_bg.wasm",
+              "target": "vendor/pdfjs/wasm/qcms_bg.wasm"
+            },
+            {
+              "source": "package/wasm/quickjs-eval.wasm",
+              "target": "vendor/pdfjs/wasm/quickjs-eval.wasm"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-core",
+      "version": "6.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/tesseract.js-core/-/tesseract.js-core-6.0.0.tgz",
+          "sha256": "197b53b6bc42b7270c99b079e438992096d71a2b9b8237c6349491bd22fbd5a0",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/tesseract-core-lstm.wasm",
+              "target": "vendor/tesseract/tesseract-core-lstm.wasm"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-eng",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/eng/-/eng-1.0.0.tgz",
+          "sha256": "c9bddf2e2f0a214ac7918f3f4a3caf45e09ce8674fe26662ae7787ac8927f7bb",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/eng.traineddata.gz",
+              "target": "vendor/tesseract/lang/eng.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-chi_sim",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/chi_sim/-/chi_sim-1.0.0.tgz",
+          "sha256": "850d4a217c87808ef765385cbe5825f4ae99047a49b17e024069ceb663f01c33",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/chi_sim.traineddata.gz",
+              "target": "vendor/tesseract/lang/chi_sim.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-deu",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/deu/-/deu-1.0.0.tgz",
+          "sha256": "929782d1d505ae09a568c41f2ea73182e84bb323205340abd72654584cd27b2c",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/deu.traineddata.gz",
+              "target": "vendor/tesseract/lang/deu.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-fra",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/fra/-/fra-1.0.0.tgz",
+          "sha256": "ffcef66c64e763499d56ea3f8d7470215390b7c3ab8f33df19a2ab0f2d88c0e5",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/fra.traineddata.gz",
+              "target": "vendor/tesseract/lang/fra.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-ita",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/ita/-/ita-1.0.0.tgz",
+          "sha256": "54d34ea85750346d5f2e2aa552856e4bff0c518278fcb44353f448d1aa29f8ca",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/ita.traineddata.gz",
+              "target": "vendor/tesseract/lang/ita.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-jpn",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/jpn/-/jpn-1.0.0.tgz",
+          "sha256": "0a04436991da81e01c4c3a9549643365fff643495b8988755c565913517b7cc7",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/jpn.traineddata.gz",
+              "target": "vendor/tesseract/lang/jpn.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-kor",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/kor/-/kor-1.0.0.tgz",
+          "sha256": "406e73a4438bd304e6219d28ed6805388a6f504c41f73daed412311055440317",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/kor.traineddata.gz",
+              "target": "vendor/tesseract/lang/kor.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-por",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/por/-/por-1.0.0.tgz",
+          "sha256": "e9d54a379afab14fbd18530fc6a6e6cc8f7c0be2799c74be854eda920aabddac",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/por.traineddata.gz",
+              "target": "vendor/tesseract/lang/por.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-rus",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/rus/-/rus-1.0.0.tgz",
+          "sha256": "57b66bc5becf6ecfeb337c4eecf3d9770e17e3ea9f2c9c28e308c5cd04ce1be2",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/rus.traineddata.gz",
+              "target": "vendor/tesseract/lang/rus.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tesseract-spa",
+      "version": "1.0.0",
+      "license": "THIRD-PARTY-LICENSES.txt",
+      "assets": [
+        {
+          "url": "https://registry.npmjs.org/@tesseract.js-data/spa/-/spa-1.0.0.tgz",
+          "sha256": "b6814aa0f4f672c6772b9a5323b85c19887d030ffcf571e5e41a8b066fbb9d16",
+          "format": "tar.gz",
+          "platforms": [
+            "darwin-x64",
+            "darwin-arm64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64",
+            "windows-arm64"
+          ],
+          "files": [
+            {
+              "source": "package/4.0.0_best_int/spa.traineddata.gz",
+              "target": "vendor/tesseract/lang/spa.traineddata.gz"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

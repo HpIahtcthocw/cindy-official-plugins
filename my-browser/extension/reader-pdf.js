@@ -1,5 +1,8 @@
 import {getDocument,GlobalWorkerOptions} from './vendor/pdfjs/pdf.mjs';
 import {createOCR,ocrLanguages} from './ocr.js';
+const MAX_TEXT_PART=1000,MAX_BATCH_ITEMS=12,MAX_BATCH_CHARS=20000;
+function boundedParts(value,max=MAX_TEXT_PART){const parts=[];for(let start=0;start<value.length;start+=max)parts.push(value.slice(start,start+max));return parts;}
+function translationBatches(parts){const batches=[];let batch=[],characters=0;for(const part of parts){if(batch.length&&(batch.length>=MAX_BATCH_ITEMS||characters+part.length>MAX_BATCH_CHARS)){batches.push(batch);batch=[];characters=0;}batch.push(part);characters+=part.length;}if(batch.length)batches.push(batch);return batches;}
 GlobalWorkerOptions.workerSrc=new URL('./vendor/pdfjs/pdf.worker.mjs',import.meta.url).href;
 export async function openPDF({file,container,call,target,t,report}) {
   const el=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
@@ -25,7 +28,7 @@ export async function openPDF({file,container,call,target,t,report}) {
   async function page(){const g=++generation;renderTask?.cancel();selectedRegion=null;selection.style.display='none';texts=[];const p=await pdf.getPage(number);if(g!==generation)return;label.textContent=`${number} / ${pdf.numPages}`;text.replaceChildren();answer.textContent='';progress.textContent='';
     const viewport=p.getViewport({scale:Math.min(2,1800/p.getViewport({scale:1}).width)});canvas.width=viewport.width;canvas.height=viewport.height;renderTask=p.render({canvasContext:canvas.getContext('2d'),viewport});try{await renderTask.promise;}catch(e){if(e.name==='RenderingCancelledException')return;throw e;}
     const extracted=await p.getTextContent();if(g!==generation)return;let line='',lines=[];
-    for(const item of extracted.items){if(typeof item.str!=='string')continue;line+=item.str+(item.hasEOL?'\n':' ');if(item.hasEOL||line.length>1000){lines.push(line.trim());line='';}}if(line.trim())lines.push(line.trim());texts=lines.filter(Boolean);
+    for(const item of extracted.items){if(typeof item.str!=='string')continue;for(const part of boundedParts(item.str)){if(line&&line.length+part.length+1>MAX_TEXT_PART){lines.push(line.trim());line='';}line+=part+(item.hasEOL?'\n':' ');if(line.length>=MAX_TEXT_PART||item.hasEOL){lines.push(line.trim());line='';}}}if(line.trim())lines.push(line.trim());texts=lines.filter(Boolean).flatMap(part=>boundedParts(part,4000));
     if(!texts.length)text.append(el('p',t.pdfOCR));
   }
   async function scanPage(crop=false){
@@ -35,7 +38,7 @@ export async function openPDF({file,container,call,target,t,report}) {
       const result=await ocr.recognize(input,language.value);if(g!==generation)return;translationRevision++;texts=result.match(/[\s\S]{1,1000}/g)||[];text.replaceChildren(el('p',result||t.ocrEmpty));progress.textContent='';
     }finally{ocrBusy=false;}
   }
-  async function translate(){const g=generation,revision=++translationRevision,textParts=[...texts],language=target();text.replaceChildren();for(let i=0;i<textParts.length;i+=12){if(g!==generation||revision!==translationRevision)return;const batch=textParts.slice(i,i+12);const r=await call({op:'translate',texts:batch,target:language});if(g!==generation||revision!==translationRevision)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
+  async function translate(){const g=generation,revision=++translationRevision,textParts=[...texts],language=target();text.replaceChildren();for(const batch of translationBatches(textParts)){if(g!==generation||revision!==translationRevision)return;const r=await call({op:'translate',texts:batch,target:language});if(g!==generation||revision!==translationRevision)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
   try{await page();}catch(e){ocr.close();await task.destroy();throw e;}
   return ()=>{generation++;renderTask?.cancel();ocr.close();task.destroy();};
 }

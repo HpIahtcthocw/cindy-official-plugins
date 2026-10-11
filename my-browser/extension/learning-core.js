@@ -75,6 +75,23 @@
     if(values.length<2 || values.length>3 || values.some(x=>!Number.isFinite(x)||x<0)) return NaN;
     return values.reduce((v,n)=>v*60+n,0);
   }
+  // Strip caption markup without a partial multi-character regex. Caption
+  // text is later assigned through textContent, but removing tags here keeps
+  // the parser's plain-text contract explicit and avoids treating a malformed
+  // `<script` prefix as markup.
+  function stripCaptionMarkup(value) {
+    let output='',inside=false;
+    for(const character of value){
+      if(!inside&&character==='<'){inside=true;continue;}
+      if(inside){if(character==='>')inside=false;continue;}
+      output+=character;
+    }
+    return output;
+  }
+  const captionEntities=Object.freeze({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",'#39':"'"});
+  function decodeCaptionEntities(value) {
+    return value.replace(/&(?:amp|lt|gt|quot|apos|#39);/gi,entity=>captionEntities[entity.slice(1,-1).toLowerCase()]||entity);
+  }
   function parseSubtitles(text) {
     if(typeof text!=='string' || text.length>2000000) throw Error('SUBTITLE_TOO_LARGE');
     const cues=[];
@@ -82,7 +99,7 @@
       const lines=block.split('\n'), i=lines.findIndex(l=>l.includes('-->'));
       if(i<0)continue;
       const [a,b]=lines[i].split('-->'),start=timestamp(a.trim()),end=timestamp(b.trim().split(/\s/)[0]);
-      const content=lines.slice(i+1).join(' ').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+      const content=decodeCaptionEntities(stripCaptionMarkup(lines.slice(i+1).join(' '))).trim();
       if(Number.isFinite(start)&&Number.isFinite(end)&&end>start&&content) cues.push({start,end,text:content.slice(0,4000)});
       if(cues.length>10000)throw Error('SUBTITLE_TOO_LARGE');
     }
@@ -160,7 +177,7 @@
     if(first!==words.length)throw Error('SUBTITLE_COVERAGE');return cues;
   }
   function cleanSubtitleText(text) {
-    return typeof text==='string'?text.replace(/<\/?[a-z][^>]*>/gi,'').replace(/^\s*>>\s*/,'').replace(/[♪♫]+/g,'').replace(/\s+/g,' ').trim():'';
+    return typeof text==='string'?stripCaptionMarkup(text).replace(/^\s*>>\s*/,'').replace(/[♪♫]+/g,'').replace(/\s+/g,' ').trim():'';
   }
   function subtitleTurns(words) {
     const turns=[];let start=0;

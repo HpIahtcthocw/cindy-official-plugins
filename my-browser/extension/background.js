@@ -57,7 +57,7 @@ async function discoverBridge() {
       try{
         let r=await fetchJSON(base,'/health',null,undefined,450,VERSION);
         if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id)return null;
-        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
+        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
         const version=r.version;
         if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
         if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
