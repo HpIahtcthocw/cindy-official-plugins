@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const root=path.resolve(import.meta.dirname,'../my-browser');
+const repository=path.resolve(import.meta.dirname,'..');
 const out=path.resolve(process.argv[2] || path.join(root,'../.build/my-browser'));
 const target=process.argv[3] || 'all';
 if (!['all','chrome','edge','safari'].includes(target)) throw new Error('Target: chrome, edge, safari or all.');
@@ -10,10 +11,22 @@ if (!['all','chrome','edge','safari'].includes(target)) throw new Error('Target:
 await fs.mkdir(out,{recursive:true});
 const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json'),'utf8'));
 const run=(file,args,opts={})=>execFileSync(file,args,{encoding:'utf8',maxBuffer:32*1024*1024,stdio:['ignore','pipe','pipe'],...opts});
-for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
+const dependencyStage=await fs.mkdtemp(path.join(out,'.my-browser-dependencies-'));
+try {
+  // Assemble pinned resources once and copy them inside each extension root.
+  // reader-pdf.js and ocr.js resolve ./vendor/... relative to that root.
+  const dependencyPackage=path.join(dependencyStage,'my-browser.cindy');
+  run('bash',[path.join(repository,'.github/scripts/package-plugin.sh'),'my-browser',dependencyPackage],{cwd:repository});
+  const dependencyUnpacked=path.join(dependencyStage,'unpacked');
+  await fs.mkdir(dependencyUnpacked);
+  run('/usr/bin/unzip',['-q',dependencyPackage,'-d',dependencyUnpacked]);
+  const generatedVendor=path.join(dependencyUnpacked,'extension','vendor');
+  await fs.access(generatedVendor);
+  for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
   const dir=path.join(out,browser+'-extension');
   try{await fs.access(dir);throw new Error('Output already exists: '+dir);}catch(e){if(e.code!=='ENOENT')throw e;}
   await fs.cp(path.join(root,'extension'),dir,{recursive:true});
+  await fs.cp(generatedVendor,path.join(dir,'vendor'),{recursive:true});
   await fs.copyFile(path.join(root,'THIRD-PARTY-LICENSES.txt'),path.join(dir,'THIRD-PARTY-LICENSES.txt'));
   const m=structuredClone(manifest);
   // Store uploads reject the development identity key. Keep it only in the
@@ -62,4 +75,7 @@ for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
     console.log('Safari: signed and notarized app at '+native+'. Copy native/ into the plugin before packing.');
   } else console.log('Safari: universal Release app built. NOT READY FOR CONSUMER DISTRIBUTION: signing/notarization not completed.');
   console.log('Project: '+xcodeProject);
+  }
+} finally {
+  await fs.rm(dependencyStage,{recursive:true,force:true});
 }

@@ -80,11 +80,20 @@
   // the parser's plain-text contract explicit and avoids treating a malformed
   // `<script` prefix as markup.
   function stripCaptionMarkup(value) {
-    let output='',inside=false;
-    for(const character of value){
-      if(!inside&&character==='<'){inside=true;continue;}
-      if(inside){if(character==='>')inside=false;continue;}
-      output+=character;
+    let output='';
+    for(let i=0;i<value.length;i++){
+      if(value[i]!=='<'){output+=value[i];continue;}
+      let cursor=i+1;if(value[cursor]==='/')cursor++;
+      const first=value.charCodeAt(cursor);
+      if(!((first>=65&&first<=90)||(first>=97&&first<=122))){output+='<';continue;}
+      while(cursor<value.length){
+        const code=value.charCodeAt(cursor);
+        if(!((code>=65&&code<=90)||(code>=97&&code<=122)||(code>=48&&code<=57)||code===45||code===58||code===95))break;
+        cursor++;
+      }
+      while(cursor<value.length&&value[cursor]!=='>'&&value[cursor]!=='<'&&value[cursor]!=='\n'&&value[cursor]!=='\r')cursor++;
+      if(value[cursor]==='>'){i=cursor;continue;}
+      output+='<';
     }
     return output;
   }

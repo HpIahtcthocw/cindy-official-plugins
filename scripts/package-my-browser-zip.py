@@ -1,6 +1,8 @@
 """Build the settings-page ZIP from an explicit extension and reviewed vendor file list."""
 from pathlib import Path
 import json
+import subprocess
+import tempfile
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 root = Path(__file__).resolve().parent.parent / 'my-browser'
@@ -17,10 +19,22 @@ if any(Path(name).is_absolute() or '..' in Path(name).parts for name in files):
 files.append('THIRD-PARTY-LICENSES.txt')
 target = root / 'downloads' / 'my-browser-chromium.zip'
 target.parent.mkdir(exist_ok=True)
-with ZipFile(target, 'w', compression=ZIP_DEFLATED) as archive:
-    for name in files:
-        entry = ZipInfo(name, (2026, 1, 1, 0, 0, 0))
-        entry.compress_type = ZIP_DEFLATED
-        entry.external_attr = 0o100644 << 16
-        archive.writestr(entry, (root / name if name == 'THIRD-PARTY-LICENSES.txt' else root / 'extension' / name).read_bytes())
+repository = root.parent
+with tempfile.TemporaryDirectory(prefix='my-browser-package-') as stage:
+    package = Path(stage) / 'my-browser.cindy'
+    subprocess.run([
+        'bash', str(repository / '.github/scripts/package-plugin.sh'), 'my-browser', str(package)
+    ], cwd=repository, check=True)
+    with ZipFile(package) as assembled, ZipFile(target, 'w', compression=ZIP_DEFLATED) as archive:
+        for name in files:
+            entry = ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            entry.external_attr = 0o100644 << 16
+            if name == 'THIRD-PARTY-LICENSES.txt':
+                content = (root / name).read_bytes()
+            elif name.startswith('vendor/'):
+                content = assembled.read('extension/' + name)
+            else:
+                content = (root / 'extension' / name).read_bytes()
+            archive.writestr(entry, content)
 print(target)

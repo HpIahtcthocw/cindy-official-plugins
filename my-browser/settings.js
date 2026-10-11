@@ -66,7 +66,7 @@ async function refresh() {
   try {
     const wake = await fetch('/wake'); if (!wake.ok) throw new Error(T.timeout);
     const result = await rpc('status-request');
-    if (!result.ok) {const error=new Error(globalThis.CindyUI.error(result.message || result.error,T===STRINGS['zh-CN']?'zh-CN':'en'));error.code=result.error;throw error;}
+    if (!result.ok) {const errorCode=result.error || 'UNKNOWN_ERROR';const error=new Error(globalThis.CindyUI.error(errorCode,T===STRINGS['zh-CN']?'zh-CN':'en'));error.code=errorCode;throw error;}
     $('#status').textContent=result.extension_connected ? T.ready : T.noExt;
     $('.version').textContent='v'+result.version;
     connectionState(result.extension_connected ? 'ready' : 'waiting','v'+result.version+' · '+(result.clients || []).filter(c => c.connected).length+' connected');

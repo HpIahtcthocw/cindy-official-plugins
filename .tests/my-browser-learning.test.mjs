@@ -42,9 +42,9 @@ test('a missing library is initialized, but corruption, permission loss and canc
   const d=service();d.deny();await assert.rejects(d.handle(a,{op:'save',text:'denied'}),/PERMISSION_DENIED/);assert.equal(d.files.size,0);
   const c=service();await assert.rejects(c.handle(a,{op:'translate',text:'cancel'},async()=>false),/CANCELLED/);assert.equal(c.calls.length,0);
 });
-test('subtitle import keeps timing, strips markup and exports aligned bilingual SRT',()=>{
-  const cues=core.parseSubtitles('WEBVTT\n\n00:00.200 --> 00:02.300\n<b>Hello</b> &amp; goodbye\n\n2\n00:04:00,000 --> 00:04:01,200\nNext');
-  assert.equal(cues.length,2);assert.equal(cues[0].start,.2);assert.equal(cues[0].text,'Hello & goodbye');cues[0].translation='你好';
+test('subtitle import keeps timing, strips markup and preserves literal comparisons',()=>{
+  const cues=core.parseSubtitles('WEBVTT\n\n00:00.200 --> 00:02.300\n<b>Hello</b> &amp; goodbye\n\n2\n00:04:00,000 --> 00:04:01,200\n5 < 10 is true');
+  assert.equal(cues.length,2);assert.equal(cues[0].start,.2);assert.equal(cues[0].text,'Hello & goodbye');assert.equal(cues[1].text,'5 < 10 is true');cues[0].translation='你好';
   assert.match(core.exportSubtitles(cues),/00:00:00,200 --> 00:00:02,300\nHello & goodbye\n你好/);
   assert.throws(()=>core.validate({op:'save',text:'x',source:{url:'javascript:alert(1)'}}));
   assert.throws(()=>core.validate({op:'translate',texts:Array(25).fill('x')}));

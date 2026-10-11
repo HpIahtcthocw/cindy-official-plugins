@@ -151,7 +151,8 @@ def validate_config(raw, package_paths):
                 exact_keys(item, ("target",) if asset["format"] == "file" else ("source", "target"), ("executable",))
                 require(type(item.get("executable", False)) is bool, "executable must be a boolean")
                 target = safe_path(item["target"])
-                require(target.startswith(f"vendor/{name}/"), f"Dependency output must stay under vendor/{name}/")
+                require(target.startswith((f"vendor/{name}/", f"extension/vendor/{name}/")),
+                        f"Dependency output must stay under vendor/{name}/ or extension/vendor/{name}/")
                 add_path(destinations, target)
                 if "source" in item:
                     source = safe_path(item["source"])
