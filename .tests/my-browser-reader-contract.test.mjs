@@ -39,9 +39,16 @@ test('bridge learning access requires the paired extension challenge key and sta
   assert.match(bridge,/const pairedCredential\s*=/);
   assert.match(bridge,/const verifyProof\s*=/);
   assert.match(bridge,/const authRequired=client\.version===manifest\.version/);
+  assert.match(bridge,/const learning = new Map\(\), learningChallenges = new Map\(\)/);
+  assert.match(bridge,/h\['x-my-browser-session'\] !== client\.session/);
+  assert.match(bridge,/x-my-browser-learning-challenge/);
+  assert.match(bridge,/verifyProof\(client\.publicKey,payload,proof\)/);
+  assert.match(bridge,/capabilities:sessionAllowed&&authRequired\?\['learning-v1'\]:\[\]/);
   assert.match(bridge,/req\.url\.startsWith\('\/learning\/'\)/);
   assert.match(bridge,/Array\.from\(\{length:10\},\(_,i\)=>18810\+i\)/);
   assert.match(background,/crypto\.subtle\.generateKey\(\{name:'ECDSA',namedCurve:'P-256'\}/);
   assert.match(background,/X-My-Browser-Key/);
+  assert.match(background,/X-My-Browser-Learning-Challenge/);
   assert.match(background,/X-My-Browser-Proof/);
+  assert.match(background,/target\.auth\|\|await authReady\(\)/);
 });

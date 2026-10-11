@@ -17,6 +17,7 @@ async function credential(){
 }
 async function authenticate(bridge,port,headers){
   const key=await credential(); headers['X-My-Browser-Key']=key.publicKey;
+  Object.defineProperty(headers,'__sign',{value:key.sign,enumerable:false,configurable:true});
   const base=`http://127.0.0.1:${port}`; let health=await (await fetch(base+'/health',{headers})).json();
   if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}
   await bridge.request('setTrustedClients',{clients:[{id:headers['X-My-Browser-Client'],origin:'chrome-extension://'+headers['X-My-Browser-Extension'],extensionId:headers['X-My-Browser-Extension'],publicKey:JSON.stringify(JSON.parse(Buffer.from(key.publicKey,'base64url').toString('utf8')))}]});
@@ -78,17 +79,25 @@ test('learning requests are authenticated, deduplicated, cancellable and revoked
   assert.ok(session);
   const job={id:crypto.randomUUID(),request:{op:'translate',text:'hello',source:{url:'https://example.test/'}}};
   assert.equal((await request('/learning/start',job,{Origin:'https://example.test'})).status,403);
-  assert.equal((await request('/learning/start',job)).ok,true);await request('/learning/start',job);assert.equal(notices.length,1);
+  const signed=async(path,body,extra={})=>{
+    const challenge=await request('/learning/challenge');
+    const method=body===undefined?'GET':'POST';
+    const proof=Buffer.from(await baseHeaders.__sign(challenge.challenge+'\\n'+method+'\\n'+path)).toString('base64url');
+    return request(path,body,{...extra,'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof});
+  };
+  // A copied client id/session is insufficient; the request must be signed by the paired key.
+  assert.equal((await request('/learning/start',job)).status,403);
+  assert.equal((await signed('/learning/start',job)).ok,true);await signed('/learning/start',job);assert.equal(notices.length,1);
   assert.equal((await bridge.request('learningActive',{id:job.id})).active,true);
   await bridge.request('learningProgress',{id:job.id,progress:{stage:'model',attempt:2,prompt:'must not escape'}});
-  const progress=(await request('/learning/result',{id:job.id})).progress;
+  const progress=(await signed('/learning/result',{id:job.id})).progress;
   assert.equal(progress.stage,'model');assert.equal(progress.attempt,2);assert.equal(progress.prompt,undefined);
   await bridge.request('learningProgress',{id:job.id,progress:{stage:'untrusted arbitrary text'}});
-  assert.equal((await request('/learning/result',{id:job.id})).progress.stage,'model');
+  assert.equal((await signed('/learning/result',{id:job.id})).progress.stage,'model');
   await bridge.request('setPolicy',{policy:{read:{block:['example.test']},interact:{allow:[]}}});
   assert.equal((await bridge.request('learningActive',{id:job.id})).active,false);
-  assert.equal((await request('/learning/result',{id:job.id})).status,403);
-  const config={id:crypto.randomUUID(),request:{op:'config'}};await request('/learning/start',config);await request('/learning/cancel',{id:config.id});
+  assert.equal((await signed('/learning/result',{id:job.id})).status,403);
+  const config={id:crypto.randomUUID(),request:{op:'config'}};await signed('/learning/start',config);await signed('/learning/cancel',{id:config.id});
   assert.equal((await bridge.request('learningResult',{id:config.id,result:{ok:true}})).ok,false);
 });
 test('task handoff recovers an uncertain send with the same durable keys and does not duplicate a successful run',async()=>{
@@ -104,10 +113,10 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
  await service.handle(profile,request);assert.equal(creates.length,1);assert.equal(sends.length,2);assert.equal(sends[0].requestKey,sends[1].requestKey);assert.match(sends[0].text,/quoted webpage material/);
  await assert.rejects(service.handle(profile,{...request,instruction:'Different request'}),/REQUEST_CONFLICT/);
 });
-for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10'])test('new bridge preserves extension '+previousVersion,async t=>{
+for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
- const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);
+ const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);assert.deepEqual(health.capabilities,[]);
  const status=await bridge.request('status');assert.equal(status.extension_connected,true);assert.equal(status.clients[0].id,id);
 });
 
@@ -260,20 +269,22 @@ test('completed bridge results do not occupy execution slots; evicted receipts n
  const notices=[],bridge=createBridge({ports:[0],notify:(_m,p)=>notices.push(p)});t.after(()=>bridge.close());
  const {port}=await bridge.request('status'),client=crypto.randomUUID();let session;
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
- const request=async(path,body)=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{...headers,...(session?{'X-My-Browser-Session':session}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
- session=(await authenticate(bridge,port,headers)).session;let first,last;
+ const request=async(path,body,extra={})=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{...headers,...(session?{'X-My-Browser-Session':session}:{}),...extra},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
+ session=(await authenticate(bridge,port,headers)).session;
+ const signed=async(path,body)=>{const challenge=await request('/learning/challenge');const method=body===undefined?'GET':'POST';const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\n'+method+'\\n'+path)).toString('base64url');return request(path,body,{'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof});};
+ let first,last;
  for(let n=0;n<70;n++){
    const job={id:crypto.randomUUID(),request:{op:'config'}};first ||=job;last=job;
-   assert.equal((await request('/learning/start',job)).ok,true);
+   assert.equal((await signed('/learning/start',job)).ok,true);
    await bridge.request('learningResult',{id:job.id,result:{ok:true,sequence:n}});
-   assert.equal((await request('/learning/result',{id:job.id})).result.sequence,n);
+   assert.equal((await signed('/learning/result',{id:job.id})).result.sequence,n);
  }
- assert.equal((await request('/learning/start',first)).error,'REQUEST_EXPIRED');assert.equal(notices.length,70);
- assert.equal((await request('/learning/start',last)).ok,true);assert.equal(notices.length,70);
- assert.equal((await request('/learning/result',{id:last.id})).result.sequence,69);
+ assert.equal((await signed('/learning/start',first)).error,'REQUEST_EXPIRED');assert.equal(notices.length,70);
+ assert.equal((await signed('/learning/start',last)).ok,true);assert.equal(notices.length,70);
+ assert.equal((await signed('/learning/result',{id:last.id})).result.sequence,69);
  // Real pending work is still bounded, independent of completed receipts.
- for(let n=0;n<4;n++)assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).ok,true);
- assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).error,'BUSY');
+ for(let n=0;n<4;n++)assert.equal((await signed('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).ok,true);
+ assert.equal((await signed('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).error,'BUSY');
 });
 
 test('bridge keeps a slow prefetched subtitle request active for the shared request budget',async t=>{
@@ -281,7 +292,9 @@ test('bridge keeps a slow prefetched subtitle request active for the shared requ
  const {port}=await bridge.request('status'),client=crypto.randomUUID(),headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
  const health=await authenticate(bridge,port,headers);headers['X-My-Browser-Session']=health.session;
  const id=crypto.randomUUID(),request={op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]};
- assert.equal((await(await fetch(`http://127.0.0.1:${port}/learning/start`,{method:'POST',headers,body:JSON.stringify({id,request})})).json()).ok,true);
+ const challenge=await (await fetch(`http://127.0.0.1:${port}/learning/challenge`,{headers})).json();
+ const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\nPOST\\n/learning/start')).toString('base64url');
+ assert.equal((await(await fetch(`http://127.0.0.1:${port}/learning/start`,{method:'POST',headers:{...headers,'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof},body:JSON.stringify({id,request})})).json()).ok,true);
  const realNow=Date.now,started=realNow();
  try{
    Date.now=()=>started+350000;assert.equal((await bridge.request('learningActive',{id})).active,true);

@@ -56,7 +56,7 @@ async function fetchJSON(base,path,session,body,timeout = 5000,version = wireVer
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),timeout);
   try {
     const response = await fetch(base+path,{method:body === undefined ? 'GET' : 'POST',
-      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':version,'X-My-Browser-Installed-Version':VERSION,...(auth.publicKey ? {'X-My-Browser-Key':auth.publicKey} : {}),...(auth.proof ? {'X-My-Browser-Proof':auth.proof} : {}),...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':version,'X-My-Browser-Installed-Version':VERSION,...(auth.publicKey ? {'X-My-Browser-Key':auth.publicKey} : {}),...(auth.learningChallenge ? {'X-My-Browser-Learning-Challenge':auth.learningChallenge} : {}),...(auth.proof ? {'X-My-Browser-Proof':auth.proof} : {}),...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
       ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal}).catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
     const data = await response.json().catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
     if (!response.ok) throw new Error(data.error || 'BRIDGE_REQUEST_FAILED');
@@ -83,12 +83,12 @@ async function discoverBridge() {
         if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey});}
         if(r.challenge){const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey,proof});}
         if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id)return null;
-        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
+        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
         const version=r.version;
-        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
+        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){const proof=await auth?.sign(r.challenge);if(!proof)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
         if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
         if(typeof r.session!=='string'||!r.session)return null;
-        return {base,port,version,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};
+        return {base,port,version,session:r.session,learning:r.capabilities?.includes('learning-v1')===true,auth};
       }catch{return null;}
     }));
     const found=candidates.find(Boolean);
@@ -600,7 +600,13 @@ const learningCalls=new Map();
 async function learningFetch(target,path,body,active,deadline){
   for(let attempt=0;;attempt++){
     await active();if(Date.now()>=deadline)throw Error('TIMEOUT');
-    try{return await fetchJSON(target.base,path,target.session,body);}
+    try {
+      const challenge=await fetchJSON(target.base,'/learning/challenge',target.session);
+      const auth=target.auth||await authReady();
+      const method=body===undefined?'GET':'POST';
+      const proof=await auth.sign(challenge.challenge+'\\n'+method+'\\n'+path);
+      return await fetchJSON(target.base,path,target.session,body,5000,wireVersion,{publicKey:auth.publicKey,learningChallenge:challenge.challenge,proof});
+    }
     catch(error){
       if(error.message!=='BRIDGE_REQUEST_FAILED'||attempt>=2)throw error;
       await sleep(250*(attempt+1));
@@ -648,7 +654,7 @@ async function learningRequest(message,sender) {
     throw Error('TIMEOUT');
   } catch(error) {
     if(['SESSION_CHANGED','BRIDGE_REQUEST_FAILED'].includes(error.message)&&bridge===target){bridge=null;await connection({connected:false});}
-    if(target)await fetchJSON(target.base,'/learning/cancel',target.session,{id}).catch(()=>{});
+    if(target)await learningFetch(target,'/learning/cancel',{id},()=>Promise.resolve(),Date.now()+5000).catch(()=>{});
     throw error;
   } finally {learningCalls.delete(id);}
 }
