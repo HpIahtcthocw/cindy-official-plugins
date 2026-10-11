@@ -20,12 +20,30 @@ function createBridge(options = {}) {
   const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10'].includes(version) || /^0\.3\.\d+$/.test(version);
   const session = crypto.randomUUID();
   const live = c => Date.now()-c.seen < 35000;
-  const connected = () => [...clients.values()].filter(c => c.trusted && live(c) && compatible(c.version));
-  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:c.trusted && live(c) && compatible(c.version),trusted:c.trusted,origin:c.origin,extensionId:c.extensionId});
   // An isolated embedding/test can pin its own extension identity; the stdio runtime exposes no such override.
   const primaryId = options.extensionId || EXT_ID;
   const knownIds = new Set([primaryId,...[distribution.chrome.extensionId,distribution.edge.extensionId].filter(Boolean)]);
-  const approved = c => (c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId)) || pins.some(p => p.id === c.id && p.origin === c.origin && p.extensionId === c.extensionId);
+  const sameIdentity = (p,c) => p && p.id === c.id && p.origin === c.origin && p.extensionId === c.extensionId;
+  const pairedCredential = c => pins.some(p => sameIdentity(p,c) && !!c.publicKey && p.publicKey === c.publicKey);
+  const approved = c => (c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId)) || pins.some(p => sameIdentity(p,c));
+  const sessionReady = c => c.trusted && (c.version !== manifest.version || (!!c.publicKey && c.authenticated && pairedCredential(c)));
+  const connected = () => [...clients.values()].filter(c => sessionReady(c) && live(c) && compatible(c.version));
+  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
+  const normalizePublicKey = value => {
+    if (typeof value !== 'string' || value.length > 2048) return null;
+    try {
+      const decoded = JSON.parse(Buffer.from(value,'base64url').toString('utf8'));
+      if (decoded?.kty !== 'EC' || decoded?.crv !== 'P-256' || typeof decoded.x !== 'string' || typeof decoded.y !== 'string' || Object.keys(decoded).some(k => !['kty','crv','x','y','ext'].includes(k))) return null;
+      return JSON.stringify({kty:'EC',crv:'P-256',x:decoded.x,y:decoded.y,ext:decoded.ext !== false});
+    } catch { return null; }
+  };
+  const verifyProof = (publicKey,challenge,proof) => {
+    if (!publicKey || typeof challenge !== 'string' || typeof proof !== 'string' || proof.length > 256) return false;
+    try {
+      const key = crypto.createPublicKey({key:JSON.parse(publicKey),format:'jwk'});
+      return crypto.verify('sha256',Buffer.from(challenge),{key,dsaEncoding:'ieee-p1363'},Buffer.from(proof,'base64url'));
+    } catch { return false; }
+  };
   const isHttp = value => typeof value === 'string' && /^https?:\/\//i.test(value);
   // The declared per-field limit. It is enforced after redaction, because masking a short credential
   // into REDACTED lengthens the string.
@@ -135,12 +153,25 @@ function createBridge(options = {}) {
     if (req.method === 'GET' && req.url === '/health') {
       for (const [key,c] of clients) if (Date.now()-c.seen > 180000 && ![...jobs.values()].some(j => j.clientId === key)) clients.delete(key);
       if (!client && clients.size >= 16) return send(res,failure('TOO_MANY_BROWSERS','Close unused browser connections.'),429);
-      client = {id,origin,extensionId,browser:['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : 'chrome',version:String(h['x-my-browser-version'] || '').slice(0,30),installedVersion:/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(h['x-my-browser-installed-version']||'')?h['x-my-browser-installed-version']:null,seen:Date.now()};
+      const publicKey=normalizePublicKey(h['x-my-browser-key']);
+      const proof=typeof h['x-my-browser-proof']==='string'?h['x-my-browser-proof']:null;
+      if(!client)client={id,origin,extensionId,browser:['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : 'chrome',version:String(h['x-my-browser-version'] || '').slice(0,30),installedVersion:/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(h['x-my-browser-installed-version']||'')?h['x-my-browser-installed-version']:null,seen:Date.now(),publicKey:null,authenticated:false,challenge:null};
+      client.browser=['chrome','edge','safari'].includes(h['x-my-browser-family']) ? h['x-my-browser-family'] : client.browser;
+      client.version=String(h['x-my-browser-version'] || '').slice(0,30);
+      client.installedVersion=/^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(h['x-my-browser-installed-version']||'')?h['x-my-browser-installed-version']:null;
+      client.seen=Date.now();
+      if(publicKey!==client.publicKey){client.publicKey=publicKey;client.authenticated=false;client.challenge=null;}
+      if(publicKey&&client.challenge&&client.challenge.expires>Date.now()&&client.challenge.publicKey===publicKey&&verifyProof(publicKey,client.challenge.value,proof))client.authenticated=true;
+      const challenge=publicKey?{value:crypto.randomBytes(32).toString('base64url'),expires:Date.now()+10000,publicKey}:null;
+      client.challenge=challenge;
       client.trusted = approved(client); clients.set(id,client);
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!client.trusted,capabilities:['learning-v1'],...(client.trusted ? {session} : {})});
+      const authRequired=client.version===manifest.version;
+      const sessionAllowed=client.trusted&&(!authRequired||(!!client.publicKey&&client.authenticated&&pairedCredential(client)));
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:['learning-v1'],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session} : {})});
     }
     if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
     client.seen = Date.now();
+    if(req.url.startsWith('/learning/')&&(!client.publicKey||!client.authenticated||!pairedCredential(client)))return send(res,failure('PAIRING_REQUIRED','Reconnect the paired browser extension before starting learning.'),403);
     if (req.method === 'POST' && req.url === '/learning/start') {
       const b=await body(req);
       if(typeof b.id!=='string'||!/^[a-f0-9-]{36}$/.test(b.id))return send(res,failure('INVALID_ID','Invalid request.'),400);
@@ -210,7 +241,10 @@ function createBridge(options = {}) {
   async function start() {
     if (server) return; if (starting) return starting;
     starting = (async () => {
-      for (const candidate of options.ports || Array.from({length:100},(_,i)=>18810+i)) {
+      // Keep the listener inside the ten ports scanned by compatible 0.3.x/0.4.10
+      // extensions. Binding outside that range would leave those clients permanently
+      // disconnected during a staggered plugin/extension update.
+      for (const candidate of options.ports || Array.from({length:10},(_,i)=>18810+i)) {
         const srv = http.createServer((req,res) => route(req,res).catch(() => send(res,failure('INVALID_REQUEST','Invalid bridge request.'),400)));
         srv.requestTimeout = 30000; srv.headersTimeout = 10000;
         try { await new Promise((resolve,reject) => { srv.once('error',reject); srv.listen(candidate,'127.0.0.1',resolve); }); server = srv; port = srv.address().port; return; }

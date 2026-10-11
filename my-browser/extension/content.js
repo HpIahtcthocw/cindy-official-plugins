@@ -94,15 +94,18 @@
     const stored=change.newValue,previous=change.oldValue||{};
     const videoWasEnabled=previous.autoVideo!==false,videoIsEnabled=stored.autoVideo!==false;
     const siteWasEnabled=previous.autoSites?.[location.origin]===true,siteIsEnabled=stored.autoSites?.[location.origin]===true;
+    const nextVideoTarget=L.validTarget(stored.videoTarget)?stored.videoTarget:prefs.videoTarget;
+    const videoTargetChanged=nextVideoTarget!==prefs.videoTarget;
     target=L.validTarget(stored.webTarget)?stored.webTarget:target;
     prefs.webTarget=target;
-    prefs.videoTarget=L.validTarget(stored.videoTarget)?stored.videoTarget:prefs.videoTarget;
+    prefs.videoTarget=nextVideoTarget;
     prefs.videoMode=['both','translation','original','off'].includes(stored.videoMode)?stored.videoMode:prefs.videoMode;
     prefs.videoSize=['small','medium','large'].includes(stored.videoSize)?stored.videoSize:prefs.videoSize;
     prefs.bufferPause=stored.bufferPause!==false;
     prefs.theme=['light','dark'].includes(stored.theme)?stored.theme:null;
     prefs.autoVideo=stored.autoVideo!==false;
     prefs.autoSites=stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{};
+    if(videoTargetChanged&&videoSession){resetSubtitleTranslation();videoSession.overlay?.update();}
     const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
     const relevantEnable=youtube?!videoWasEnabled&&videoIsEnabled:!siteWasEnabled&&siteIsEnabled;
     if(relevantEnable){nextAutoAttempt=0;if(!videoSession)autoOpen();}

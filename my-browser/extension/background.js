@@ -9,6 +9,29 @@ let bridge = null;
 let discovery;
 let wireVersion=VERSION;
 let running = false;
+const b64url = bytes => {
+  let binary=''; for(const byte of new Uint8Array(bytes)) binary+=String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+};
+const openAuthDb = () => new Promise((resolve,reject) => {
+  const request=indexedDB.open('cindy-browser-auth',1);
+  request.onupgradeneeded=()=>request.result.createObjectStore('keys');
+  request.onsuccess=()=>resolve(request.result); request.onerror=()=>reject(request.error || Error('AUTH_STORAGE_FAILED'));
+});
+let authPromise;
+const authReady = () => authPromise ||= (async () => {
+  if(!globalThis.crypto?.subtle||!globalThis.indexedDB)throw Error('AUTH_UNAVAILABLE');
+  const db=await openAuthDb();
+  const read=await new Promise((resolve,reject)=>{const r=db.transaction('keys','readonly').objectStore('keys').get('browser');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+  let pair=read;
+  if(!pair){
+    pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
+    await new Promise((resolve,reject)=>{const tx=db.transaction('keys','readwrite');tx.objectStore('keys').put(pair,'browser');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error || Error('AUTH_STORAGE_FAILED'));});
+  }
+  const publicJwk=await crypto.subtle.exportKey('jwk',pair.publicKey);
+  const publicKey=btoa(JSON.stringify({kty:publicJwk.kty,crv:publicJwk.crv,x:publicJwk.x,y:publicJwk.y,ext:false})).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return {pair,publicKey,sign:async challenge=>b64url(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(challenge)))};
+})();
 // Requested-URL aliases survive redirects, failed loads and user focus. Only created tabs consume the opening budget.
 const owned = new Map();
 const canonical = url => new URL(url).href;
@@ -29,11 +52,11 @@ async function connection(state) {
   await chrome.action.setBadgeText({text:state.connected ? '' : '!'});
   await chrome.action.setBadgeBackgroundColor({color:state.connected ? '#287ad7' : '#b87820'});
 }
-async function fetchJSON(base,path,session,body,timeout = 5000,version = wireVersion) {
+async function fetchJSON(base,path,session,body,timeout = 5000,version = wireVersion,auth = {}) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),timeout);
   try {
     const response = await fetch(base+path,{method:body === undefined ? 'GET' : 'POST',
-      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':version,'X-My-Browser-Installed-Version':VERSION,...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      headers:{'X-My-Browser-Extension':chrome.runtime.id,'X-My-Browser-Origin':chrome.runtime.getURL('').replace(/\/$/,''),'X-My-Browser-Client':clientId,'X-My-Browser-Family':family,'X-My-Browser-Version':version,'X-My-Browser-Installed-Version':VERSION,...(auth.publicKey ? {'X-My-Browser-Key':auth.publicKey} : {}),...(auth.proof ? {'X-My-Browser-Proof':auth.proof} : {}),...(session ? {'X-My-Browser-Session':session} : {}),...(body === undefined ? {} : {'Content-Type':'application/json'})},
       ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:controller.signal}).catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
     const data = await response.json().catch(()=>{throw Error('BRIDGE_REQUEST_FAILED');});
     if (!response.ok) throw new Error(data.error || 'BRIDGE_REQUEST_FAILED');
@@ -48,6 +71,7 @@ function discover() {
 async function discoverBridge() {
   await restore;
   if (bridge) return bridge;
+  let auth=null;
   let diagnostic;
   // Preserve the original ports first. Probe bounded batches so a silent firewall
   // does not turn a larger fallback range into a minute-long serial scan.
@@ -56,10 +80,12 @@ async function discoverBridge() {
       const port=first+offset,base='http://127.0.0.1:'+port;
       try{
         let r=await fetchJSON(base,'/health',null,undefined,450,VERSION);
+        if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey});}
+        if(r.challenge){const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey,proof});}
         if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id)return null;
         if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
         const version=r.version;
-        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
+        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
         if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
         if(typeof r.session!=='string'||!r.session)return null;
         return {base,port,version,session:r.session,learning:r.capabilities?.includes('learning-v1')===true};

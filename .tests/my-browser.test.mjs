@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import readline from 'node:readline';
 import path from 'node:path';
+import {webcrypto} from 'node:crypto';
 const require = createRequire(import.meta.url);
 const {createBridge,EXT_ID} = require('../my-browser/node/bridge.cjs');
 const P = require('../my-browser/extension/policy.js');
@@ -20,9 +21,20 @@ async function fixture(t,options = {}) {
   let session;
   const clientId=crypto.randomUUID();
   const version=require('../my-browser/extension/manifest.json').version;
+  const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
+  const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
+  const publicJwk={kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,ext:false};
+  const publicKey=Buffer.from(JSON.stringify(publicJwk)).toString('base64url');
+  await b.request('setTrustedClients',{clients:[{id:clientId,origin:'chrome-extension://'+EXT_ID,extensionId:EXT_ID,publicKey:JSON.stringify(publicJwk)}]});
   async function http(route,body,headers = {}) {
-    const r=await fetch(url+route,{method:body===undefined?'GET':'POST',headers:{'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':clientId,'X-My-Browser-Version':version,'X-My-Browser-Family':'chrome',...(session?{'X-My-Browser-Session':session}:{}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
-    return {status:r.status,data:await r.json()};
+    const requestHeaders={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Origin':'chrome-extension://'+EXT_ID,'X-My-Browser-Client':clientId,'X-My-Browser-Version':version,'X-My-Browser-Family':'chrome','X-My-Browser-Key':publicKey,...(session?{'X-My-Browser-Session':session}:{}),...headers};
+    const init={method:body===undefined?'GET':'POST',headers:requestHeaders,...(body===undefined?{}:{body:JSON.stringify(body)})};
+    let r=await fetch(url+route,init),data=await r.json();
+    if(route==='/health'&&data.challenge){
+      const proof=Buffer.from(await webcrypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(data.challenge))).toString('base64url');
+      r=await fetch(url+route,{...init,headers:{...requestHeaders,'X-My-Browser-Proof':proof}});data=await r.json();
+    }
+    return {status:r.status,data};
   }
   session=(await http('/health')).data.session;
   await http('/poll');

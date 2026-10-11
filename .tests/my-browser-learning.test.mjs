@@ -3,11 +3,26 @@ import vm from 'node:vm';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {webcrypto} from 'node:crypto';
 import {createLearningService} from '../my-browser/learning-service.js';
 import {createSubtitleCache} from '../my-browser/subtitle-cache.js';
 const require=createRequire(import.meta.url),core=require('../my-browser/extension/learning-core.js');
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
 const version=require('../my-browser/extension/manifest.json').version;
+async function credential(){
+  const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
+  const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
+  const publicKey=Buffer.from(JSON.stringify({kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,ext:false})).toString('base64url');
+  return {publicKey,sign:challenge=>webcrypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(challenge))};
+}
+async function authenticate(bridge,port,headers){
+  const key=await credential(); headers['X-My-Browser-Key']=key.publicKey;
+  const base=`http://127.0.0.1:${port}`; let health=await (await fetch(base+'/health',{headers})).json();
+  if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}
+  await bridge.request('setTrustedClients',{clients:[{id:headers['X-My-Browser-Client'],origin:'chrome-extension://'+headers['X-My-Browser-Extension'],extensionId:headers['X-My-Browser-Extension'],publicKey:JSON.stringify(JSON.parse(Buffer.from(key.publicKey,'base64url').toString('utf8')))}]});
+  if(health.pairing_required){health=await (await fetch(base+'/health',{headers})).json();if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}}
+  return health;
+}
 
 function service() {
   const files=new Map(),calls=[];let corrupt=false,denied=false;
@@ -53,9 +68,14 @@ test('subtitle import keeps timing, strips markup and preserves literal comparis
 test('learning requests are authenticated, deduplicated, cancellable and revoked with site policy',async t=>{
   const notices=[],bridge=createBridge({ports:[0],notify:(method,params)=>notices.push({method,params})});t.after(()=>bridge.close());
   const {port}=await bridge.request('status'),id=crypto.randomUUID();let session;
-  const request=async(path,body,extra={})=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':version,...(session?{'X-My-Browser-Session':session}:{}),...extra},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
+  const baseHeaders={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':version};
+  const request=async(path,body,extra={})=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{...baseHeaders,...(session?{'X-My-Browser-Session':session}:{}),...extra},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
   assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).status,409);
-  session=(await request('/health')).session;
+  assert.equal((await request('/health')).pairing_required,true);
+  assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).status,409);
+  session=undefined;
+  const health=await authenticate(bridge,port,baseHeaders);session=health.session;
+  assert.ok(session);
   const job={id:crypto.randomUUID(),request:{op:'translate',text:'hello',source:{url:'https://example.test/'}}};
   assert.equal((await request('/learning/start',job,{Origin:'https://example.test'})).status,403);
   assert.equal((await request('/learning/start',job)).ok,true);await request('/learning/start',job);assert.equal(notices.length,1);
@@ -171,17 +191,17 @@ test('occupied local ports are skipped and exhaustion can recover without restar
  const failure=await exhausted.request('status');assert.equal(failure.error,'BRIDGE_PORTS_BUSY');assert.equal(failure.execution,'not_executed');
  await new Promise(r=>occupied.close(r));assert.equal((await exhausted.request('status')).port,port);
 });
-test('default listener allocation reaches the expanded range while binding only loopback',async()=>{
+test('default listener allocation stays inside the compatible range while binding only loopback',async()=>{
  const {EventEmitter}=await import('node:events');const candidates=[];let denied=false;
  class Server extends EventEmitter {
-   listen(port,host,resolve){candidates.push(port);assert.equal(host,'127.0.0.1');this.port=port;queueMicrotask(()=>port<18820||denied?this.emit('error',Object.assign(Error('fixture'),{code:denied?'EACCES':'EADDRINUSE'})):resolve());}
+   listen(port,host,resolve){candidates.push(port);assert.equal(host,'127.0.0.1');this.port=port;queueMicrotask(()=>denied?this.emit('error',Object.assign(Error('fixture'),{code:'EACCES'})):this.emit('error',Object.assign(Error('fixture'),{code:'EADDRINUSE'})));}
    address(){return {port:this.port};}close(cb){cb?.();}closeAllConnections(){}
  }
  const code=fs.readFileSync(new URL('../my-browser/node/bridge.cjs',import.meta.url),'utf8');
  const localRequire=createRequire(new URL('../my-browser/node/bridge.cjs',import.meta.url));
  const context={require:name=>name==='node:http'?{createServer:()=>new Server()}:localRequire(name),module:{exports:{}},Buffer,setTimeout,clearTimeout,__dirname:new URL('../my-browser/node',import.meta.url).pathname};
  vm.runInNewContext(code,context);const bridge=context.module.exports.createBridge();
- assert.equal((await bridge.request('status')).port,18820);assert.deepEqual(candidates,Array.from({length:11},(_,i)=>18810+i));await bridge.close();
+ assert.equal((await bridge.request('status')).error,'BRIDGE_PORTS_BUSY');assert.deepEqual(candidates,Array.from({length:10},(_,i)=>18810+i));await bridge.close();
  denied=true;assert.equal((await context.module.exports.createBridge().request('status')).error,'BRIDGE_LISTEN_DENIED');
 });
 
@@ -239,8 +259,9 @@ test('a model timeout is reported in the model stage, never as a validation fail
 test('completed bridge results do not occupy execution slots; evicted receipts never resubmit',async t=>{
  const notices=[],bridge=createBridge({ports:[0],notify:(_m,p)=>notices.push(p)});t.after(()=>bridge.close());
  const {port}=await bridge.request('status'),client=crypto.randomUUID();let session;
- const request=async(path,body)=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version,...(session?{'X-My-Browser-Session':session}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
- session=(await request('/health')).session;let first,last;
+ const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
+ const request=async(path,body)=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{...headers,...(session?{'X-My-Browser-Session':session}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
+ session=(await authenticate(bridge,port,headers)).session;let first,last;
  for(let n=0;n<70;n++){
    const job={id:crypto.randomUUID(),request:{op:'config'}};first ||=job;last=job;
    assert.equal((await request('/learning/start',job)).ok,true);
@@ -258,7 +279,7 @@ test('completed bridge results do not occupy execution slots; evicted receipts n
 test('bridge keeps a slow prefetched subtitle request active for the shared request budget',async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());
  const {port}=await bridge.request('status'),client=crypto.randomUUID(),headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
- const health=await(await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();headers['X-My-Browser-Session']=health.session;
+ const health=await authenticate(bridge,port,headers);headers['X-My-Browser-Session']=health.session;
  const id=crypto.randomUUID(),request={op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]};
  assert.equal((await(await fetch(`http://127.0.0.1:${port}/learning/start`,{method:'POST',headers,body:JSON.stringify({id,request})})).json()).ok,true);
  const realNow=Date.now,started=realNow();

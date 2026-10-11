@@ -151,7 +151,7 @@ channel.onmessage = async ev => {
       const current=(await node('status')).clients?.find(c => c.id === client.id && c.origin === client.origin && c.extensionId === client.extensionId);
       if (!current) return fail('BROWSER_DISCONNECTED','The browser identity changed during confirmation.');
       const {cfg}=await load();
-      const pairedClients=[...(cfg.pairedClients || []).filter(c => c.id !== client.id),{id:client.id,origin:client.origin,extensionId:client.extensionId}];
+      const pairedClients=[...(cfg.pairedClients || []).filter(c => c.id !== client.id),{id:client.id,origin:client.origin,extensionId:client.extensionId,...(typeof client.publicKey==='string' ? {publicKey:client.publicKey} : {})}];
       if (pairedClients.length>16) return fail('TOO_MANY_BROWSERS','At most 16 paired browser profiles are supported.');
       const saved=await fetch('/kv',{method:'PUT',body:JSON.stringify({...cfg,pairedClients})});
       if (!saved.ok) return fail('SAVE_FAILED','Browser authorization was not saved.');
