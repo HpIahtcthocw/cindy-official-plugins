@@ -955,7 +955,7 @@
         },
         {
           "url": "https://registry.npmjs.org/@tesseract.js-data/spa/-/spa-1.0.0.tgz",
-          "sha256": "b6814aa0f4f672c6772b9a5323b85c19887d030ffcf571e5e41a8b066fbb9d16",
+      "sha256": "b6814aa0f4f672c6772b9a5323b85c19887d030ffcf571e5c41a8b066fbb9d16",
           "format": "tar.gz",
           "platforms": [
             "darwin-x64",
