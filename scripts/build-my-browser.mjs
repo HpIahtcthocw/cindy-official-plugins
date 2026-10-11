@@ -11,7 +11,7 @@ if (!['all','chrome','edge','safari'].includes(target)) throw new Error('Target:
 await fs.mkdir(out,{recursive:true});
 process.chdir(repository);
 const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json'),'utf8'));
-const run=(file,args,opts={})=>execFileSync(file,args,{encoding:'utf8',maxBuffer:32*1024*1024,stdio:['ignore','pipe','pipe'],...opts});
+const run=(file,args,opts={})=>execFileSync(file,args,{encoding:'utf8',maxBuffer:32*1024*1024,stdio:['ignore','pipe','pipe'],...opts,shell:false});
 const relativePath=(value,base=repository)=>{
   const relative=path.relative(base,value);
   if(!relative||relative.includes('\0'))throw new Error('Invalid child-process path.');
