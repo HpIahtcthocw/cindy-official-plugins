@@ -23,6 +23,16 @@ for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','
  const found=await context.discoverTest();assert.equal(found.session,'old-session');assert.equal(found.learning,false);assert.equal(versions.filter(v=>v===version).length,10);assert.equal(versions.filter(v=>v===previousVersion).length,10);assert.equal(saved.connection.connected,true);
 });
 
+test('an updated extension keeps a paired older bridge connected while negotiating learning',async()=>{
+ const noop={addListener(){}},saved={},auth={publicKey:'test-key',sign:async()=>new Uint8Array()};
+ const chrome={runtime:{id:'fixture',getManifest:()=>({version}),getURL:()=> 'chrome-extension://fixture/',onStartup:noop,onInstalled:noop,onMessage:noop},storage:{local:{get:async()=>({clientId:'fixture'}),set:async()=>{}},session:{get:async()=>({}),set:async v=>Object.assign(saved,v)}},tabs:{onRemoved:noop,onActivated:noop},alarms:{create(){},onAlarm:noop},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
+ const calls=[];const context={chrome,MyBrowserNetwork:{create:()=>({})},MyBrowserPolicy:{},navigator:{userAgent:'Chrome'},URL,AbortController,setTimeout,clearTimeout,crypto:globalThis.crypto,TextEncoder,Buffer,btoa:value=>Buffer.from(value,'binary').toString('base64'),__testAuth:auth,
+   fetch:async(url,options)=>{const headers=options.headers;calls.push({url,key:headers['X-My-Browser-Key'],proof:headers['X-My-Browser-Proof']});return {ok:true,json:async()=>headers['X-My-Browser-Key']?{plugin:'my-browser',protocol:3,extensionId:'fixture',version:'0.4.12',session:'old-session',capabilities:[]}:{plugin:'my-browser',protocol:3,extensionId:'fixture',version:'0.4.12',session:'old-session',challenge:'old-challenge',auth_required:false}};}};
+ context.globalThis=context;
+ vm.runInNewContext(source.replace(/\nchain\(\);\s*$/,'').replaceAll('auth=auth||await authReady().catch(()=>null)','auth=auth||globalThis.__testAuth||await authReady().catch(()=>null)')+'\nglobalThis.discoverTest=discover;',context);
+ const found=await context.discoverTest();assert.equal(found.session,'old-session');assert.equal(found.learning,false);assert.equal(saved.connection.connected,true);
+});
+
 function workerContext(fetch){
   const noop={addListener(){}};
   const chrome={runtime:{id:'fixture',getManifest:()=>({version}),getURL:()=> 'chrome-extension://fixture/',onStartup:noop,onInstalled:noop,onMessage:noop},storage:{local:{get:async()=>({clientId:'fixture'}),set:async()=>{}},session:{get:async()=>({}),set:async()=>{}}},tabs:{onRemoved:noop,onActivated:noop},alarms:{create(){},onAlarm:noop},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
