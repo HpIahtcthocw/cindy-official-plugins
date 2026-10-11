@@ -55,3 +55,19 @@ test('discovery finds a bridge past the original ten ports and rejects generic H
  const ports=[];const api=workerContext(async url=>{const port=Number(new URL(url).port);ports.push(port);return {ok:true,json:async()=>port===18825?{plugin:'my-browser',protocol:3,extensionId:'fixture',version,session:'fallback-session'}:{ok:true}};});
  const bridge=await api.discover();assert.equal(bridge.base,'http://127.0.0.1:18825');assert.equal(ports.length,20);
 });
+
+
+test('cancel during discovery prevents submission and cannot be forged by another document',async()=>{
+ const core=(await import('./../my-browser/extension/learning-core.js')).default||globalThis.CindyLearning;
+ const listeners=[],starts=[],noop={addListener(){}};let release;const gate=new Promise(r=>release=r);
+ const chrome={runtime:{id:'fixture',getManifest:()=>({version}),getURL:p=>'chrome-extension://fixture/'+p,onStartup:noop,onInstalled:noop,onMessage:{addListener:f=>listeners.push(f)}},storage:{local:{get:async()=>({clientId:crypto.randomUUID()}),set:async()=>{}},session:{get:async()=>({}),set:async()=>{}}},tabs:{onRemoved:noop,onActivated:noop,get:async()=>({id:1,url:'https://example.test/watch',title:'Test'}),sendMessage:async()=>{}},alarms:{create(){},onAlarm:noop},action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}}};
+ const context={chrome,MyBrowserNetwork:{create:()=>({document:async()=> 'doc'})},MyBrowserPolicy:{},CindyLearning:core,navigator:{userAgent:'Chrome'},URL,AbortController,setTimeout,clearTimeout,crypto,
+ fetch:async(url,opt)=>{if(url.endsWith('/health')){await gate;return {ok:true,json:async()=>({plugin:'my-browser',protocol:3,extensionId:'fixture',version,session:'session',capabilities:['learning-v1']})};}if(url.endsWith('/learning/start'))starts.push(JSON.parse(opt.body).id);return {ok:true,json:async()=>url.endsWith('/learning/result')?{done:true,result:{ok:true}}:{ok:true}};}};
+ vm.runInNewContext(source.replace(/\nchain\(\);\s*$/,'')+'\nglobalThis.reviewAPI={learningRequest};',context);
+ const sender={id:'fixture',documentId:'doc',frameId:0,tab:{id:1},url:'https://example.test/watch'};
+ const first=crypto.randomUUID(),second=crypto.randomUUID();
+ const request=id=>context.reviewAPI.learningRequest({id,request:{op:'translate',text:'hello',source:{url:sender.url}}},sender).catch(e=>e.message);
+ const a=request(first),b=request(second);await new Promise(r=>setImmediate(r));
+ for(const fn of listeners){fn({type:'cindy-cancel',id:first},sender,()=>{});fn({type:'cindy-cancel',id:second},{...sender,documentId:'other'},()=>{});}
+ release();assert.equal(await a,'REQUEST_CANCELLED');assert.equal((await b).ok,true);assert.deepEqual(starts,[second]);
+});

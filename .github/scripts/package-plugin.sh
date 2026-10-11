@@ -31,12 +31,21 @@ git -c core.autocrlf=false archive \
   --add-file=TRADEMARKS.zh-CN.md \
   "HEAD:${plugin_directory}"
 
+# `git archive --format=zip` emits directory records. Cindy's package limit is
+# measured over payload files, and the fixed repository legal records are
+# required metadata rather than plugin payload. Remove directory records so
+# local packages have the same shape as published packages, then count only
+# plugin payload files below.
+zip -q -d "${output_file}" '*/' >/dev/null 2>&1 || true
+
 # Enforce the intersection of the Server acceptance limits and Desktop install
 # limits on the exact archive that will be uploaded. Regular sandbox packages
 # retain their smaller Desktop limits.
 archive_bytes="$(wc -c < "${output_file}" | tr -d '[:space:]')"
 uncompressed_bytes="$(unzip -l "${output_file}" | awk 'END { print $1 }')"
-entry_count="$(unzip -Z1 "${output_file}" | wc -l | tr -d '[:space:]')"
+entry_count="$(unzip -Z1 "${output_file}" \
+  | awk '$0 !~ /\/$/ && $0 !~ /^(LICENSE|NOTICE|TRADEMARKS\.md|TRADEMARKS\.zh-CN\.md)$/' \
+  | wc -l | tr -d '[:space:]')"
 if jq -e '.node != null' "${plugin_directory}/ghost.json" >/dev/null; then
   max_archive_bytes=$((128 * 1024 * 1024))
   max_uncompressed_bytes=$((256 * 1024 * 1024))
@@ -54,6 +63,6 @@ if (( uncompressed_bytes > max_uncompressed_bytes )); then
   exit 1
 fi
 if (( entry_count > 256 )); then
-  echo "Plugin archive contains ${entry_count} entries; Server limit is 256: ${output_file}" >&2
+  echo "Plugin archive contains ${entry_count} payload files; Server limit is 256: ${output_file}" >&2
   exit 1
 fi

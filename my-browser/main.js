@@ -95,7 +95,7 @@ async function handleTool(name,args) {
     return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,
       clients:(status.clients || []).map(c=>({id:c.id,browser:c.browser,version:c.version,protocolVersion:c.protocolVersion,connected:c.connected,trusted:c.trusted})),
       installation:{ok:!!installation?.ok,browsers:(installation?.browsers || []).map(b=>({browser:b.browser,supported:b.supported,installed:b.installed,published:b.published,zip:b.zip,bundled:b.bundled}))},
-      how_to_install:'Open Cindy Chrome plugin settings. Chrome/Edge: enable Developer mode in the extensions manager, then drop the bundled ZIP on that page (Chromium unpacks it there) or use Load unpacked on the bundled directory. A refusal of the dropped ZIP is normal on some builds; fall back to the directory. Wait for a live connection.'};
+      how_to_install:'Open Cindy Chrome plugin settings and choose Install extension. Chrome/Edge use the official Chrome Web Store listing; return here after installation and wait for a live connection. Developer ZIP/directory loading remains available only in the advanced fallback section.'};
   }
   if (name === 'browser_tabs') return node('act',{action:'tabs',payload:P.validate('tabs',args)});
   if (name === 'browser_read') {
@@ -127,16 +127,10 @@ cindy.onHostMessage(async msg => {
 });
 channel.onmessage = async ev => {
   const m = ev.data || {};
-  if (!['status-request','save-request','install-request','pair-request','learning-panel'].includes(m.type) || typeof m.id !== 'string') return;
+  if (!['status-request','save-request','install-request','pair-request'].includes(m.type) || typeof m.id !== 'string') return;
   let result;
   try {
-    if (m.type === 'learning-panel') {
-      const {cfg}=await load();
-      const allowed=[...(cfg.learningProfiles||[]),...(cfg.pairedClients||[])];
-      if(!allowed.some(c=>c.id===m.clientId))return channel.postMessage({type:'response',id:m.id,result:fail('BROWSER_REQUIRED','Connect a browser first.')});
-      result=await (await getLearningService()).handle(m.clientId,m.request);
-    }
-    else if (m.type === 'save-request') result = await serialize(() => save(m.policy,m.base));
+    if (m.type === 'save-request') result = await serialize(() => save(m.policy,m.base));
     else if (m.type === 'install-request') result = await node('openInstallation',{browser:m.browser,mode:m.mode});
     else if (m.type === 'pair-request') result = await serialize(async () => {
       const status=await node('status');
@@ -153,17 +147,20 @@ channel.onmessage = async ev => {
       if (!saved.ok) return fail('SAVE_FAILED','Browser authorization was not saved.');
       return node('setTrustedClients',{clients:pairedClients});
     });
-    else { await sync(); const {cfg}=await load();result = {...await node('status'),installation:await node('installation'),learningProfiles:cfg.learningProfiles||[]}; }
-  } catch (e) { result = m.type==='learning-panel'?{ok:false,error:e.message||'LEARNING_UNAVAILABLE'}:fail('SETTINGS_ERROR',e.message || 'Reload plugin settings.'); }
+    else { await sync(); result = {...await node('status'),installation:await node('installation')}; }
+  } catch (e) { result = fail('SETTINGS_ERROR',e.message || 'Reload plugin settings.'); }
   channel.postMessage({type:'response',id:m.id,result});
 };
 
 // Browser-initiated learning requests are delivered by the paired local bridge.
 let learningService,hostLocale='en';
 async function getLearningService() {
-  if(!learningService)learningService=Promise.all([import('/extension/learning-core.js'),import('/learning-service.js')]).then(([,module])=>module.createLearningService({
+  if(!learningService)learningService=Promise.all([import('/extension/learning-core.js'),import('/learning-service.js'),import('/translation-task.js')]).then(([,module,adapter])=>module.createLearningService({
     core:globalThis.CindyLearning,locale:()=>hostLocale,tasks:cindy.tasks,
-    model:args=>cindy.send({type:'cindy-request',kind:'oneshot_text',...args}),
+    model:adapter.createTranslationTask({tasks:cindy.tasks,locale:()=>hostLocale,
+      load:async()=>(await load()).cfg.translationTask,
+      save:binding=>serialize(async()=>{const {cfg}=await load();const r=await fetch('/kv',{method:'PUT',body:JSON.stringify({...cfg,translationTask:binding})});if(!r.ok)throw Error('SAVE_FAILED');})
+    }),
     library:args=>cindy.send({type:'library-request',...args})
   }));
   return learningService;
@@ -175,7 +172,6 @@ async function handleLearningHostMessage(msg){
   let result,stage='accepted';
   try {
     await sync();
-    await serialize(async()=>{const {cfg}=await load();if(!(cfg.learningProfiles||[]).some(c=>c.id===clientId)){const profiles=[...(cfg.learningProfiles||[]),{id:clientId}];const r=await fetch('/kv',{method:'PUT',body:JSON.stringify({...cfg,learningProfiles:profiles})});if(!r.ok)throw Error('SAVE_FAILED');}});
     const service=await getLearningService();
     result=await service.handle(clientId,request,async()=> (await node('learningActive',{id})).active===true,progress=>{stage=progress.stage;return node('learningProgress',{id,progress});});
   }catch(e){result={ok:false,error:e.message||'LEARNING_UNAVAILABLE',stage};}

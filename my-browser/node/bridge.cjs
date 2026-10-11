@@ -144,14 +144,19 @@ function createBridge(options = {}) {
     if (req.method === 'POST' && req.url === '/learning/start') {
       const b=await body(req);
       if(typeof b.id!=='string'||!/^[a-f0-9-]{36}$/.test(b.id))return send(res,failure('INVALID_ID','Invalid request.'),400);
-      for(const [key,item] of learning)if(Date.now()-item.created>330000)learning.delete(key);
+      for(const [key,item] of learning)if(Date.now()>item.expiresAt)learning.delete(key);
       const previous=learning.get(b.id);
+      if(previous?.clientId===id&&previous.retired)return send(res,failure('REQUEST_EXPIRED','The completed result is no longer retained.'),404);
       if(previous)return send(res,previous.clientId===id?{ok:true,id:b.id}:failure('INVALID_ID','Request belongs to another profile.'),previous.clientId===id?200:403);
-      if(learning.size>=64 || [...learning.values()].filter(x=>!x.result&&x.clientId===id).length>=4)return send(res,failure('BUSY','Wait for the current requests.'),429);
+      if(learning.size>=4096 || [...learning.values()].filter(x=>!x.result).length>=64 || [...learning.values()].filter(x=>!x.result&&x.clientId===id).length>=4)return send(res,failure('BUSY','Wait for the current requests.'),429);
       let payload;
       try{payload=L.validate(b.request);}catch{return send(res,failure('INVALID_INPUT','Check the selected text or file.'),400);}
       if(payload.source.url){const gate=P.check(policy,'text',payload.source.url);if(!gate.ok)return send(res,gate,403);payload.source.url=P.redactUrl(payload.source.url);}
-      const item={id:b.id,clientId:id,payload,created:Date.now(),result:null,progress:{stage:'accepted',startedAt:Date.now(),updatedAt:Date.now(),attempt:1}};
+      // Bound retained result bodies separately from running work. Keep a small
+      // receipt after eviction so replaying an old id never resubmits the model.
+      const completed=[...learning.values()].filter(x=>x.result&&!x.retired);
+      while(completed.length>=64){const old=completed.shift();old.retired=true;old.payload={source:old.payload.source};old.result={ok:false,error:'REQUEST_EXPIRED'};}
+      const item={id:b.id,clientId:id,payload,created:Date.now(),expiresAt:Date.now()+L.learningRequestTimeout(payload)+L.learningTiming.transport,result:null,progress:{stage:'accepted',startedAt:Date.now(),updatedAt:Date.now(),attempt:1}};
       learning.set(b.id,item);
       options.notify?.('learning-request',{id:b.id,clientId:id,request:payload});
       return send(res,{ok:true,id:b.id});
@@ -240,17 +245,17 @@ function createBridge(options = {}) {
     }
     if(method==='learningActive'||method==='learningResult'||method==='learningProgress') {
       const item=learning.get(params.id),client=item&&clients.get(item.clientId);
-      const valid=!!item && !!client?.trusted && Date.now()-item.created<=330000 && (!item.payload.source.url||P.check(policy,'text',item.payload.source.url).ok);
+      const valid=!!item && !!client?.trusted && Date.now()<=item.expiresAt && (!item.payload.source.url||P.check(policy,'text',item.payload.source.url).ok);
       if(method==='learningActive')return {ok:true,active:valid&&!item?.result};
       if(!valid)return failure('REQUEST_CANCELLED','Request no longer active.');
       if(method==='learningProgress'){
-        if(!item.result&&['cache','queued','waiting-previous','model','validating','saving'].includes(params.progress?.stage)){
+        if(!item.result&&['accepted','opening-task','submitting-task','stopping','cache','queued','waiting-previous','model','generating','validating','saving'].includes(params.progress?.stage)){
           const previous=item.progress||{},attempt=Number.isInteger(params.progress.attempt)?Math.min(3,Math.max(1,params.progress.attempt)):previous.attempt||1;
-          item.progress={stage:params.progress.stage,attempt,startedAt:previous.startedAt||item.created,updatedAt:previous.stage===params.progress.stage&&previous.attempt===attempt?previous.updatedAt:Date.now()};
+          item.progress={stage:params.progress.stage,attempt,...(Number.isSafeInteger(params.progress.receivedChars)&&params.progress.receivedChars>=0?{receivedChars:params.progress.receivedChars}:{}),startedAt:previous.startedAt||item.created,updatedAt:previous.stage===params.progress.stage&&previous.attempt===attempt?previous.updatedAt:Date.now()};
         }
         return {ok:true};
       }
-      if(!item.result)item.result=params.result;
+      if(!item.result){item.result=params.result;item.expiresAt=Date.now()+L.learningTiming.resultRetention;}
       return {ok:true};
     }
     if (method === 'setTrustedClients') {

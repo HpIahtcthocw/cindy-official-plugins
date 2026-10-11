@@ -53,7 +53,7 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  // CDP can inspect closed roots without changing the production isolation boundary.
  const cdp=await context.newCDPSession(page);await cdp.send('DOM.enable');
  async function element(tag,text){const {root}=await cdp.send('DOM.getDocument',{depth:-1,pierce:true});let found;function walk(n){if(n.nodeName===tag&&(!text||n.children?.some(c=>c.nodeValue===text)||n.attributes?.includes(text)))found=n;for(const c of [...(n.children||[]),...(n.shadowRoots||[])])walk(c);}walk(root);assert.ok(found,tag+' '+text+' '+JSON.stringify(root).slice(-3000));return (await cdp.send('DOM.resolveNode',{nodeId:found.nodeId})).object.objectId;}
- async function click(text){const {root}=await cdp.send('DOM.getDocument',{depth:-1,pierce:true}),matches=[];function walk(n){if(n.nodeName==='BUTTON'&&(n.children?.some(c=>c.nodeValue===text)||n.attributes?.includes(text)))matches.push(n);for(const c of [...(n.children||[]),...(n.shadowRoots||[])])walk(c);}walk(root);for(const n of matches.reverse()){const {object}=await cdp.send('DOM.resolveNode',{nodeId:n.nodeId});const r=await cdp.send('Runtime.callFunctionOn',{objectId:object.objectId,functionDeclaration:'async function(){const r=this.getBoundingClientRect();if(!r.width||!r.height)return null;this.scrollIntoView({block:"nearest"});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const b=this.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2}}',awaitPromise:true,returnByValue:true});if(r.result.value){await page.mouse.click(r.result.value.x,r.result.value.y);return;}}assert.fail('No visible button '+text);}
+ async function click(text){const {root}=await cdp.send('DOM.getDocument',{depth:-1,pierce:true}),matches=[];function walk(n){if(n.nodeName==='BUTTON'&&(n.children?.some(c=>c.nodeValue===text)||n.attributes?.includes(text)))matches.push(n);for(const c of [...(n.children||[]),...(n.shadowRoots||[])])walk(c);}walk(root);for(const n of matches.reverse()){const {object}=await cdp.send('DOM.resolveNode',{nodeId:n.nodeId});const r=await cdp.send('Runtime.callFunctionOn',{objectId:object.objectId,functionDeclaration:'async function(){const r=this.getBoundingClientRect();if(!r.width||!r.height)return null;this.scrollIntoView({block:"nearest"});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const b=this.getBoundingClientRect(),x=b.x+b.width/2,y=b.y+b.height/2,hit=this.getRootNode().elementFromPoint(x,y);if(hit!==this&&!this.contains(hit))return null;return {x,y}}',awaitPromise:true,returnByValue:true});if(r.result.value){await page.mouse.click(r.result.value.x,r.result.value.y);return;}}assert.fail('No visible button '+text);}
  async function panelText(){const {root}=await cdp.send('DOM.getDocument',{depth:-1,pierce:true});return JSON.stringify(root);}
 
  const screenshots=process.env.CINDY_SCREENSHOTS;if(screenshots)await fs.mkdir(screenshots,{recursive:true});
@@ -74,7 +74,7 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'selection'}),tabId);await waitText('译文：Hello world');assert.doesNotMatch(await panelText(),/"nodeValue":"收藏"/);
  await click('解释');await waitText('这是结合上下文的解释。');await click('关闭');
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'settings'}),tabId);
- await waitText('Cindy → 插件 → Cindy Chrome → 模型');
+ await waitText('在 Cindy 的「浏览器翻译」任务中选择模型和思考强度');
  await readNode('SELECT','外观','function(){this.value="dark";this.dispatchEvent(new Event("change"))}');assert.equal((await appearance()).theme,'dark');
  if(screenshots)await page.screenshot({path:path.join(screenshots,'settings-dark.png')});
  await readNode('SELECT','外观','function(){this.value="light";this.dispatchEvent(new Event("change"))}');await click('返回');
@@ -107,7 +107,7 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  const brokenCalls=()=>modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.turns&&m.turns.map(t=>t.text).join(' ').includes('BrokenSubtitle');}).length;
  await page.locator('video').evaluate(v=>{v.currentTime=2.5;});
  for(let i=0;i<40&&(await captions()).translation!=='译文：HealthySubtitle';i++)await page.waitForTimeout(100);assert.equal((await captions()).translation,'译文：HealthySubtitle');assert.equal(brokenCalls(),4);await page.evaluate(()=>{document.querySelector('video').currentTime=.5;});await page.waitForTimeout(100);assert.equal((await captions()).original,'BrokenSubtitle');assert.equal((await captions()).translation,'');await page.waitForTimeout(1400);assert.equal(brokenCalls(),4);
- allowBroken=true;await click('重试字幕翻译');
+ allowBroken=true;await click('字幕设置');if(screenshots)await page.screenshot({path:path.join(screenshots,'retry-before.png')});await click('重试字幕翻译');if(screenshots)await page.screenshot({path:path.join(screenshots,'retry-after.png')});
  for(let i=0;i<40&&!(await panelText()).includes('译文：BrokenSubtitle');i++)await page.waitForTimeout(100);
  assert.match(await panelText(),/译文：BrokenSubtitle/);assert.equal(modelCalls.filter(r=>{const m=JSON.parse(r.prompt.split('\n').at(-1));return m.turns?.some(t=>t.text==='HealthySubtitle');}).length,1,'manual retry preserves already translated passages');
  // Leaving player mode restores original caption containers and tracks.
@@ -116,8 +116,59 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await worker.evaluate(()=>{const originalFetch=globalThis.fetch;globalThis.fixtureCaptionReads=0;globalThis.fetch=(input,init)=>{
   if(String(input).startsWith('https://www.youtube.com/api/timedtext?fixture=full')){globalThis.fixtureCaptionReads++;return Promise.resolve(new Response(JSON.stringify({events:[{tStartMs:0,dDurationMs:1000,segs:[{utf8:'Entire transcript ',tOffsetMs:0},{utf8:'from the beginning.',tOffsetMs:400}]},{tStartMs:1000,dDurationMs:1200,segs:[{utf8:'A complete phrase outside the native window.'}]}]}),{status:200}));}return originalFetch(input,init)};});
  await page.goto('http://www.youtube.com/watch?v=fixture');
- await page.evaluate(async data=>{const controls=document.createElement('div');controls.className='ytp-right-controls';controls.style.cssText='position:absolute;bottom:0;right:0;height:40px';document.querySelector('#movie_player').append(controls);globalThis.ytInitialPlayerResponse={captions:{playerCaptionsTracklistRenderer:{captionTracks:[{baseUrl:'https://www.youtube.com/api/timedtext?fixture=full',languageCode:'en'}]}}};const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';track.addCue(new VTTCue(1,2,'Partial native fragment'));v.currentTime=1.4;document.dispatchEvent(new Event('yt-navigate-finish'));},wav.toString('base64'));
+ await page.evaluate(async data=>{const controls=document.createElement('div');controls.className='ytp-right-controls';controls.style.cssText='position:absolute;bottom:0;right:0;height:40px';const chromeBottom=document.createElement('div');chromeBottom.className='ytp-chrome-bottom';chromeBottom.style.cssText='position:absolute;bottom:0;left:0;width:100%;height:56px';chromeBottom.append(controls);document.querySelector('#movie_player').append(chromeBottom);globalThis.ytInitialPlayerResponse={captions:{playerCaptionsTracklistRenderer:{captionTracks:[{baseUrl:'https://www.youtube.com/api/timedtext?fixture=full',languageCode:'en'}]}}};const v=document.querySelector('video');v.style.position='absolute';v.style.top='-540px';v.src='data:audio/wav;base64,'+data;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';track.addCue(new VTTCue(1,2,'Partial native fragment'));v.currentTime=1.4;document.dispatchEvent(new Event('yt-navigate-finish'));},wav.toString('base64'));
  await waitText('译文：Entire transcript');assert.equal((await captions()).settingsHidden,true);assert.doesNotMatch((await captions()).original,/Partial native/);
+ // Real YouTube can position its video a full player-height above the player
+ // during initialization, then move it back without a size/metadata event.
+ await page.locator('video').evaluate(v=>{v.style.top='0px';});
+ const playerBounds=await page.locator('#movie_player').boundingBox();
+ const overlayBounds=await page.locator('[data-cindy-captions]').boundingBox();
+ assert.ok(Math.abs(overlayBounds.y-playerBounds.y)<1,'subtitle layer stays inside the player after video repositioning');
+ const visibleCaption=await captions();assert.equal(visibleCaption.hidden,false);
+ assert.ok(visibleCaption.bottom>playerBounds.y&&visibleCaption.bottom<=playerBounds.y+playerBounds.height,'rendered captions are in the visible player');
+ await click('字幕设置');assert.equal((await captions()).settingsHidden,false,'native player menu opens with a real pointer click');
+ const menuBounds=await readNode('SECTION','字幕设置','function(){const r=this.getBoundingClientRect();return {top:r.top,bottom:r.bottom}}');
+ assert.ok(menuBounds.top>=playerBounds.y&&menuBounds.bottom<=playerBounds.y+playerBounds.height,'settings remain inside player');
+ await click('关闭设置');assert.equal((await captions()).settingsHidden,true);
+ // Ready details never float over the picture; captions follow YouTube's
+ // own auto-hide state even without pointer events (keyboard/pause/fullscreen).
+ assert.equal(await readNode('DIV','caption-notice','function(){return !!this.closest(".caption-settings")&&!this.getClientRects().length}'),true);
+ await page.waitForTimeout(220);const raised=(await captions()).bottom;
+ await page.locator('#movie_player').evaluate(n=>n.classList.add('ytp-autohide'));await page.waitForTimeout(220);
+ const lowered=(await captions()).bottom;assert.ok(lowered-raised>25,'captions descend when native controls hide');
+ if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-controls-hidden.png')});
+ await page.locator('#movie_player').evaluate(n=>n.classList.remove('ytp-autohide'));await page.waitForTimeout(220);
+ assert.ok(Math.abs((await captions()).bottom-raised)<2,'captions clear the control bar when it returns');
+ if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-controls-visible.png')});
+ await click('字幕设置');
+ assert.equal(await readNode('DIV','preparation-track','function(){return this.getAttribute("aria-valuenow")}'),'100');
+ assert.equal(await readNode('DIV','preparation-heading','function(){return this.textContent.includes("已就绪")&&!this.textContent.includes("%")}'),true);
+ if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-ready-menu-light.png')});
+ // Stress the real player UI with a narrow viewport, long labels and scrolling.
+ const previousLayout=await page.evaluate(()=>({main:document.querySelector('main').style.cssText,player:document.querySelector('#movie_player').style.cssText}));
+ await page.setViewportSize({width:360,height:640});
+ await page.evaluate(()=>{document.querySelector('main').style.cssText='padding:8px;width:100%';const p=document.querySelector('#movie_player');p.style.width='100%';p.style.height='230px';
+   const left=document.createElement('div');left.className='ytp-left-controls';left.style.cssText='width:100px;height:40px;position:absolute;bottom:0;left:0';p.querySelector('.ytp-chrome-bottom').append(left);
+   const native=document.createElement('button');native.dataset.fixtureControl='';native.textContent='YouTube';native.style.cssText='width:100px;height:40px;vertical-align:top';p.querySelector('.ytp-right-controls').append(native);
+ });await page.waitForTimeout(150);
+ await readNode('BUTTON','翻译为','function(){this.textContent="VeryLongLanguageName".repeat(4)}');
+ const menuLayout=await readNode('SECTION','字幕设置','function(){const r=this.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,overflow:this.scrollWidth-this.clientWidth,captionVisibility:getComputedStyle(this.getRootNode().querySelector(".caption-box")).visibility}}');
+ assert.ok(menuLayout.left>=0&&menuLayout.right<=360&&menuLayout.top>=0&&menuLayout.bottom<=640,JSON.stringify(menuLayout));assert.ok(menuLayout.overflow<=1,JSON.stringify(menuLayout));assert.equal(menuLayout.captionVisibility,'hidden','settings and subtitles never overprint');
+ const controlWidth=await readNode('BUTTON','字幕设置','function(){return this.getBoundingClientRect().width}');assert.ok(controlWidth<=112,'Cindy leaves room for native controls');
+ for(const theme of ['light','dark']){await readNode('DIV','cindy-root captions-root',`function(){this.dataset.theme="${theme}"}`);if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-narrow-'+theme+'.png')});}
+ await readNode('DIV','cindy-root captions-root','function(){this.dataset.theme="light"}');
+ await readNode('SECTION','字幕设置','function(){this.scrollTop=this.scrollHeight}');
+ await click('关闭设置');assert.equal((await captions()).settingsHidden,true,'close remains clickable after scrolling a short menu');
+ // Valid maximum-length captions must fit the small player, even at the large size.
+ const longCaption=await readNode('DIV','caption-box','function(){const root=this.getRootNode();root.querySelector(".caption-original").textContent="Long caption ".repeat(8);root.querySelector(".caption-translation").textContent="这是用于检查小播放器长字幕换行的文本".repeat(5);window.dispatchEvent(new Event("resize"));const b=this.getBoundingClientRect(),p=root.host.getBoundingClientRect();return {top:b.top,bottom:b.bottom,left:b.left,right:b.right,playerTop:p.top,playerBottom:p.bottom,playerLeft:p.left,playerRight:p.right}}');
+ assert.ok(longCaption.top>=longCaption.playerTop&&longCaption.bottom<=longCaption.playerBottom&&longCaption.left>=longCaption.playerLeft&&longCaption.right<=longCaption.playerRight,JSON.stringify(longCaption));
+ if(screenshots)await page.locator('#movie_player').screenshot({path:path.join(screenshots,'player-narrow-long-caption.png')});
+ await click('字幕设置');await page.evaluate(()=>scrollTo(0,130));await page.waitForTimeout(100);
+ const scrolled=await readNode('SECTION','字幕设置','function(){const r=this.getBoundingClientRect();return {top:r.top,bottom:r.bottom}}');assert.ok(scrolled.top>=0&&scrolled.bottom<=640,JSON.stringify(scrolled));
+ await click('关闭设置');
+ await page.evaluate(previous=>{scrollTo(0,0);document.querySelector('.ytp-left-controls').remove();document.querySelector('[data-fixture-control]').remove();document.querySelector('main').style.cssText=previous.main;document.querySelector('#movie_player').style.cssText=previous.player;},previousLayout);
+ await page.setViewportSize({width:1280,height:900});await page.waitForTimeout(150);await click('字幕设置');
+ await click('关闭设置');
  assert.equal(await page.locator('.ytp-right-controls [data-cindy-player-control]').count(),1);
  const beforeMenu=modelCalls.length;await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'open'}),tabId);assert.equal((await captions()).settingsHidden,false);assert.equal(modelCalls.length,beforeMenu,'opening player settings keeps prepared subtitles');await click('字幕设置');
  await click('字幕设置');await click('仅原文');const beforeOriginal=modelCalls.length;
@@ -130,18 +181,23 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await page.evaluate(async data=>{const v=document.querySelector('video');v.src='data:audio/wav;base64,'+data;v.muted=true;await new Promise(r=>v.onloadedmetadata=r);const track=v.addTextTrack('captions','English','en');track.mode='showing';for(let i=0;i<72;i++)track.addCue(new VTTCue(i*2,(i+1)*2,Array.from({length:10},(_,j)=>'Buffer'+(i*10+j)).join(' ')));await v.play()},longWav.toString('base64'));
  await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
  for(let i=0;i<60&&prefetchStarted.length<2;i++)await page.waitForTimeout(100);
- await waitText('等待模型返回');assert.equal(await readNode('DIV','preparation-track','function(){return this.getAttribute("aria-valuenow")}'),'0');
+ await waitText('翻译任务执行中');assert.equal(await readNode('DIV','preparation-track','function(){return this.getAttribute("aria-valuenow")}'),'0');
  if(screenshots){
-   await click('字幕设置');await page.screenshot({path:path.join(screenshots,'subtitle-progress-waiting.png')});
-   await click('字幕设置');await click('模型设置');
+   await page.screenshot({path:path.join(screenshots,'subtitle-progress-waiting.png')});
+   await click('模型设置');
    await readNode('SELECT','外观','function(){this.value="dark";this.dispatchEvent(new Event("change"))}');
    assert.equal(await readNode('DIV','caption-notice','function(){return getComputedStyle(this).backgroundColor}'),'rgb(31, 31, 30)');
-   await click('关闭设置');await page.screenshot({path:path.join(screenshots,'subtitle-progress-dark.png')});
-   await click('字幕设置');await click('模型设置');
+   await click('返回');await page.screenshot({path:path.join(screenshots,'subtitle-progress-dark.png')});
+   await click('模型设置');
    await readNode('SELECT','外观','function(){this.value="light";this.dispatchEvent(new Event("change"))}');await click('返回');
  }
  assert.deepEqual(prefetchStarted,['Buffer0','Buffer180']);assert.equal(await page.locator('video').evaluate(v=>v.paused),true);
  prefetchGates.get('Buffer0')();for(let i=0;i<40&&await page.locator('video').evaluate(v=>v.paused);i++)await page.waitForTimeout(100);assert.equal(await page.locator('video').evaluate(v=>v.paused),false);
+ assert.equal(await readNode('DIV','preparation-track','function(){return this.getAttribute("aria-valuenow")}'),'100','one ready passage completes playback preparation without translating the entire video');
+ assert.ok(prefetchStarted.length<5,'readiness does not submit the whole video');
+ await click('关闭设置');
+ assert.equal(await readNode('DIV','caption-notice','function(){return this.getClientRects().length}'),0,'partial whole-video completion cannot leave a floating progress card');await click('字幕设置');
+
  await page.locator('video').evaluate(v=>{v.currentTime=120});
  // Host model calls cannot be aborted. Finish an old provider call before the
  // seek can consume its slot; the obsolete result must never reach the captions.
@@ -172,4 +228,19 @@ test('Chrome reading: compact UI, independent subtitle modes/languages, auto You
  await chooseFile({name:'latest.txt',mimeType:'text/plain',buffer:Buffer.from('Latest reader document')});await reader.waitForTimeout(700);
  assert.equal(await reader.locator('textarea').inputValue(),'Latest reader document');assert.equal(await reader.locator('canvas').count(),0);
  if(screenshots)await reader.screenshot({path:path.join(screenshots,'pdf.png')});
+ // Real extension reload: old content scripts remain in SPA documents but their
+ // APIs are invalid. They must release the player and stop URL polling quietly.
+ await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'video'}),tabId);
+ assert.equal(await page.locator('[data-cindy-captions]').count(),1);
+ const exceptions=[];await cdp.send('Runtime.enable');cdp.on('Runtime.exceptionThrown',event=>exceptions.push(event.exceptionDetails.exception?.description||event.exceptionDetails.text));
+ await worker.evaluate(()=>{setTimeout(()=>chrome.runtime.reload(),50);});
+ await page.waitForTimeout(1500);
+ for(let i=0;i<3;i++){await page.evaluate(i=>history.pushState({},'', '/photo/'+i),i);await page.waitForTimeout(1100);}
+ assert.deepEqual(exceptions,[],'extension reload and SPA navigation produce no uncaught errors');
+ assert.equal(await page.locator('[data-cindy-captions],[data-cindy-panel],[data-cindy-player-control]').count(),0,'old subtitle and panel DOM are removed');
+ assert.equal(await page.locator('.ytp-caption-window-container').evaluate(n=>n.style.visibility),'','native subtitles are restored');
+ await page.reload();await page.waitForTimeout(250);
+ const nextWorker=context.serviceWorkers().find(w=>w!==worker)||context.serviceWorkers()[0];
+ const reopened=await nextWorker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'cindy-ui',action:'open'}),tabId);
+ assert.equal(reopened.ok,true,'fresh document reconnects after extension reload');
 });

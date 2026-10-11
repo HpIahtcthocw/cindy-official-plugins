@@ -1,6 +1,14 @@
 'use strict';
 // Shared, deterministic input and subtitle handling. No network or host access.
 (function(root) {
+  // One budget shared by the browser, bridge and public-task adapter. Each
+  // model attempt can wait behind one active run in the two-slot scheduler.
+  const learningTiming=Object.freeze({model:240000,cancel:15000,queue:30000,transport:30000,resultRetention:330000});
+  function learningRequestTimeout(req){
+    if(!['subtitles','subtitle-document','translate','explain','summary','conversation','task'].includes(req.op))return learningTiming.transport;
+    const attempts=req.op==='subtitles'?(req.editorial?2:3):req.op==='translate'?2:1;
+    return attempts*(2*(learningTiming.model+learningTiming.cancel)+learningTiming.queue)+learningTiming.transport;
+  }
   const languages = {auto:'Auto',en:'English','zh-CN':'简体中文','zh-TW':'繁體中文',ja:'日本語',ko:'한국어',fr:'Français',de:'Deutsch',es:'Español',it:'Italiano',pt:'Português',ru:'Русский',ar:'العربية',hi:'हिन्दी',th:'ไทย',vi:'Tiếng Việt'};
   // A language directory is not a claim about any model's translation capability.
   const commonLanguages=Object.keys(languages).filter(code=>code!=='auto');
@@ -208,7 +216,7 @@
     return {percent:total?Math.floor(completed/total*100):0,done:done.length,total:all.length,
       ahead:all.length?subtitleBuffer(all,time).ahead:0,complete:total>0&&completed===total,
       stage:chunk?.error?'failed':chunk?.retryAt>now?'retry':p?.stage||(all.length?'prepared':'reading'),
-      errorStage:chunk?.error?p?.stage:undefined,elapsed:p?Math.max(0,Math.floor(((p.finishedAt||now)-p.updatedAt)/1000)):0,attempt:p?.attempt||1,
+      receivedChars:p?.receivedChars||0,errorStage:chunk?.error?p?.stage:undefined,elapsed:p?Math.max(0,Math.floor(((p.finishedAt||now)-p.updatedAt)/1000)):0,attempt:p?.attempt||1,
       range:chunk?[chunk.words[0].start,chunk.words.at(-1).end]:null,
       cached:done.filter(c=>c.cache?.state==='hit').length,saved:done.filter(c=>['hit','saved'].includes(c.cache?.state)).length,
       cacheError:done.find(c=>c.cache?.state==='unavailable')?.cache?.error};
@@ -232,7 +240,7 @@
     return {...entry,interval:days,due:now+(days?days*86400000:600000),reviews:(entry.reviews||0)+1,updated:now};
   }
   function uuid(){if(globalThis.crypto.randomUUID)return globalThis.crypto.randomUUID();const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;return Array.from(bytes,(v,i)=>([4,6,8,10].includes(i)?'-':'')+v.toString(16).padStart(2,'0')).join('');}
-  const api={uuid,languages,commonLanguages,validTarget,languageName,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks,subtitlePreparation};
+  const api={learningTiming,learningRequestTimeout,uuid,languages,commonLanguages,validTarget,languageName,validate,parseSubtitles,exportSubtitles,schedule,source,joinWords,youtubeSubtitles,subtitleWords,subtitleChunks,subtitleSegments,splitSubtitleChunk,cleanSubtitleText,subtitleTurns,alignSubtitleTurn,subtitleDocument,subtitleBuffer,pendingSubtitleChunks,subtitlePreparation};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.CindyLearning=api;
 })(globalThis);

@@ -16,8 +16,11 @@ for(const browser of target==='all'?['chrome','edge','safari']:[target]) {
   await fs.cp(path.join(root,'extension'),dir,{recursive:true});
   await fs.copyFile(path.join(root,'THIRD-PARTY-LICENSES.txt'),path.join(dir,'THIRD-PARTY-LICENSES.txt'));
   const m=structuredClone(manifest);
+  // Store uploads reject the development identity key. Keep it only in the
+  // source/settings-page ZIP so existing local installations retain their ID.
+  delete m.key;
   if(browser==='safari') {
-    delete m.key;delete m.minimum_chrome_version;
+    delete m.minimum_chrome_version;
     m.background={scripts:['policy.js','network-guard.js','learning-core.js','background.js'],persistent:false};
   }
   await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(m,null,2)+'\n');

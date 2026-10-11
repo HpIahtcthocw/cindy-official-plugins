@@ -136,7 +136,7 @@ test('model failures retain their code and do not falsely diagnose a disconnecte
   assert.match(ui.error('SOME_NEW_FAILURE','zh-CN'),/尚无法确定具体原因.*SOME_NEW_FAILURE/);
   assert.doesNotMatch(ui.error('Error: token=private-value https:\/\/example.test','zh-CN'),/private-value|example.test/);
   assert.match(ui.error('Error: token=private-value','zh-CN'),/UNKNOWN_ERROR/);
-  assert.match(ui.error('CINDY_DISCONNECTED','zh-CN'),/未找到本机 Cindy 桥接服务/);
+  assert.match(ui.error('CINDY_DISCONNECTED','zh-CN'),/客户端未安装或未运行/);
   assert.doesNotMatch(ui.error('TIMEOUT','zh-CN'),/核对结果|重新提交/);
 });
 
@@ -232,4 +232,39 @@ test('a model timeout is reported in the model stage, never as a validation fail
  const stages=[],service=createLearningService({core,model:async()=>({ok:false,errorCode:'TIMEOUT'})});
  await assert.rejects(service.handle(crypto.randomUUID(),{op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]},undefined,p=>stages.push(p.stage)),/TIMEOUT/);
  assert.equal(stages.at(-1),'model');assert.equal(stages.includes('validating'),false);
+});
+
+
+test('completed bridge results do not occupy execution slots; evicted receipts never resubmit',async t=>{
+ const notices=[],bridge=createBridge({ports:[0],notify:(_m,p)=>notices.push(p)});t.after(()=>bridge.close());
+ const {port}=await bridge.request('status'),client=crypto.randomUUID();let session;
+ const request=async(path,body)=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version,...(session?{'X-My-Browser-Session':session}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
+ session=(await request('/health')).session;let first,last;
+ for(let n=0;n<70;n++){
+   const job={id:crypto.randomUUID(),request:{op:'config'}};first ||=job;last=job;
+   assert.equal((await request('/learning/start',job)).ok,true);
+   await bridge.request('learningResult',{id:job.id,result:{ok:true,sequence:n}});
+   assert.equal((await request('/learning/result',{id:job.id})).result.sequence,n);
+ }
+ assert.equal((await request('/learning/start',first)).error,'REQUEST_EXPIRED');assert.equal(notices.length,70);
+ assert.equal((await request('/learning/start',last)).ok,true);assert.equal(notices.length,70);
+ assert.equal((await request('/learning/result',{id:last.id})).result.sequence,69);
+ // Real pending work is still bounded, independent of completed receipts.
+ for(let n=0;n<4;n++)assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).ok,true);
+ assert.equal((await request('/learning/start',{id:crypto.randomUUID(),request:{op:'config'}})).error,'BUSY');
+});
+
+test('bridge keeps a slow prefetched subtitle request active for the shared request budget',async t=>{
+ const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());
+ const {port}=await bridge.request('status'),client=crypto.randomUUID(),headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
+ const health=await(await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();headers['X-My-Browser-Session']=health.session;
+ const id=crypto.randomUUID(),request={op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]};
+ assert.equal((await(await fetch(`http://127.0.0.1:${port}/learning/start`,{method:'POST',headers,body:JSON.stringify({id,request})})).json()).ok,true);
+ const realNow=Date.now,started=realNow();
+ try{
+   Date.now=()=>started+350000;assert.equal((await bridge.request('learningActive',{id})).active,true);
+   Date.now=()=>started+core.learningRequestTimeout(request)+core.learningTiming.transport+1000;
+   assert.equal((await bridge.request('learningActive',{id})).active,false);
+   assert.equal((await bridge.request('learningResult',{id,result:{ok:true}})).ok,false);
+ }finally{Date.now=realNow;}
 });

@@ -491,6 +491,7 @@ async function handle(job,policy,target) {
   let injecting = false, navigating = false;
   const failureState = () => navigating || (injecting && P.INTERACT.includes(job.action)) ? 'unknown' : 'not_executed';
   try {
+    network.assertSupported?.(job.payload.url);
     const tab = await ensureTab(job.payload.url,policy,job.action,() => { navigating = true; });
     const actual = await chrome.tabs.get(tab.id);
     // Prepare everything asynchronous first, so the authorization re-check below is the last await
@@ -515,8 +516,8 @@ async function handle(job,policy,target) {
     if (result.url && !P.check(policy,job.action,result.url).ok) return fail('REDIRECT_BLOCKED','The page moved to a blocked site. No content is returned; verify the action manually.',failureState());
     return result?.error && navigating ? {...result,execution:'unknown'} : result;
   } catch (e) {
-    const messages = {ADDRESS_UNVERIFIED:'The browser did not verify a public address for this document. No page content was read. If it is a public page opened before the extension started, refresh that same tab manually once; do not create replacement tabs or retry in a loop.',PAGE_NOT_OPEN:'This action has no open target. Inspect browser_tabs once; do not repeatedly open the URL to repair a stale action.',PAGE_CHANGED:'The existing tab navigated. No new tab was opened. Inspect browser_tabs once and use the actual URL; do not retry the old URL or invent URL variants.',TAB_LIMIT:'Three plugin-created tabs are still open and cannot safely be closed. No new tab was opened. Use an existing tab or ask the user to close unneeded tabs; do not retry in a loop.',TAB_ACCESS_FAILED:'The existing tab is still present but inaccessible. No replacement was opened. Check browser permissions.',PAGE_LOAD_TIMEOUT:'Loading timed out; the same tab was retained. Inspect its state once. Do not loop retries, change query strings, or open duplicate URLs.',REDIRECT_BLOCKED:'The existing tab redirected to a site that is not allowed. No replacement will be opened. Review its permissions; do not bypass the denial.'};
-    return {...fail(e.message in messages ? e.message : 'CHROME_OPERATION_FAILED',messages[e.message] || 'Browser access failed. Inspect the existing page and extension permissions; do not automatically open a replacement.',failureState()),retryable:false};
+    const messages = {BROWSER_PAGE_RESTRICTED:'Chrome protects this Web Store domain from extension access, including the legacy developer console. Store-installed extensions have the same restriction. Refreshing or granting site access will not help; no page content was read or modified.',ADDRESS_UNVERIFIED:'The browser could not verify this document. See reason for missing navigation/response evidence or a non-public peer. No page content was read. Do not automatically retry, refresh, switch tools or create replacement tabs.',PAGE_NOT_OPEN:'This action has no open target. Inspect browser_tabs once; do not repeatedly open the URL to repair a stale action.',PAGE_CHANGED:'The existing tab navigated. No new tab was opened. Inspect browser_tabs once and use the actual URL; do not retry the old URL or invent URL variants.',TAB_LIMIT:'Three plugin-created tabs are still open and cannot safely be closed. No new tab was opened. Use an existing tab or ask the user to close unneeded tabs; do not retry in a loop.',TAB_ACCESS_FAILED:'The existing tab is still present but inaccessible. No replacement was opened. Check browser permissions.',PAGE_LOAD_TIMEOUT:'Loading timed out; the same tab was retained. Inspect its state once. Do not loop retries, change query strings, or open duplicate URLs.',REDIRECT_BLOCKED:'The existing tab redirected to a site that is not allowed. No replacement will be opened. Review its permissions; do not bypass the denial.'};
+    return {...fail(e.message in messages ? e.message : 'CHROME_OPERATION_FAILED',messages[e.message] || 'Browser access failed. Inspect the existing page and extension permissions; do not automatically open a replacement.',failureState()),...(e.message==='ADDRESS_UNVERIFIED' ? {reason:e.reason || 'UNKNOWN'} : {}),retryable:false};
   }
 }
 async function chain() {
@@ -581,36 +582,35 @@ async function learningFetch(target,path,body,active,deadline){
   }
 }
 async function learningRequest(message,sender) {
-  await restore;
-  const target=await discover();
-  if(!target)throw Error((await sessionStore.get('connection')).connection?.error||'CINDY_DISCONNECTED');
-  if(!target.learning)throw Error('UPDATE_CINDY_CHROME');
-  const internal=sender.url?.startsWith(chrome.runtime.getURL(''));
-  const request=globalThis.CindyLearning.validate(message.request);
-  let page;
-  if(!internal) {
-    if(!sender.tab?.id || sender.frameId!==0)throw Error('INVALID_SOURCE');
-    page=await chrome.tabs.get(sender.tab.id);
-    const documentId=await network.document(page.id);
-    // Chrome retains the content script's initial sender URL across pushState.
-    // Bind to the live document and origin, and reject material from a previous route.
-    if(sender.documentId!==documentId || new URL(page.url).origin!==new URL(sender.url).origin || (request.source.url&&request.source.url!==page.url))throw Error('PAGE_CHANGED');
-    request.source={...request.source,url:page.url,title:(page.title||'').slice(0,500)};
-  }
-  const id=message.id;
+  // Register ownership before the first await: cancellation during discovery
+  // must not acknowledge a request that will subsequently still be submitted.
+  const id=message.id,owner=sender.documentId||sender.url;
   if(typeof id!=='string'||!/^[a-f0-9-]{36}$/.test(id))throw Error('INVALID_ID');
-  const owner=sender.documentId||sender.url;
+  if(!owner)throw Error('INVALID_SOURCE');
   if(learningCalls.has(id))throw Error('BUSY');
-  learningCalls.set(id,{target,owner,cancelled:false});
+  const call={target:null,owner,cancelled:false};learningCalls.set(id,call);
+  let target,page;
   async function checkCurrent(){
-    const call=learningCalls.get(id);
-    if(!call||call.cancelled)throw Error('REQUEST_CANCELLED');
+    if(learningCalls.get(id)!==call||call.cancelled)throw Error('REQUEST_CANCELLED');
     if(page && ((await chrome.tabs.get(page.id)).url!==page.url || await network.document(page.id)!==sender.documentId))throw Error('PAGE_CHANGED');
   }
   try {
-    // Legacy subtitle repair can make three 60s Host calls, each with up to
-    // 30s queueing. The bridge retains the result for a further 30s.
-    const deadline=Date.now()+300000;let lastProgress;
+    await restore;await checkCurrent();
+    target=await discover();await checkCurrent();call.target=target;
+    if(!target)throw Error((await sessionStore.get('connection')).connection?.error||'CINDY_DISCONNECTED');
+    if(!target.learning)throw Error('UPDATE_CINDY_CHROME');
+    const internal=sender.url?.startsWith(chrome.runtime.getURL(''));
+    const request=globalThis.CindyLearning.validate(message.request);
+    if(!internal) {
+      if(!sender.tab?.id || sender.frameId!==0)throw Error('INVALID_SOURCE');
+      page=await chrome.tabs.get(sender.tab.id);
+      const documentId=await network.document(page.id);
+      // pushState keeps the initial sender URL; bind to document and live origin.
+      if(sender.documentId!==documentId || new URL(page.url).origin!==new URL(sender.url).origin || (request.source.url&&request.source.url!==page.url))throw Error('PAGE_CHANGED');
+      request.source={...request.source,url:page.url,title:(page.title||'').slice(0,500)};
+    }
+    await checkCurrent();
+    const deadline=Date.now()+globalThis.CindyLearning.learningRequestTimeout(request);let lastProgress;
     await learningFetch(target,'/learning/start',{id,request},()=>checkCurrent(),deadline);
     while(Date.now()<deadline) {
       await checkCurrent();
@@ -622,7 +622,7 @@ async function learningRequest(message,sender) {
     throw Error('TIMEOUT');
   } catch(error) {
     if(['SESSION_CHANGED','BRIDGE_REQUEST_FAILED'].includes(error.message)&&bridge===target){bridge=null;await connection({connected:false});}
-    await fetchJSON(target.base,'/learning/cancel',target.session,{id}).catch(()=>{});
+    if(target)await fetchJSON(target.base,'/learning/cancel',target.session,{id}).catch(()=>{});
     throw error;
   } finally {learningCalls.delete(id);}
 }
@@ -633,7 +633,7 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   }
   if(message?.type==='cindy-cancel') {
     const call=learningCalls.get(message.id);
-    if(call && call.owner===(sender.documentId||sender.url)) {call.cancelled=true;fetchJSON(call.target.base,'/learning/cancel',call.target.session,{id:message.id}).catch(()=>{});}
+    if(call && call.owner===(sender.documentId||sender.url)) {call.cancelled=true;if(call.target)fetchJSON(call.target.base,'/learning/cancel',call.target.session,{id:message.id}).catch(()=>{});}
     reply({ok:true});return;
   }
 });

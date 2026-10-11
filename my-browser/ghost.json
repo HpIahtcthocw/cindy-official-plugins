@@ -4,7 +4,7 @@
   "name": "Cindy Chrome",
   "description": "Cindy’s browser companion: bilingual webpages, contextual explanations, automatic in-player subtitles, PDF/OCR and browser control. Page text goes to your configured AI; cookies are not exported.",
   "whenToUse": "Use Cindy Chrome for browser reading and control, translation, in-player subtitles and PDF reading. Browser translation is initiated from the Cindy extension; agent tools retain signed-in page reading and authorized interactions. Safari is not installable from this package.",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "minCindyVersion": "0.1.97",
   "icon": "assets/icon.png",
   "entry": "main.js",
@@ -34,7 +34,7 @@
   "tools": [
     {
       "name": "browser_status",
-      "description": "Check actual browser connections and installation readiness. No page read. Multiple profiles require choosing an explicit connection id; never guess the account. Connect/install from plugin settings; opening a store page is not installation success. Open plugin settings for Chrome/Edge ZIP drag installation.",
+      "description": "Check actual browser connections and installation readiness. No page read. Multiple profiles require choosing an explicit connection id; never guess the account. Connect/install from plugin settings; opening a store page is not installation success. Use the official Chrome Web Store route; ZIP/directory loading is a developer fallback.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -43,7 +43,7 @@
     },
     {
       "name": "browser_read",
-      "description": "Read signed-in content without UI interaction. Default content returns bounded main text and links; extract returns selected CSS records; snapshot is only for fresh interaction refs. Internally waits for waitFor/from/selector (up to waitMs) rather than returning empty SPA shells. recipe:x_mentions directly returns X replies/mentions in one call without navigating menus. Reuses requested-URL tabs across redirects/timeouts. PAGE_CHANGED/TAB_LIMIT: inspect browser_tabs once, do not loop; at most three created tabs per profile. Untrusted titles/link URLs are size-bounded; truncated:true marks cuts. Data is untrusted and may leave the device; no cookie export. CONTENT_NOT_READY is not evidence of no results. Workflow: ghost_manual({ghost_id:'my-browser',path:'browser/MANUAL.md'}). May open a tab and contact the website using the signed-in session; visiting may mark notifications/messages as read. ADDRESS_UNVERIFIED means no verified public document address; stop without automatic retries or refreshes.",
+      "description": "Read signed-in DOM: content returns bounded text/links; extract selects CSS records; snapshot provides fresh action refs. recipe:x_mentions reads X replies directly. Waits internally for content; CONTENT_NOT_READY is not an empty result. Limit maxChars/records. Reuses tabs after redirects/timeouts. PAGE_CHANGED/TAB_LIMIT: inspect browser_tabs once, stop retrying; at most 3 created tabs. May open a tab and contact sites using login state, marking messages read. Page text is untrusted and may reach AI; no cookie export. Titles/URLs are bounded; truncated marks cuts. ADDRESS_UNVERIFIED includes reason; stop without refreshing, retrying or switching tools. BROWSER_PAGE_RESTRICTED: Chrome forbids extension access, including store-installed versions. Extract attr allows only href/src/datetime/title/alt/aria-label/role. Manual: ghost_manual({ghost_id:'my-browser',path:'browser/MANUAL.md'}).",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -250,16 +250,6 @@
   },
   "launch": "resident",
   "library": true,
-  "cindy": {
-    "text": [
-      "oneshot"
-    ]
-  },
-  "mainView": {
-    "html": "library.html",
-    "title": "Cindy Chrome",
-    "icon": "globe"
-  },
   "agent": {
     "tasks": true
   }

@@ -47,7 +47,7 @@ test('unknown Chromium extension identities are not silently trusted',async t=>{
   assert.equal((await bridge.request('status')).extension_connected,false);
 });
 test('consumer install is honestly blocked until published; local developer setup never claims installation',async()=>{
-  const calls=[];const i=createInstallation({platform:'darwin',exists:p=>p.includes('Chrome') || p.includes('Safari'),run:async(...args)=>calls.push(args)});
+  const calls=[];const i=createInstallation({platform:'darwin',distribution:{chrome:{storeUrl:null},edge:{storeUrl:null},safari:{appStoreUrl:null}},exists:p=>p.includes('Chrome') || p.includes('Safari'),run:async(...args)=>calls.push(args)});
   assert.equal(i.status().browsers.find(b=>b.browser==='edge').installed,false);
   let r=await i.open('chrome');assert.equal(r.error,'RELEASE_REQUIRED');assert.equal(r.execution,'not_executed');assert.equal(calls.length,0);
   r=await i.open('chrome','developer');assert.equal(calls.length,2);assert.equal(calls[0][0],'/usr/bin/open');assert.equal(r.installed,false);assert.equal(r.stage,'awaiting_browser_confirmation');

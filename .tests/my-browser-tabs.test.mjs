@@ -5,17 +5,18 @@ import vm from 'node:vm';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const P=require('../my-browser/extension/policy.js');
+const {assertSupported}=require('../my-browser/extension/network-guard.js');
 const source=fs.readFileSync(new URL('../my-browser/extension/background.js',import.meta.url),'utf8');
 function harness() {
   const tabs=new Map(),data={};let clock=0,next=1,creates=0,activate,removed;
   const state={redirect:false,loading:false,removeFails:false};
-  const chrome={runtime:{getURL:()=> 'chrome-extension://fixture/',getManifest:()=>({version:'0.3.1'}),onStartup:{addListener(){}},onInstalled:{addListener(){}},onMessage:{addListener(){}}},
+  const chrome={action:{onClicked:{addListener(){}}},runtime:{getURL:()=> 'chrome-extension://fixture/',getManifest:()=>({version:'0.3.1'}),onStartup:{addListener(){}},onInstalled:{addListener(){}},onMessage:{addListener(){}}},
     storage:{local:{get:async()=>({clientId:'fixture'}),set:async()=>{}},session:{get:async key=>({[key]:structuredClone(data[key])}),set:async value=>Object.assign(data,structuredClone(value))}},
     tabs:{get:async id=>{if(!tabs.has(id))throw new Error('No tab');return {...tabs.get(id)};},query:async()=>[...tabs.values()].map(t=>({...t})),
       create:async({url})=>{creates++;const t={id:next++,url:state.redirect?'https://example.test/redirected':url,status:state.loading?'loading':'complete',active:false};tabs.set(t.id,t);return {...t};},
       remove:async id=>{if(state.removeFails)throw new Error('Browser refused');tabs.delete(id);removed(id);},
       onActivated:{addListener(fn){activate=fn;}},onRemoved:{addListener(fn){removed=fn;}}},alarms:{create(){},onAlarm:{addListener(){}}}};
-  const context={chrome,MyBrowserPolicy:P,MyBrowserNetwork:{create:()=>({document:async()=>{throw new Error('ADDRESS_UNVERIFIED');}})},fetch:async()=>({ok:true,json:async()=>({policy:P.defaults()})}),navigator:{userAgent:'Chrome/140'},URL,crypto:globalThis.crypto,AbortController,
+  const context={chrome,MyBrowserPolicy:P,MyBrowserNetwork:{create:()=>({assertSupported,document:async()=>{throw Object.assign(new Error('ADDRESS_UNVERIFIED'),{reason:'NAVIGATION_UNOBSERVED'});}})},fetch:async()=>({ok:true,json:async()=>({policy:P.defaults()})}),navigator:{userAgent:'Chrome/140'},URL,crypto:globalThis.crypto,AbortController,
     Date:class extends Date{static now(){return clock;}},setTimeout(fn,ms){clock+=ms;queueMicrotask(fn);return 0;},clearTimeout(){}};
   // Disable only the network bootstrap; execute the actual production tab manager, not a copied implementation.
   vm.runInNewContext(source.replace(/\nchain\(\);\s*$/,'')+'\nglobalThis.tabTest={ensureTab,owned,cleanup,handle};',context);
@@ -65,4 +66,10 @@ test('read failure reflects whether this invocation started navigation',async()=
   const reused=await guarded.handle('https://example.test/start');
   assert.equal(reused.error,'ADDRESS_UNVERIFIED');assert.equal(reused.execution,'not_executed');
   assert.equal(guarded.creates(),1);
+});
+
+test('restricted store pages fail without opening a replacement tab',async()=>{
+  const h=harness();const result=await h.handle('https://chrome.google.com/webstore/devconsole/example/edit');
+  assert.equal(result.error,'BROWSER_PAGE_RESTRICTED');assert.equal(result.execution,'not_executed');assert.equal(h.creates(),0);
+  const other=await h.handle('https://example.test/');assert.equal(other.reason,'NAVIGATION_UNOBSERVED');
 });

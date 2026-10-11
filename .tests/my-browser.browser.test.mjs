@@ -33,7 +33,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   await bridge.request('status'); // Fail before launching Chrome if the isolated test port is occupied.
   const installCalls=[];
   const installation=require('../my-browser/node/installation.cjs').createInstallation({platform:'darwin',exists:p=>p.includes('Chrome') || p.includes('Safari') || p.endsWith('.zip'),run:async(...args)=>installCalls.push(args)});
-  let cfg={policy:{read:{block:[]},interact:{allow:[],block:[]}}};const faults={read:false,save:false};
+  let cfg={policy:{read:{block:[]},interact:{allow:[],block:[]}}};const faults={read:false,save:false,wake:false};
   const server=http.createServer(async(req,res)=>{
     try{
       if(req.headers.host?.startsWith('example.test') || req.headers.host?.startsWith('private.test')){res.setHeader('Content-Type','text/html');return res.end(fixture);}
@@ -58,7 +58,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
         if((req.method==='GET'&&faults.read)||(req.method==='PUT'&&faults.save)){res.statusCode=503;return json({});}
         if(req.method==='PUT'){cfg=JSON.parse(data);res.statusCode=204;return res.end();}return json(cfg);
       }
-      if(req.url==='/wake')return json({ok:true});
+      if(req.url==='/wake'){if(faults.wake){res.statusCode=503;return json({ok:false});}return json({ok:true});}
       if(req.url==='/app-context')return json({ok:true,context:{locale:'zh-CN'}});
       if(req.url==='/logic.html'){
         res.setHeader('Content-Type','text/html');return res.end(`<!doctype html><script>
@@ -82,6 +82,9 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
     const fixtureHost=target.hostname.endsWith('.test');
     if(target.protocol!=='http:' || (!fixtureHost && (target.hostname!=='127.0.0.1' || ![String(server.address().port),'18819'].includes(target.port)))){res.writeHead(403);return res.end();}
     const upstream=http.request({hostname:'127.0.0.1',port:fixtureHost?server.address().port:Number(target.port),path:target.pathname+target.search,method:req.method,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});
+    // Mirror client disconnects: otherwise a stopped worker leaves a phantom
+    // long poll on the test bridge that can consume the next queued request.
+    res.on('close',()=>upstream.destroy());
     upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});req.pipe(upstream);
   });
   proxy.on('connect',(_req,socket)=>{socket.on('error',()=>{});socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');});
@@ -122,7 +125,47 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   assert.deepEqual((await tool('browser_tabs',{host:'private.test'})).tabs,[]);await privatePage.close();
   const url='http://example.test/';
   const page=await context.newPage();await page.goto(url);
+  // A normal/double click must not leave a floating Cindy entry over arbitrary page text.
+  await page.locator('#readable').dblclick();await page.waitForTimeout(100);
+  assert.equal(await page.locator('[data-cindy-selection-entry]').count(),0,'double-click does not open the contextual entry');
+  const readableBox=await page.locator('#readable').boundingBox();assert.ok(readableBox);
+  await page.mouse.move(readableBox.x+4,readableBox.y+readableBox.height/2);await page.mouse.down();
+  await page.mouse.move(readableBox.x+Math.min(readableBox.width-4,120),readableBox.y+readableBox.height/2);await page.mouse.up();
+  await page.locator('[data-cindy-selection-entry]').waitFor({timeout:2000});
+  await page.evaluate(()=>document.querySelector('[data-cindy-selection-entry]')?.remove());
   let r=await tool('browser_read',{url,mode:'text'});assert.equal(r.ok,true,JSON.stringify(r));assert.match(r.text,/Visible fixture text/);
+  // Terminate and restart the real MV3 worker, keeping the browser and page.
+  // A new worker must recover exact-document evidence from session storage.
+  const cdp=await context.newCDPSession(page);let workerVersion;
+  cdp.on('ServiceWorker.workerVersionUpdated',({versions})=>{
+    const v=versions.find(v=>v.scriptURL==='chrome-extension://'+extensionId+'/background.js');
+    if(v)workerVersion=v.versionId;
+  });
+  await cdp.send('ServiceWorker.enable');
+  const versionDeadline=Date.now()+3000;
+  while(!workerVersion && Date.now()<versionDeadline)await new Promise(r=>setTimeout(r,25));
+  assert.ok(workerVersion,'Chrome reports the running extension service worker');
+  await context.serviceWorkers()[0].evaluate(async()=>{
+    const deadline=Date.now()+3000;
+    while(!(await chrome.storage.session.get('verifiedNetworkDocuments')).verifiedNetworkDocuments?.length){
+      if(Date.now()>deadline)throw Error('Verified document receipt not saved');
+      await new Promise(r=>setTimeout(r,25));
+    }
+  });
+  await cdp.send('ServiceWorker.stopWorker',{versionId:workerVersion});
+  // Native extension messaging wakes a suspended worker. CDP startWorker does
+  // not perform Chrome's extension lazy-event activation on all supported builds.
+  const wakePage=await context.newPage();
+  await wakePage.goto('chrome-extension://'+extensionId+'/icons/16.png');
+  await wakePage.evaluate(()=>chrome.runtime.sendMessage({type:'test-wake'}).catch(()=>{}));
+  await wakePage.close();
+  r=await tool('browser_read',{url,mode:'text'});assert.equal(r.ok,true,JSON.stringify(r));assert.match(r.text,/Visible fixture text/);
+  const pageCount=context.pages().length;
+  const restricted=await tool('browser_read',{url:'https://chrome.google.com/webstore/devconsole/example/edit'});
+  assert.equal(restricted.error,'BROWSER_PAGE_RESTRICTED');assert.equal(restricted.execution,'not_executed');
+  assert.equal(context.pages().length,pageCount,'restricted pages do not open replacement tabs');
+  await cdp.detach();
+  t.diagnostic('Real MV3 worker stop/start: same page readable without reload; store restriction returns before navigation.');
   const beforeRefreshIds=(await tool('browser_tabs',{host:'example.test',limit:10})).tabs.map(t=>t.id);
   const beforeRefreshPages=context.pages().length;
   for(let i=0;i<3;i++) {
@@ -361,6 +404,8 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   const sw=context.serviceWorkers()[0];const owned=await sw.evaluate(async()=>Object.values((await chrome.storage.session.get('ownedTabs')).ownedTabs));assert.ok(owned.filter(([,r])=>r.created).length<=3);assert.equal(page.isClosed(),false);
   assert.ok(await sw.evaluate(async()=> (await chrome.tabs.query({})).filter(t=>t.url?.startsWith('http://example.test/owned')).length)<=3);
   const settings=await context.newPage();await settings.goto(base+'/');await settings.getByText('浏览器已连接',{exact:true}).waitFor();
+  faults.wake=true;await settings.locator('#refresh').click();await settings.getByText('插件未响应。请重新启用「Cindy Chrome」后刷新。',{exact:true}).waitFor();assert.equal(await settings.locator('#client-guide').isVisible(),true);
+  faults.wake=false;await settings.locator('#refresh').click();await settings.getByText('浏览器已连接',{exact:true}).waitFor();assert.equal(await settings.locator('#client-guide').isVisible(),false);
   const beforeSettingsRefresh=context.pages().length;
   for(let i=0;i<3;i++) {
     await settings.locator('#refresh').click();

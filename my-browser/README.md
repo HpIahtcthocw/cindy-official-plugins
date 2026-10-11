@@ -2,10 +2,13 @@
 
 [简体中文](README.zh-CN.md)
 
-A unified Cindy browser companion candidate. **0.4.9** brings compact reading controls and automatic in-player translation to browser control. The Chrome extension is **Cindy**; the Cindy plugin is **Cindy Chrome**, both using the official Cindy icon. The `my-browser` identity, extension key and five existing tools are preserved. **Not published to a browser store; this version still requires installed Cindy verification.**
+A unified Cindy browser companion candidate. **0.4.10** brings compact reading controls and automatic in-player translation to browser control. The Chrome extension is **Cindy**; the Cindy plugin is **Cindy Chrome**, both using the official Cindy icon. The `my-browser` identity, extension key and five existing tools are preserved. **Not published to a browser store; this version still requires installed Cindy verification.**
 
 ## Reading and learning
 
+- Cancellation also applies while discovering the local connection. Request deadlines include serialized task execution and repair attempts; completed response receipts no longer consume running-request capacity. Browser and plugin updates are both required for this fix.
+- Player controls adapt to narrow widths and long language names. Menus stay within the visible player, keep their close button available while scrolling, and do not overprint subtitles; long captions shrink to fit small players.
+- Captions move toward the bottom when YouTube controls hide and make room when controls reappear. Preparation details, blockers and cache status live inside the subtitle menu. The preparation bar measures playback readiness and reaches Ready once buffered; whole-video translation percentages never float over the video.
 - Compact webpage panel, selection translation, contextual explanation, summary and reading aloud; bilingual pages with dynamic content and restore. Closing the panel keeps page translations.
 - YouTube automatically shows captions inside its player. The player menu offers bilingual, translation-only, original-only and off; video language is independent of webpage language. Native HTML5 captions, SRT/VTT import, sentence navigation, loop, pause and bilingual export remain under More. Live services have not been individually verified; universal coverage is not claimed.
 - Common languages are listed first; “Try other languages” opens a searchable language directory and custom names. This directory is **not a verified model support list**. Available languages and quality depend on the selected text model; the host currently does not provide verified per-language capability metadata.
@@ -13,7 +16,7 @@ A unified Cindy browser companion candidate. **0.4.9** brings compact reading co
 - Speaking practice, collections and review controls are removed at the user's request. Existing Library records and legacy API operations are preserved. This package is not a full Trancy replacement.
 - New Cindy task: uses the ordinary task API, creates an explicitly owned task and separates user instructions from quoted webpage material. It never takes over an unrelated active task; uncertain submissions retain their request keys.
 
-Requires **Cindy 0.1.97+**, a configured text model and Library. The plugin logic and local bridge remain resident to receive user clicks. Model credentials stay in Cindy. Task permission follows the existing Host approval flow; refusing it does not prevent ordinary reading.
+Requires **Cindy 0.1.97+**, an available task model and Library. The plugin logic and local bridge remain resident to receive user clicks. Model credentials stay in Cindy. Task permission follows the existing Host approval flow; refusing it prevents model translation but does not prevent browser reading/control.
 
 Shortcuts: `Alt+Shift+T` toggles page translation; `Alt+Shift+C` opens Cindy. Pages open before installation need a user refresh to load content scripts and establish current-document address evidence.
 
@@ -39,9 +42,9 @@ The on-demand workflow manual is `manual/browser/MANUAL.md`. Parameter names and
 | Edge | Shared Chromium extension, separate store artifact and profile routing | Protocol and Windows launcher tests; no real Windows/Edge device verification yet. |
 | Safari | WebExtension adapter + generated macOS container app | Universal arm64/x86_64 Release build and identity-pairing tests; no signed consumer installation or real Safari extension execution yet. |
 
-Settings makes ZIP installation the primary Chrome/Edge route: open the extensions manager and ZIP location, enable Developer mode, then drag the ZIP onto the page. No unzip or directory selection is needed. Connection checks are automatic; opening a page is not installation success. Directory loading remains a fallback. Manual ZIP dropping in official Chrome still needs real-device verification and may be blocked by managed browser policy.
+Settings opens the official Chrome Web Store as the primary Chrome installation route. Finish the store install, return to settings and let the live connection check complete. Developer ZIP/directory loading remains an explicit fallback; it is not the normal consumer path.
 
-Safari still requires a store release or signed/notarized app, neither configured yet. Chrome/Edge ZIP installation does not depend on store publication. Unknown extension identities still require real Cindy pairing confirmation. After updates, drag the new ZIP again; directory installations use Reload. Keep only one copy.
+Safari still requires a store release or signed/notarized app, neither configured yet. Chrome Web Store installation uses the published extension identity and receives browser-managed updates. Unknown extension identities still require real Cindy pairing confirmation. Developer installations remain separate and should keep only one copy.
 
 Installation cards appear only for connected browsers or installed browsers with a deliverable ZIP/store route. Unpublished Safari and browsers absent from this device are hidden, with no coming-soon placeholder.
 
@@ -57,6 +60,8 @@ Installation cards appear only for connected browsers or installed browsers with
 - Text/record values default to a 6000-character budget; JSON/link overhead is additional. Tabs default to 20, max 100, with an additional aggregate budget. Overlong tab URLs are not exported. A timeout/empty shell is not proof of no results.
 
 ## Build and verification
+
+The settings-page ZIP (`package-my-browser-zip.py`) retains the development `key` for local installation; do not upload it to a store. For Chrome Web Store, use `node scripts/build-my-browser.mjs /absolute/new-output-directory chrome`: its ZIP omits `key`. The published Chrome extension ID and store URL are already recorded in `distribution.json`; keep them unchanged for future releases and keep the local development key unchanged.
 
 The bridge uses first-party JS and Node built-ins. PDF.js and Tesseract are bundled, integrity-verified browser components; no runtime dependency installation or CDN code/model loading. `node/worker.cjs` activates unconditionally because Cindy requires the entry rather than running it as `require.main`. Runtime subprocesses are restricted to fixed browser/app launchers and Safari signature checks.
 
@@ -141,15 +146,19 @@ The builder creates Chrome/Edge store ZIPs and a Safari Xcode project/universal 
 
 A packaged ZIP can also be dragged onto Chromium's extensions manager as a developer-install alternative to selecting a directory. Browser developer-mode/policy requirements still apply; this is not a store-signed release or an automatic-update promise. Chromium's implementation supports this path; this machine's official Chrome ZIP-drop flow has not yet been verified. A self-packed CRX may be blocked rather than merely showing a dismissible warning.
 
-Provisioning retains an empty staged audience. No marketplace admission, store submission, push, PR or public release is implied. The four HEAD-based package-contract tests also passed against the committed snapshot containing the new plugin and provisioning entry.
+Provisioning retains an empty staged audience. The Chrome Web Store listing is already public; repository maintenance and the new package submission are tracked separately. The four HEAD-based package-contract tests also passed against the committed snapshot containing the new plugin and provisioning entry.
 
 Review regressions: public hostname served by a real loopback fixture returns no DOM/title; positive fixture IPs are simulated at the browser API boundary in the isolated Chromium suite. Navigation/reload identity, late responses and unknown address paths are covered by unit tests.
+
+### 0.4.11: Chrome Web Store installation path
+
+The published Chrome Web Store listing is now the normal Chrome installation route. Plugin settings opens the listing, then verifies the live extension handshake when the user returns. ZIP and directory loading remain available only in the developer fallback section. The Chrome store package uses version 0.4.11; the store requires a higher version for every update.
 
 ## Runtime source evidence
 
 `node/worker.cjs` is the reviewed first-party source entry, shipped byte-for-byte without transpilation or a separate generated/vendor copy. Its dependency graph is `worker.cjs` → `node:readline`, `node/bridge.cjs`, `node/installation.cjs`, `extension/policy.js` and `extension/learning-core.js`; these require only Node built-ins and the bundled manifest/distribution JSON. There is no external package name/version or upstream binary to reconstruct. `.github/scripts/package-plugin.sh my-browser <output.cindy>` packages the committed source; compare the extracted entry with `git show HEAD:my-browser/node/worker.cjs` to verify provenance.
 
-Network/launch inventory: the worker creates only a loopback HTTP listener on 18810–18909; the extension polls those exact ports. Website navigation is HTTP(S) for the requested browser task. Installation opens fixed extension-manager URLs, bundled files, or configured store URLs validated against `chromewebstore.google.com`, `microsoftedge.microsoft.com`, `apps.apple.com`; the current store URLs are unset. Installation/signature checks use fixed executables and argv, not shell commands. Source inspection found no eval/Function/string-code execution or Math.random; the only base64 runtime decode is the public extension identity key. Loopback contract approval and bridge authentication remain unresolved review items; this evidence does not waive them.
+Network/launch inventory: the worker creates only a loopback HTTP listener on 18810–18909; the extension polls those exact ports. Website navigation is HTTP(S) for the requested browser task. Installation opens fixed extension-manager URLs, bundled files, or configured store URLs validated against `chromewebstore.google.com`, `microsoftedge.microsoft.com`, `apps.apple.com`; the Chrome store URL is configured; Edge and Safari store routes remain unset. Installation/signature checks use fixed executables and argv, not shell commands. Source inspection found no eval/Function/string-code execution or Math.random; the only base64 runtime decode is the public extension identity key. Loopback contract approval and bridge authentication remain unresolved review items; this evidence does not waive them.
 
 Status tool output explicitly selects connection and installation fields; local paths, policy and pairing-origin details stay in the settings response. Extract attributes are limited to href/src/datetime/title/alt/aria-label/role before dispatch. Arbitrary token attributes are rejected, but site text and links can still contain private information.
 
@@ -264,6 +273,26 @@ A compact in-player progress card reports the completed share of source words, c
 
 Validated bilingual captions are cached incrementally in the declared plugin Library at `browser/<client-id>/subtitles/<hash>.json`, isolated by browser profile, video and target language. Reopening a video or restarting the plugin can reuse it; changed source text or timing misses the cache. Each file is limited to 8 MB. Unavailable, corrupt or full storage keeps the current translation with an explicit persistence warning; corrupt files are not automatically overwritten. Internal files are JSON, and existing SRT export remains available. More → Clear this video's cache and translate again clears the current video and target language, for example after choosing another model. Already-running writes cannot restore entries from before that clear.
 
-Changing videos cancels queued requests and prevents stale results from replacing the new video. The current Host model interface cannot abort an already-dispatched call: it occupies its slot until completion or the Host timeout. Progress explicitly identifies this wait; this version does not claim upstream cancellation. Model and reasoning settings are unchanged.
+The former background short-text path could not cancel a dispatched request. It has been replaced by the ordinary task execution path described below.
 
 Both packages remain 0.4.10; full progress and persistence require updating the Cindy plugin and Chrome extension. Targeted tests cover restart reuse, isolation, corrupt/full storage, clear-versus-stale-write protection, timeout stages and old calls occupying slots. Isolated Chromium verifies the actual extension/bridge progress and light/dark rendering using fixture model responses. The package has not been installed into the running Cindy, and these checks do not establish live model latency.
+
+### 0.4.10: translation runs in one visible task
+
+Browser translation now uses the existing public `cindy.tasks` APIs only: create/get/send/getRun/readMessages/cancel. There is no client patch, new Host API, `oneshot_control`, log-only session, or separate harness tunnel. A single visible **Browser translation** task is persisted in plugin KV and reused across videos, passages and plugin restarts. Its real user-facing requests and agent replies remain in ordinary task history. Model and reasoning settings belong to that task; no synthetic per-request model settings are advertised.
+
+Requests are serialized into this one task. Playback uses ready captions while subsequent passages are prepared ahead. Requests waiting inside the plugin are checked for cancellation before dispatch; a new video cancels the old owned run before its next request is sent. Pending request keys/input/revisions are persisted before submission. Unknown delivery is reconciled with the exact same key, not retried as a new run. A plugin restart first settles/cancels its stored unfinished run. A user-archived/deleted task is not silently replaced. Task completion must reference the exact outputMessageId; the plugin never treats the most recent assistant message as the result of an unrelated request.
+
+The existing incremental Library cache remains. Playback progress describes actual task phases, not guessed model-token progress. Public API failures are reported explicitly without falling back to background short-text calls or requiring a new client API. Final production playback must be checked with the updated plugin on an installed Cindy build; fixture tests alone do not prove live provider behavior.
+
+After an extension reload, stale page scripts stop URL polling and event listeners, remove Cindy panels and overlays, and restore native captions. Synchronous invalid-context errors no longer repeat. Refresh already-open pages once to load the new script. Temporary messaging failures do not disable a valid extension context.
+
+A reconciling task status during startup is polled against the same run within the existing deadline; it does not immediately fail or cancel the run to start prefetch. Public history replies support JSON objects as well as strings and text blocks, still matched by outputMessageId. A recorded task response was replayed to verify its shape; this is not installed end-to-end verification.
+
+### 0.4.10: remove the sidebar entry and strengthen task binding
+
+The mainView declaration, Cindy-only reader page and learning-panel message branch are removed. PDF/text reading remains in the Chrome extension. Translation binds to the existing Browser translation task by identity, never by its title or whichever task is selected.
+
+A lost creation acknowledgement reuses the original creation key. Archived, deleted or invalid bindings do not silently create replacement tasks. Uncertain inputs are identified by browser profile, page, input and model revision; retries resume the same receipt despite a changed playback position. Other passages wait for the previous run to settle; a changed video in the same browser confirms cancellation first. Cancellation intent survives restart and blocks new sends until confirmed. Returned task/run identities are checked, and reply-read failures retain the original receipt. Existing bindings and keys migrate without deleting history or caches.
+
+Network verification survives extension service-worker restarts for the same document using browser-session storage. Reloads and other documents still require fresh public-address evidence. Chrome Web Store domains are protected by Chrome itself; the extension reports this restriction directly rather than suggesting a refresh. The Chrome store item ID and published install link are registered in `distribution.json`; the 0.4.11 update has been submitted for review and will auto-publish after approval.
