@@ -44600,6 +44600,24 @@ function pickPlatformItem(dict) {
   }
   return null;
 }
+function normalizeFileSpecPath(value) {
+  let result = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character !== "\\") {
+      result += character;
+      continue;
+    }
+    const next = value[index + 1];
+    if (next === "\\" || next === "/") {
+      result += next;
+      index++;
+    } else {
+      result += "/";
+    }
+  }
+  return result;
+}
 class FileSpec {
   #contentAvailable = false;
   constructor(root, skipContent = false) {
@@ -44624,7 +44642,7 @@ class FileSpec {
   get filename() {
     const item = pickPlatformItem(this.root);
     if (item && typeof item === "string") {
-      return stringToPDFString(item, true).replaceAll("\\\\", "\\").replaceAll("\\/", "/").replaceAll("\\", "/");
+      return normalizeFileSpecPath(stringToPDFString(item, true));
     }
     return "";
   }

@@ -16,7 +16,9 @@ try {
   // Assemble pinned resources once and copy them inside each extension root.
   // reader-pdf.js and ocr.js resolve ./vendor/... relative to that root.
   const dependencyPackage=path.join(dependencyStage,'my-browser.cindy');
-  run('bash',[path.join(repository,'.github/scripts/package-plugin.sh'),'my-browser',dependencyPackage],{cwd:repository});
+  const dependencyOutput=path.relative(repository,dependencyPackage);
+  if(!dependencyOutput||path.isAbsolute(dependencyOutput)||dependencyOutput.includes('\0'))throw new Error('Invalid dependency staging path.');
+  run('/bin/bash',['.github/scripts/package-plugin.sh','my-browser',dependencyOutput],{cwd:repository,shell:false});
   const dependencyUnpacked=path.join(dependencyStage,'unpacked');
   await fs.mkdir(dependencyUnpacked);
   run('/usr/bin/unzip',['-q',dependencyPackage,'-d',dependencyUnpacked]);
