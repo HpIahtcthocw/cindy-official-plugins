@@ -16,11 +16,11 @@ function harness() {
       create:async({url})=>{creates++;const t={id:next++,url:state.redirect?'https://example.test/redirected':url,status:state.loading?'loading':'complete',active:false};tabs.set(t.id,t);return {...t};},
       remove:async id=>{if(state.removeFails)throw new Error('Browser refused');tabs.delete(id);removed(id);},
       onActivated:{addListener(fn){activate=fn;}},onRemoved:{addListener(fn){removed=fn;}}},alarms:{create(){},onAlarm:{addListener(){}}}};
-  const context={chrome,MyBrowserPolicy:P,MyBrowserNetwork:{create:()=>({assertSupported,document:async()=>{throw Object.assign(new Error('ADDRESS_UNVERIFIED'),{reason:'NAVIGATION_UNOBSERVED'});}})},fetch:async()=>({ok:true,json:async()=>({policy:P.defaults()})}),navigator:{userAgent:'Chrome/140'},URL,crypto:globalThis.crypto,AbortController,
+  const context={chrome,MyBrowserPolicy:P,MyBrowserNetwork:{create:()=>({assertSupported,document:async()=>{throw Object.assign(new Error('ADDRESS_UNVERIFIED'),{reason:'NAVIGATION_UNOBSERVED'});}})},fetch:async()=>({ok:true,json:async()=>({policy:P.defaults()})}),navigator:{userAgent:'Chrome/140'},URL,crypto:globalThis.crypto,TextEncoder,btoa,AbortController,
     Date:class extends Date{static now(){return clock;}},setTimeout(fn,ms){clock+=ms;queueMicrotask(fn);return 0;},clearTimeout(){}};
   // Disable only the network bootstrap; execute the actual production tab manager, not a copied implementation.
-  vm.runInNewContext(source.replace(/\nchain\(\);\s*$/,'')+'\nglobalThis.tabTest={ensureTab,owned,cleanup,handle};',context);
-  return {handle:url=>context.tabTest.handle({action:'text',payload:{url}},P.defaults(),{base:'http://fixture',session:'fixture'}),state,tabs,data,creates:()=>creates,read:url=>context.tabTest.ensureTab(url,P.normalizePolicy({read:{block:[]},interact:{allow:[],block:[]}}), 'text'),focus:async id=>{activate({tabId:id});await Promise.resolve();await Promise.resolve();}};
+  vm.runInNewContext(source.replace(/\nchain\(\);\s*$/,'')+'\nglobalThis.tabTest={ensureTab,owned,cleanup,handle,videoIdentity};',context);
+  return {handle:url=>context.tabTest.handle({action:'text',payload:{url}},P.defaults(),{base:'http://fixture',session:'fixture'}),state,tabs,data,creates:()=>creates,videoIdentity:context.tabTest.videoIdentity,read:url=>context.tabTest.ensureTab(url,P.normalizePolicy({read:{block:[]},interact:{allow:[],block:[]}}), 'text'),focus:async id=>{activate({tabId:id});await Promise.resolve();await Promise.resolve();}};
 }
 test('redirected load timeout retains one tab across repeated reads and later readiness',async()=>{
   const h=harness();h.state.redirect=true;h.state.loading=true;
@@ -53,6 +53,15 @@ test('canonical URLs and already-open user tabs are reused without creating a re
   h.tabs.set(99,{id:99,url:'https://example.test/user',active:true,status:'complete'});
   await h.read('https://example.test/user');h.tabs.get(99).url='https://example.test/moved';
   await assert.rejects(h.read('https://example.test/user'),/PAGE_CHANGED/);assert.equal(h.creates(),1);
+});
+test('video resume stores a one-way URL marker instead of credentials',async()=>{
+  const h=harness(),url='https://video.example/watch?v=abc&access_token=secret-token-value#sig=fragment-secret';
+  const marker=await h.videoIdentity(url),same=await h.videoIdentity(url),changed=await h.videoIdentity(url.replace('secret-token-value','rotated-token-value'));
+  assert.match(marker,/^sha256:[A-Za-z0-9_-]+$/);
+  assert.equal(marker,same);
+  assert.notEqual(marker,changed);
+  assert.equal(marker.includes('secret-token-value'),false);
+  assert.equal(marker.includes('access_token'),false);
 });
 
 test('read failure reflects whether this invocation started navigation',async()=>{

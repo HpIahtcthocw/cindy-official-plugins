@@ -52,6 +52,9 @@ test('bridge learning access requires the paired extension challenge key and sta
   assert.match(background,/X-My-Browser-Learning-Challenge/);
   assert.match(background,/X-My-Browser-Proof/);
   assert.match(background,/target\.auth\|\|await authReady\(\)/);
+  assert.match(background,/const videoIdentity = async url =>/);
+  assert.match(background,/crypto\.subtle\.digest\('SHA-256'/);
+  assert.match(background,/sessionStore\.set\(\{\[key\]:marker\}\)/);
 });
 
 test('installation copy matches the directory-only developer fallback',()=>{

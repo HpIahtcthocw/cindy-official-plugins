@@ -13,6 +13,15 @@ const b64url = bytes => {
   let binary=''; for(const byte of new Uint8Array(bytes)) binary+=String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 };
+// Resume markers must never retain a page URL: OAuth, signed playback and reset
+// credentials may be carried in its query or fragment. A one-way marker still
+// lets the same document resume after a service-worker restart without exposing
+// the raw URL to extension storage or other extension code.
+const videoIdentity = async url => {
+  if(typeof url!=='string'||!globalThis.crypto?.subtle||typeof TextEncoder!=='function')return null;
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(url));
+  return 'sha256:'+b64url(digest);
+};
 const openAuthDb = () => new Promise((resolve,reject) => {
   const request=indexedDB.open('cindy-browser-auth',1);
   request.onupgradeneeded=()=>request.result.createObjectStore('keys');
@@ -736,10 +745,13 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
     if(m.type==='cindy-video-state'){
       if(typeof m.enabled!=='boolean')return {enabled:false};
       if(await network.document(tab.id)!==sender.documentId)return {enabled:false};
-      await sessionStore.set({[key]:m.enabled?tab.url:null});return {enabled:m.enabled};
+      const marker=m.enabled?await videoIdentity(tab.url):null;
+      if(m.enabled&&!marker)return {enabled:false};
+      await sessionStore.set({[key]:marker});return {enabled:m.enabled};
     }
     const saved=(await sessionStore.get(key))[key];
-    if(saved!==tab.url){if(saved)await sessionStore.set({[key]:null});return {enabled:false};}
+    const marker=await videoIdentity(tab.url);
+    if(!marker||saved!==marker){if(saved)await sessionStore.set({[key]:null});return {enabled:false};}
     return {enabled:true};
   })().then(reply).catch(()=>reply({enabled:false}));return true;
 });
