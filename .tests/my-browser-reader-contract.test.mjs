@@ -44,7 +44,7 @@ test('bridge learning access requires the paired extension challenge key and sta
   assert.match(bridge,/h\['x-my-browser-session'\] !== client\.session/);
   assert.match(bridge,/x-my-browser-learning-challenge/);
   assert.match(bridge,/verifyProof\(client\.publicKey,payload,proof\)/);
-  assert.match(bridge,/capabilities:sessionAllowed&&authRequired\?\['learning-v1','learning-auth-v1'\]:\[\]/);
+  assert.match(bridge,/capabilities:sessionAllowed&&authRequired\?\['learning-v1','learning-auth-v2'\]:\[\]/);
   assert.match(bridge,/bodyDigest=crypto\.createHash\('sha256'\)/);
   assert.match(bridge,/payload=challenge\+'\\\\n'\+req\.method\+'\\\\n'\+req\.url\+'\\\\n'\+bodyDigest/);
   assert.match(bridge,/req\.url\.startsWith\('\/learning\/'\)/);
@@ -53,7 +53,7 @@ test('bridge learning access requires the paired extension challenge key and sta
   assert.match(background,/X-My-Browser-Key/);
   assert.match(background,/X-My-Browser-Learning-Challenge/);
   assert.match(background,/X-My-Browser-Proof/);
-  assert.match(background,/learning-auth-v1/);
+  assert.match(background,/learning-auth-v2/);
   assert.match(background,/const digest=b64url\(await crypto\.subtle\.digest\('SHA-256'/);
   assert.match(background,/path\+'\\\\n'\+digest/);
   assert.match(background,/learningFetch\(call\.target,'\/learning\/cancel'/);

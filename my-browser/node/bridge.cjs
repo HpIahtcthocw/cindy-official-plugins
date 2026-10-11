@@ -17,7 +17,7 @@ function createBridge(options = {}) {
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map(), learningChallenges = new Map();
-  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11'].includes(version) || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(version) || /^0\.3\.\d+$/.test(version);
   const live = c => Date.now()-c.seen < 35000;
   // An isolated embedding/test can pin its own extension identity; the stdio runtime exposes no such override.
   const primaryId = options.extensionId || EXT_ID;
@@ -172,7 +172,7 @@ function createBridge(options = {}) {
       const authRequired=client.version===manifest.version;
       const sessionAllowed=client.trusted&&(!authRequired||(!!client.publicKey&&client.authenticated&&pairedCredential(client)));
       if(sessionAllowed&&!client.session)client.session=crypto.randomUUID();
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v1']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
     }
     if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
     client.seen = Date.now();

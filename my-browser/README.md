@@ -152,7 +152,7 @@ Review regressions: public hostname served by a real loopback fixture returns no
 
 ### 0.4.11: Chrome Web Store installation path
 
-The published Chrome Web Store listing is now the normal Chrome installation route. Plugin settings opens the listing, then verifies the live extension handshake when the user returns. Directory loading is the only developer fallback included in the plugin package; local ZIP generation remains a contributor-only build step. The Chrome store package uses version 0.4.12; the store requires a higher version for every update.
+The published Chrome Web Store listing is now the normal Chrome installation route. Plugin settings opens the listing, then verifies the live extension handshake when the user returns. Directory loading is the only developer fallback included in the plugin package; local ZIP generation remains a contributor-only build step. The Chrome store package uses version 0.4.13; the store requires a higher version for every update.
 
 ## Runtime source evidence
 
@@ -295,4 +295,4 @@ The mainView declaration, Cindy-only reader page and learning-panel message bran
 
 A lost creation acknowledgement reuses the original creation key. Archived, deleted or invalid bindings do not silently create replacement tasks. Uncertain inputs are identified by browser profile, page, input and model revision; retries resume the same receipt despite a changed playback position. Other passages wait for the previous run to settle; a changed video in the same browser confirms cancellation first. Cancellation intent survives restart and blocks new sends until confirmed. Returned task/run identities are checked, and reply-read failures retain the original receipt. Existing bindings and keys migrate without deleting history or caches.
 
-Network verification survives extension service-worker restarts for the same document using browser-session storage. Reloads and other documents still require fresh public-address evidence. Chrome Web Store domains are protected by Chrome itself; the extension reports this restriction directly rather than suggesting a refresh. The Chrome store item ID and published install link are registered in `distribution.json`; the 0.4.12 update supersedes the previously submitted 0.4.11 package.
+Network verification survives extension service-worker restarts for the same document using browser-session storage. Reloads and other documents still require fresh public-address evidence. Chrome Web Store domains are protected by Chrome itself; the extension reports this restriction directly rather than suggesting a refresh. The Chrome store item ID and published install link are registered in `distribution.json`; the 0.4.13 update supersedes the previously submitted 0.4.12 package.
