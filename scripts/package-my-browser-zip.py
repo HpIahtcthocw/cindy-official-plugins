@@ -7,7 +7,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 root = Path(__file__).resolve().parent.parent / 'my-browser'
 files = ['manifest.json', 'background.js', 'policy.js', 'network-guard.js',
-         'ui.js', 'reading-ui.js', 'learning-core.js', 'subtitle-playback.js', 'content.js', 'library.html', 'library.js', 'reader-pdf.js', 'ocr.js', 'icons/16.png', 'icons/32.png', 'icons/48.png', 'icons/128.png']
+         'ui.js', 'reading-ui.js', 'learning-core.js', 'subtitle-playback.js', 'content.js', 'library.html', 'library.js', 'reader-pdf.js', 'pdf-cmap-bundle.js', 'ocr.js', 'icons/16.png', 'icons/32.png', 'icons/48.png', 'icons/128.png']
 files += json.loads((root / 'extension/vendor-files.json').read_text())
 manifest = json.loads((root / 'extension/manifest.json').read_text())
 for content_script in manifest.get('content_scripts', []):

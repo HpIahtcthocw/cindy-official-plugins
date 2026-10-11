@@ -1,5 +1,6 @@
 import {getDocument,GlobalWorkerOptions} from './vendor/pdfjs/pdf.mjs';
 import {createOCR,ocrLanguages} from './ocr.js';
+import {PdfBinaryDataFactory} from './pdf-cmap-bundle.js';
 const MAX_TEXT_PART=1000,MAX_BATCH_ITEMS=12,MAX_BATCH_CHARS=20000;
 function boundedParts(value,max=MAX_TEXT_PART){const parts=[];for(let start=0;start<value.length;start+=max)parts.push(value.slice(start,start+max));return parts;}
 function translationBatches(parts){const batches=[];let batch=[],characters=0;for(const part of parts){if(batch.length&&(batch.length>=MAX_BATCH_ITEMS||characters+part.length>MAX_BATCH_CHARS)){batches.push(batch);batch=[];characters=0;}batch.push(part);characters+=part.length;}if(batch.length)batches.push(batch);return batches;}
@@ -10,7 +11,8 @@ export async function openPDF({file,container,call,target,t,report}) {
   const task=getDocument({data:new Uint8Array(await file.arrayBuffer()),isEvalSupported:false,useSystemFonts:true,
     cMapUrl:new URL('./vendor/pdfjs/cmaps/',import.meta.url).href,cMapPacked:true,
     standardFontDataUrl:new URL('./vendor/pdfjs/standard_fonts/',import.meta.url).href,
-    wasmUrl:new URL('./vendor/pdfjs/wasm/',import.meta.url).href});
+    wasmUrl:new URL('./vendor/pdfjs/wasm/',import.meta.url).href,
+    useWorkerFetch:false,BinaryDataFactory:PdfBinaryDataFactory});
   const pdf=await task.promise;let number=1,generation=0,translationRevision=0,renderTask,texts=[],ocrBusy=false,selectedRegion;
   const progress=el('p'),ocr=createOCR(n=>{progress.textContent=`OCR ${Math.round(n*100)}%`;});
   container.replaceChildren();const navigation=el('div');navigation.className='row';const label=el('span'),canvas=el('canvas'),text=el('div');text.className='stack';canvas.style.cssText='max-width:100%;height:auto;border:1px solid var(--board);touch-action:none;cursor:crosshair';
