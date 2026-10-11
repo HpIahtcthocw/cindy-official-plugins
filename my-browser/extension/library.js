@@ -1,6 +1,7 @@
 'use strict';
 (() => {
   const browser=globalThis.browser||globalThis.chrome,U=globalThis.CindyUI,L=globalThis.CindyLearning;
+  const MAX_TEXT_TRANSLATION_PARTS=100,MAX_TEXT_TRANSLATION_CHARS=200000,MAX_TEXT_TRANSLATION_PART=20000;
   let disposeReader,expandedLanguages=false;
   let locale='en',t=U.copy(locale),target='zh-CN',requestGeneration=0;
   async function call(request){const r=await browser.runtime.sendMessage({type:'cindy-learning',id:crypto.randomUUID(),request});if(!r?.ok)throw Error(r?.error||r?.errorCode||'CINDY_DISCONNECTED');return r;}
@@ -34,10 +35,11 @@
       }catch(e){if(current()&&revision===fileRevision)error(e);}
     };
     const actions=el('div',undefined,'row');const translateButton=button(t.translate,async()=>{
-      const revision=++translationRevision,language=target,parts=input.value.split(/\n\s*\n/).filter(x=>x.trim());
+      const revision=++translationRevision,language=target,parts=input.value.split(/\n\s*\n/).filter(x=>x.trim()),totalCharacters=parts.reduce((sum,part)=>sum+part.length,0);
+      if(parts.length>MAX_TEXT_TRANSLATION_PARTS||totalCharacters>MAX_TEXT_TRANSLATION_CHARS||parts.some(part=>part.length>MAX_TEXT_TRANSLATION_PART))throw Error('IMPORT_TOO_LARGE');
       text.replaceChildren();status.textContent=t.working;
       for(const part of parts){
-        if(!current()||revision!==translationRevision)return;if(part.length>20000)throw Error('BATCH_TOO_LARGE');
+        if(!current()||revision!==translationRevision)return;
         const r=await call({op:'translate',text:part,target:language});if(!current()||revision!==translationRevision)return;
         const section=el('section',undefined,'stack divider');section.append(el('p',part),el('p',r.translations[0],'muted'));text.append(section);
       }

@@ -20,7 +20,7 @@
     requests.clear();progressHandlers.clear();stopPage();stopVideo();
     for(const rec of translations.values())rec.host.remove();translations.clear();
     selectionButton?.remove();selectionButton=null;host?.remove();host=null;shadow=null;footer=null;status=null;
-    try{api?.runtime?.onMessage?.removeListener(onRuntimeMessage);}catch{}
+    try{api?.runtime?.onMessage?.removeListener(onRuntimeMessage);api?.storage?.onChanged?.removeListener(onPreferencesChanged);}catch{}
   }
   let subtitleCacheSupported=false,expandedLanguages=false,prefs={videoTarget:'zh-CN',videoMode:'both',videoSize:'medium',autoVideo:true,bufferPause:true,autoSites:{}},selectionPoint=null,configuring=null,subtitleSegmentation=false,subtitleEditorial=false,locale='en',t=U.copy(locale),target='zh-CN',host,shadow,body,status,footer,cancelButton,selected='',selectedContext='',lastResult='',taskKey='',taskPayload='',generation=0,translated=false;
   let cueMedia,cueMediaSource='',video,cues=[],activeCue=-1,repeat=false,autoPause=false,previousCue=-1,videoHandler,videoSession,videoTimer;
@@ -79,6 +79,15 @@
     const theme=el('select');theme.setAttribute('aria-label',t.appearance);for(const [value,label]of [['light',t.light],['dark',t.dark]]){const o=el('option',label);o.value=value;theme.append(o);}theme.value=prefs.theme||pageTheme();theme.onchange=()=>{prefs.theme=theme.value;shadow.querySelector('.cindy-root').dataset.theme=prefs.theme;videoSession?.overlay?.update();savePreferences().catch(report);};body.append(field(t.appearance,theme),el('h2',t.modelSettings),el('p',t.modelHint,'muted'));
     const link=el('a',t.open);link.href='cindy://focus';body.append(link);
   }
+  function onPreferencesChanged(changes,area){
+    if(area!=='local'||!changes?.cindyReadingPreferences?.newValue)return;
+    const stored=changes.cindyReadingPreferences.newValue;
+    prefs.autoVideo=stored.autoVideo!==false;
+    prefs.autoSites=stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{};
+    if(prefs.autoVideo){nextAutoAttempt=0;if(!videoSession)autoOpen();}
+    else nextAutoAttempt=Date.now()+5000;
+  }
+  api.storage?.onChanged?.addListener(onPreferencesChanged);
   function selection(){
     const s=window.getSelection();const node=s?.anchorNode?.parentElement;
     if(!s||!node||node.closest('input,textarea,[contenteditable]')){selected='';selectedContext='';return;}
