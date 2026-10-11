@@ -46,7 +46,7 @@ Settings opens the official Chrome Web Store as the primary Chrome installation 
 
 Safari still requires a store release or signed/notarized app, neither configured yet. Chrome Web Store installation uses the published extension identity and receives browser-managed updates. Unknown extension identities still require real Cindy pairing confirmation. Developer installations remain separate and should keep only one copy.
 
-Installation cards appear only for connected browsers or installed browsers with a published store route. Unpublished browsers and browsers absent from this device are hidden, with no coming-soon placeholder.
+Installation cards appear only for connected browsers or installed browsers with a published store route. Unpublished browsers and browsers absent from this device are hidden, with no coming-soon placeholder. The official `.cindy` package includes directory loading as its only developer fallback; it does not ship a ZIP installer.
 
 ## Security and limitations
 
@@ -144,7 +144,7 @@ The builder creates Chrome/Edge store ZIPs and a Safari Xcode project/universal 
 
 0.3.36 stops the link scan at the requested count. The loop materialised and visibility-filtered every anchor first, so a page with tens of thousands of links paid a full layout sweep even for `limit:1`; eligibility, visibility and the count are now checked in that order per candidate and the loop exits as soon as the limit is met. Coverage: a 20000-link fixture page read at `limit:1` must return exactly one link and report truncation. This is a structural change — at that size the previous scan is not slow enough for a timing threshold to be discriminating, so none is asserted.
 
-A packaged ZIP can also be dragged onto Chromium's extensions manager as a developer-install alternative to selecting a directory. Browser developer-mode/policy requirements still apply; this is not a store-signed release or an automatic-update promise. Chromium's implementation supports this path; this machine's official Chrome ZIP-drop flow has not yet been verified. A self-packed CRX may be blocked rather than merely showing a dismissible warning.
+The official `.cindy` package does not include a ZIP installer. Local contributor builds may generate a ZIP for development checks, but that archive is not part of the plugin's installation flow; use the bundled directory fallback when the store is unavailable. Browser developer-mode/policy requirements still apply, and this is not a store-signed release or an automatic-update promise. A self-packed CRX may be blocked rather than merely showing a dismissible warning.
 
 Provisioning retains an empty staged audience. The Chrome Web Store listing is already public; repository maintenance and the new package submission are tracked separately. The four HEAD-based package-contract tests also passed against the committed snapshot containing the new plugin and provisioning entry.
 
@@ -152,7 +152,7 @@ Review regressions: public hostname served by a real loopback fixture returns no
 
 ### 0.4.11: Chrome Web Store installation path
 
-The published Chrome Web Store listing is now the normal Chrome installation route. Plugin settings opens the listing, then verifies the live extension handshake when the user returns. ZIP and directory loading remain available only in the developer fallback section. The Chrome store package uses version 0.4.11; the store requires a higher version for every update.
+The published Chrome Web Store listing is now the normal Chrome installation route. Plugin settings opens the listing, then verifies the live extension handshake when the user returns. Directory loading is the only developer fallback included in the plugin package; local ZIP generation remains a contributor-only build step. The Chrome store package uses version 0.4.11; the store requires a higher version for every update.
 
 ## Runtime source evidence
 

@@ -151,6 +151,9 @@ test('a transport failure while reading reports unknown, not not_executed',async
   state.rejectNode=false;
   await callTool('browser_status',{});
   assert.equal(state.sent.at(-1).result.ok,true);
+  const guidance=state.sent.at(-1).result.how_to_install;
+  assert.match(guidance,/Directory loading is the only developer fallback included/);
+  assert.doesNotMatch(guidance,/ZIP.*fallback/i);
 });
 
 test('settings sync preserves node unavailability for client guidance',async t=>{

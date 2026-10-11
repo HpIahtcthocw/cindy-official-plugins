@@ -105,7 +105,7 @@ async function handleTool(name,args) {
     return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,
       clients:(status.clients || []).map(c=>({id:c.id,browser:c.browser,version:c.version,protocolVersion:c.protocolVersion,connected:c.connected,trusted:c.trusted})),
       installation:{ok:!!installation?.ok,browsers:(installation?.browsers || []).map(b=>({browser:b.browser,supported:b.supported,installed:b.installed,published:b.published,zip:b.zip,bundled:b.bundled}))},
-      how_to_install:'Open Cindy Chrome plugin settings and choose Install extension. Chrome uses the official Chrome Web Store listing; Edge uses the developer directory fallback until an Edge store route is published. Return here after installation and wait for a live connection. ZIP/directory loading remains available only in the advanced fallback section.'};
+      how_to_install:'Open Cindy Chrome plugin settings and choose Install extension. Chrome uses the official Chrome Web Store listing; Edge uses the developer directory fallback until an Edge store route is published. Return here after installation and wait for a live connection. Directory loading is the only developer fallback included in this plugin package.'};
   }
   if (name === 'browser_tabs') return node('act',{action:'tabs',payload:P.validate('tabs',args)});
   if (name === 'browser_read') {
