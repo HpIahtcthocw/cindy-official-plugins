@@ -255,7 +255,8 @@
   },
   "network": {
     "hosts": [
-      "youtube.com"
+      "youtube.com",
+      "*.youtube.com"
     ]
   }
 }

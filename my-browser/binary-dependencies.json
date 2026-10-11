@@ -739,6 +739,14 @@
               "target": "extension/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf"
             },
             {
+              "source": "package/build/pdf.mjs",
+              "target": "extension/vendor/pdfjs/pdf.mjs"
+            },
+            {
+              "source": "package/build/pdf.worker.mjs",
+              "target": "extension/vendor/pdfjs/pdf.worker.mjs"
+            },
+            {
               "source": "package/wasm/jbig2.wasm",
               "target": "extension/vendor/pdfjs/wasm/jbig2.wasm"
             },
