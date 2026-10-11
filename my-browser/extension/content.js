@@ -50,16 +50,25 @@
       prefs={webTarget:target,videoTarget:L.validTarget(stored.videoTarget)?stored.videoTarget:target,videoMode:['both','translation','original','off'].includes(stored.videoMode)?stored.videoMode:'both',videoSize:['small','medium','large'].includes(stored.videoSize)?stored.videoSize:'medium',autoVideo:stored.autoVideo!==false,bufferPause:stored.bufferPause!==false,autoSites:stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{},theme:['light','dark'].includes(stored.theme)?stored.theme:null};
     })();try{await configuring;}finally{configuring=null;}
   }
-  function savePreferences(){return extensionCall(()=>api.storage.local.set({cindyReadingPreferences:prefs}));}
+  let preferenceSave=Promise.resolve();
+  function savePreferences(changes={}){
+    preferenceSave=preferenceSave.catch(()=>{}).then(async()=>{
+      const stored=(await extensionCall(()=>api.storage.local.get('cindyReadingPreferences'))).cindyReadingPreferences||{};
+      const merged={...stored,...changes};
+      if(changes.autoSites){const autoSites={...(stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{})};for(const [origin,value]of Object.entries(changes.autoSites)){if(value===undefined)delete autoSites[origin];else autoSites[origin]=value;}merged.autoSites=autoSites;}
+      await extensionCall(()=>api.storage.local.set({cindyReadingPreferences:merged}));
+      Object.assign(prefs,merged);prefs.autoSites=merged.autoSites&&typeof merged.autoSites==='object'?merged.autoSites:{};
+    });
+    return preferenceSave;
+  }
   function needsTranslation(){return prefs.videoMode==='both'||prefs.videoMode==='translation';}
   function field(label,control){const row=el('div',undefined,'field');row.append(el('span',label),control);return row;}
   function switchControl(label,value,change){const b=button('',()=>{const next=b.getAttribute('aria-checked')!=='true';b.setAttribute('aria-checked',String(next));return change(next);},'switch');b.setAttribute('role','switch');b.setAttribute('aria-label',label);b.setAttribute('aria-checked',String(value));return b;}
   function languageControl(videoLanguage=false){return U.languagePicker({locale,value:videoLanguage?prefs.videoTarget:target,expanded:expandedLanguages,onchange:value=>{
-    if(videoLanguage){prefs.videoTarget=value;resetSubtitleTranslation();videoSession?.overlay?.update();}else{target=value;prefs.webTarget=value;request({op:'preferences',target:value}).catch(report);if(translated){restorePage();togglePage();}}
-    savePreferences().catch(report);
+    if(videoLanguage){prefs.videoTarget=value;resetSubtitleTranslation();videoSession?.overlay?.update();savePreferences({videoTarget:value}).catch(report);}else{target=value;prefs.webTarget=value;request({op:'preferences',target:value}).catch(report);if(translated){restorePage();togglePage();}savePreferences({webTarget:value}).catch(report);}
   }});}
   function resetSubtitleTranslation(){if(!videoSession)return;cancel();for(const chunk of videoSession.chunks||[]){chunk.done=false;delete chunk.error;delete chunk.recovery;delete chunk.retryAt;delete chunk.retries;delete chunk.cache;delete chunk.context;}cues=[];videoSession.paused=false;videoSession.failed=false;videoHandler?.();translateCues();}
-  function applyVideoMode(mode){prefs.videoMode=mode;savePreferences().catch(report);if(!needsTranslation())cancel();else if(videoSession){videoSession.paused=false;videoSession.failed=false;translateCues();}videoSession?.playback?.update();videoHandler?.();videoSession?.overlay?.update();}
+  function applyVideoMode(mode){prefs.videoMode=mode;savePreferences({videoMode:mode}).catch(report);if(!needsTranslation())cancel();else if(videoSession){videoSession.paused=false;videoSession.failed=false;translateCues();}videoSession?.playback?.update();videoHandler?.();videoSession?.overlay?.update();}
   function stopPage(){translated=false;observer?.disconnect();observer=null;clearTimeout(translateTimer);}
   function rememberVideo(enabled){if(disposed)return;sendMessage({type:'cindy-video-state',enabled}).catch(()=>{});}
   function close(){rememberVideo(false);cancel();stopVideo();speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;ensureVideoEntry();}
@@ -73,10 +82,10 @@
     body=el('main',undefined,'stack');status=el('div','','status');status.setAttribute('role','status');footer=el('footer');cancelButton=button(t.cancel,()=>{if(videoSession){videoSession.paused=true;videoSession.retryButton.hidden=false;}cancel();videoSession?.playback?.update();stopPage();note(t.cancel);},'quiet');footer.append(status,cancelButton);panel.append(header,body,footer);shadow.append(panel);document.documentElement.append(host);updateFooter();
   }
   function clear(mode){if(mode!=='settings'){cancel();stopVideo();}body.onkeydown=null;body.replaceChildren();note('');}
-  function showPageHome(){clear('page');const media=document.querySelector('video,audio');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()));if(media)body.append(button(t.video,()=>showVideo(),'primary full'));body.append(button(translated?t.restore:t.translatePage,async()=>{await togglePage();if(host)showPageHome();},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences();})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
+  function showPageHome(){clear('page');const media=document.querySelector('video,audio');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()));if(media)body.append(button(t.video,()=>showVideo(),'primary full'));body.append(button(translated?t.restore:t.translatePage,async()=>{await togglePage();if(host)showPageHome();},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences({autoSites:{[location.origin]:value?true:undefined}});})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
   function showSettings(){clear('settings');body.append(button(t.back,()=>videoSession?videoSettings():showPageHome(),'quiet'),el('h2',t.settings),field(t.webLanguage,languageControl()));
-    body.append(field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences();})),field(t.bufferPause,switchControl(t.bufferPause,prefs.bufferPause,v=>{prefs.bufferPause=v;videoSession?.playback?.update();return savePreferences();})));
-    const theme=el('select');theme.setAttribute('aria-label',t.appearance);for(const [value,label]of [['light',t.light],['dark',t.dark]]){const o=el('option',label);o.value=value;theme.append(o);}theme.value=prefs.theme||pageTheme();theme.onchange=()=>{prefs.theme=theme.value;shadow.querySelector('.cindy-root').dataset.theme=prefs.theme;videoSession?.overlay?.update();savePreferences().catch(report);};body.append(field(t.appearance,theme),el('h2',t.modelSettings),el('p',t.modelHint,'muted'));
+    body.append(field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences({autoVideo:v});})),field(t.bufferPause,switchControl(t.bufferPause,prefs.bufferPause,v=>{prefs.bufferPause=v;videoSession?.playback?.update();return savePreferences({bufferPause:v});})));
+    const theme=el('select');theme.setAttribute('aria-label',t.appearance);for(const [value,label]of [['light',t.light],['dark',t.dark]]){const o=el('option',label);o.value=value;theme.append(o);}theme.value=prefs.theme||pageTheme();theme.onchange=()=>{prefs.theme=theme.value;shadow.querySelector('.cindy-root').dataset.theme=prefs.theme;videoSession?.overlay?.update();savePreferences({theme:prefs.theme}).catch(report);};body.append(field(t.appearance,theme),el('h2',t.modelSettings),el('p',t.modelHint,'muted'));
     const link=el('a',t.open);link.href='cindy://focus';body.append(link);
   }
   function onPreferencesChanged(changes,area){
@@ -85,6 +94,13 @@
     const stored=change.newValue,previous=change.oldValue||{};
     const videoWasEnabled=previous.autoVideo!==false,videoIsEnabled=stored.autoVideo!==false;
     const siteWasEnabled=previous.autoSites?.[location.origin]===true,siteIsEnabled=stored.autoSites?.[location.origin]===true;
+    target=L.validTarget(stored.webTarget)?stored.webTarget:target;
+    prefs.webTarget=target;
+    prefs.videoTarget=L.validTarget(stored.videoTarget)?stored.videoTarget:prefs.videoTarget;
+    prefs.videoMode=['both','translation','original','off'].includes(stored.videoMode)?stored.videoMode:prefs.videoMode;
+    prefs.videoSize=['small','medium','large'].includes(stored.videoSize)?stored.videoSize:prefs.videoSize;
+    prefs.bufferPause=stored.bufferPause!==false;
+    prefs.theme=['light','dark'].includes(stored.theme)?stored.theme:null;
     prefs.autoVideo=stored.autoVideo!==false;
     prefs.autoSites=stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{};
     const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
@@ -349,7 +365,7 @@
     const session=videoSession;if(!session)return;body.replaceChildren();const modes=el('div',undefined,'mode-grid');
     for(const [mode,label]of [['both',t.both],['translation',t.translationOnly],['original',t.originalOnly],['off',t.off]]){const b=button(label,()=>{applyVideoMode(mode);videoSettings();});b.setAttribute('aria-pressed',String(prefs.videoMode===mode));modes.append(b);}body.append(modes);
     const picker=languageControl(true);picker.querySelector('button').disabled=!needsTranslation();body.append(field(t.videoLanguage,picker),el('small',prefs.videoMode==='off'?t.offHint:prefs.videoMode==='original'?t.originalHint:t.videoLanguageHint));
-    const sizes=el('div',undefined,'segmented');for(const size of ['small','medium','large']){const b=button(t[size],()=>{prefs.videoSize=size;savePreferences().catch(report);session.overlay?.update();videoSettings();});b.setAttribute('aria-pressed',String(prefs.videoSize===size));sizes.append(b);}body.append(field(t.subtitleSize,sizes),field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences();})),button(t.modelSettings,showSettings,'text-link'));
+    const sizes=el('div',undefined,'segmented');for(const size of ['small','medium','large']){const b=button(t[size],()=>{prefs.videoSize=size;savePreferences({videoSize:size}).catch(report);session.overlay?.update();videoSettings();});b.setAttribute('aria-pressed',String(prefs.videoSize===size));sizes.append(b);}body.append(field(t.subtitleSize,sizes),field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences({autoVideo:v});})),button(t.modelSettings,showSettings,'text-link'));
     const more=el('details'),tools=el('div',undefined,'stack'),file=el('input');file.type='file';file.accept='.srt,.vtt';file.hidden=true;file.onchange=async()=>{try{const f=file.files[0];if(!f)return;if(f.size>2000000)throw Error('SUBTITLE_TOO_LARGE');const next=L.parseSubtitles(await f.text());if(session!==videoSession)return;session.imported=true;session.failed=false;session.paused=false;mergeCues(next);translateCues();}catch(e){report(e);}};
     more.append(el('summary',t.more),tools);tools.append(session.retryButton,...(subtitleCacheSupported?[button(U.subtitleStatusCopy(locale).retranslate,async()=>{cancel();session.paused=true;session.playback?.update();await request({op:'subtitle-cache-clear',target:prefs.videoTarget});if(session!==videoSession)return;resetSubtitleTranslation();})]:[]),button(t.subtitles,()=>file.click()),file,button(t.export,()=>download(L.exportSubtitles(cues),'subtitles.srt')));
     const controls=el('div',undefined,'row');controls.append(button(t.previous,()=>jump(Math.max(0,activeCue-1))),button(t.replay,()=>jump(Math.max(0,activeCue))),button(t.next,()=>jump(Math.min(cues.length-1,activeCue+1))));const speed=el('select');speed.setAttribute('aria-label',t.playbackSpeed);for(const n of [.5,.75,1,1.25,1.5,2]){const o=el('option',n+'×');o.value=n;speed.append(o);}speed.value=video.playbackRate;speed.onchange=()=>video.playbackRate=Number(speed.value);controls.append(speed);tools.append(controls);

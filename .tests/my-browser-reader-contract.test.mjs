@@ -14,6 +14,10 @@ test('text reader bounds total translation work before sending model requests',(
 
 test('content script listens for cross-tab preference changes',()=>{
   assert.match(content,/storage\?\.onChanged\?\.addListener\(onPreferencesChanged\)/);
+  assert.match(content,/api\.storage\.local\.get\('cindyReadingPreferences'\)/);
+  assert.match(content,/const merged=\{\.\.\.stored,\.\.\.changes\}/);
+  assert.match(content,/Object\.assign\(prefs,merged\)/);
+  assert.match(content,/autoSites:\{\[location\.origin\]:value\?true:undefined\}/);
   assert.match(content,/const videoWasEnabled=previous\.autoVideo!==false,videoIsEnabled=stored\.autoVideo!==false/);
   assert.match(content,/const relevantEnable=youtube\?!videoWasEnabled&&videoIsEnabled:!siteWasEnabled&&siteIsEnabled/);
   assert.match(content,/if\(relevantEnable\)\{nextAutoAttempt=0;if\(!videoSession\)autoOpen\(\);\}/);
