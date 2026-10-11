@@ -9,6 +9,7 @@ const target=process.argv[3] || 'all';
 if (!['all','chrome','edge','safari'].includes(target)) throw new Error('Target: chrome, edge, safari or all.');
 // Refuse overwrites so an existing signed build is never replaced accidentally.
 await fs.mkdir(out,{recursive:true});
+process.chdir(repository);
 const manifest=JSON.parse(await fs.readFile(path.join(root,'extension/manifest.json'),'utf8'));
 const run=(file,args,opts={})=>execFileSync(file,args,{encoding:'utf8',maxBuffer:32*1024*1024,stdio:['ignore','pipe','pipe'],...opts});
 const dependencyStage=await fs.mkdtemp(path.join(out,'.my-browser-dependencies-'));
@@ -18,7 +19,7 @@ try {
   const dependencyPackage=path.join(dependencyStage,'my-browser.cindy');
   const dependencyOutput=path.relative(repository,dependencyPackage);
   if(!dependencyOutput||path.isAbsolute(dependencyOutput)||dependencyOutput.includes('\0'))throw new Error('Invalid dependency staging path.');
-  run('/bin/bash',['.github/scripts/package-plugin.sh','my-browser',dependencyOutput],{cwd:repository,shell:false});
+  run('/bin/bash',['.github/scripts/package-plugin.sh','my-browser',dependencyOutput],{shell:false});
   const dependencyUnpacked=path.join(dependencyStage,'unpacked');
   await fs.mkdir(dependencyUnpacked);
   run('/usr/bin/unzip',['-q',dependencyPackage,'-d',dependencyUnpacked]);
@@ -41,7 +42,9 @@ try {
   await fs.writeFile(path.join(dir,'manifest.json'),JSON.stringify(m,null,2)+'\n');
   if(browser!=='safari') {
     const zip=path.join(out,'my-browser-'+browser+'-'+manifest.version+'.zip');
-    run('/usr/bin/zip',['-qr',zip,'.'],{cwd:dir});
+    process.chdir(dir);
+    try { run('/usr/bin/zip',['-qr',zip,'.'],{shell:false}); }
+    finally { process.chdir(repository); }
     console.log(browser+': '+zip);continue;
   }
   if(process.platform!=='darwin') throw new Error('Safari packaging requires a macOS build machine.');
