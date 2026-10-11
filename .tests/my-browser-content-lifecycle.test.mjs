@@ -35,6 +35,11 @@ test('a late startup reply after invalidation cannot reopen UI or restart pollin
   f.chrome.runtime=undefined;[...f.timers.values()][0]();resolve({enabled:true});await settle();assert.equal(f.timers.size,0);
 });
 
+test('native cues share safe markup cleanup and disabled YouTube auto-open stops retry polling',()=>{
+  assert.match(source,/text:L\.cleanSubtitleText\(c\.text\)\.slice\(0,4000\)/);
+  assert.match(source,/if\(!enabled\)\{[\s\S]*?if\(youtube\)prefs\.autoVideo=false;[\s\S]*?nextAutoAttempt=Date\.now\(\)\+5000;[\s\S]*?return;/);
+});
+
 test('an interrupted panel open cannot recreate removed UI when its config reply arrives',async()=>{
   let resolveConfig;const f=fixture(m=>m.type==='cindy-learning'?new Promise(r=>{resolveConfig=r;}):Promise.resolve({enabled:false}));await settle();
   const replies=[];[...f.listeners][0]({type:'cindy-ui',action:'open'},{id:'fixture'},r=>replies.push(r));await settle();

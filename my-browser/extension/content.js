@@ -319,7 +319,7 @@
       if(!session.imported){
         const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
         const tracks=[...video.textTracks],track=tracks.find(x=>x.mode==='showing')||tracks.find(x=>x===session.nativeTrack)||tracks.find(x=>x.kind==='subtitles'||x.kind==='captions');
-        if(track){session.nativeTrack=track;session.overlay?.track(track);const next=[...(track.cues||[])].map(c=>({start:c.startTime,end:c.endTime,text:c.text.replace(/<[^>]*>/g,'').trim().slice(0,4000)})).filter(c=>c.text&&c.end>c.start);if(next.length&&!youtube)mergeCues(next);}
+        if(track){session.nativeTrack=track;session.overlay?.track(track);const next=[...(track.cues||[])].map(c=>({start:c.startTime,end:c.endTime,text:L.cleanSubtitleText(c.text).slice(0,4000)})).filter(c=>c.text&&c.end>c.start);if(next.length&&!youtube)mergeCues(next);}
         if(youtube&&!session.fullTranscript&&!session.readBlocked&&Date.now()>=session.nextRead){
           session.attempts++;session.nextRead=Date.now()+Math.min(30000,3000*session.attempts);
           const result=await sendMessage({type:'cindy-captions',language:'auto'});
@@ -396,7 +396,15 @@
     // YouTube subtitles are enabled on a fresh install. An explicit false is
     // the only opt-out; site translation remains opt-in per origin.
     const enabled=youtube?stored.autoVideo!==false:stored.autoSites?.[location.origin]===true;
-    if(!enabled)return;
+    if(!enabled){
+      // Keep the one-second navigation timer from re-reading the stored opt-out
+      // forever. An explicit settings change runs configure() and restores the
+      // current persisted preference before the next automatic attempt.
+      if(youtube)prefs.autoVideo=false;
+      else if(prefs.autoSites&&typeof prefs.autoSites==='object')prefs.autoSites[location.origin]=false;
+      nextAutoAttempt=Date.now()+5000;
+      return;
+    }
     autoOpening=true;nextAutoAttempt=Date.now()+5000;
     try{await configure();if(youtube&&prefs.autoVideo){makePanel();await showVideo();}else if(prefs.autoSites[location.origin]===true){await togglePage();}}catch{}finally{autoOpening=false;}
   }
