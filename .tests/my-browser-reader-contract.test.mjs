@@ -7,6 +7,7 @@ const content=await fs.readFile(new URL('../my-browser/extension/content.js',imp
 const pdf=await fs.readFile(new URL('../my-browser/extension/reader-pdf.js',import.meta.url),'utf8');
 const bridge=await fs.readFile(new URL('../my-browser/node/bridge.cjs',import.meta.url),'utf8');
 const background=await fs.readFile(new URL('../my-browser/extension/background.js',import.meta.url),'utf8');
+const settings=await fs.readFile(new URL('../my-browser/settings.js',import.meta.url),'utf8');
 
 test('text reader bounds total translation work before sending model requests',()=>{
   assert.match(source,/MAX_TEXT_TRANSLATION_PARTS=100/);
@@ -51,4 +52,9 @@ test('bridge learning access requires the paired extension challenge key and sta
   assert.match(background,/X-My-Browser-Learning-Challenge/);
   assert.match(background,/X-My-Browser-Proof/);
   assert.match(background,/target\.auth\|\|await authReady\(\)/);
+});
+
+test('installation copy matches the directory-only developer fallback',()=>{
+  assert.match(settings,/storeNote:'The store is the normal installation path\. Directory loading is the only developer fallback included in this package; ZIP archives are contributor-only\.'/);
+  assert.doesNotMatch(settings,/storeNote:'[^']*ZIP and directory loading/);
 });
