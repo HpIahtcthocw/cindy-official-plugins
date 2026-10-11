@@ -97,7 +97,8 @@ async function discoverBridge() {
         if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){const proof=await auth?.sign(r.challenge);if(!proof)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
         if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
         if(typeof r.session!=='string'||!r.session)return null;
-        return {base,port,version,session:r.session,learning:r.capabilities?.includes('learning-v1')===true,auth};
+        const learning=r.capabilities?.includes('learning-v1')===true&&r.capabilities?.includes('learning-auth-v1')===true;
+        return {base,port,version,session:r.session,learning,auth};
       }catch{return null;}
     }));
     const found=candidates.find(Boolean);
@@ -611,9 +612,13 @@ async function learningFetch(target,path,body,active,deadline){
     await active();if(Date.now()>=deadline)throw Error('TIMEOUT');
     try {
       const challenge=await fetchJSON(target.base,'/learning/challenge',target.session);
+      await active();if(Date.now()>=deadline)throw Error('TIMEOUT');
       const auth=target.auth||await authReady();
       const method=body===undefined?'GET':'POST';
-      const proof=await auth.sign(challenge.challenge+'\\n'+method+'\\n'+path);
+      const serialized=body===undefined?'':JSON.stringify(body);
+      const digest=b64url(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(serialized)));
+      const proof=await auth.sign(challenge.challenge+'\\n'+method+'\\n'+path+'\\n'+digest);
+      await active();if(Date.now()>=deadline)throw Error('TIMEOUT');
       return await fetchJSON(target.base,path,target.session,body,5000,wireVersion,{publicKey:auth.publicKey,learningChallenge:challenge.challenge,proof});
     }
     catch(error){
@@ -674,7 +679,7 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   }
   if(message?.type==='cindy-cancel') {
     const call=learningCalls.get(message.id);
-    if(call && call.owner===(sender.documentId||sender.url)) {call.cancelled=true;if(call.target)fetchJSON(call.target.base,'/learning/cancel',call.target.session,{id:message.id}).catch(()=>{});}
+    if(call && call.owner===(sender.documentId||sender.url)) {call.cancelled=true;if(call.target)learningFetch(call.target,'/learning/cancel',{id:message.id},()=>Promise.resolve(),Date.now()+5000).catch(()=>{});}
     reply({ok:true});return;
   }
 });

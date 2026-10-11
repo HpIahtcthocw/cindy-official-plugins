@@ -131,10 +131,14 @@ function createBridge(options = {}) {
     const data = JSON.stringify(value);
     res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Length':Buffer.byteLength(data)}); res.end(data);
   }
-  async function body(req) {
+  async function readBody(req) {
     const chunks = []; let bytes = 0;
     for await (const c of req) { bytes += c.length; if (bytes > 512000) throw new Error('Too large'); chunks.push(c); }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    const raw=Buffer.concat(chunks).toString('utf8');
+    return {raw,value:JSON.parse(raw || '{}')};
+  }
+  async function body(req) {
+    return (await readBody(req)).value;
   }
   async function route(req,res) {
     // Custom headers require preflight on websites. Never enable CORS, including on /health.
@@ -168,7 +172,7 @@ function createBridge(options = {}) {
       const authRequired=client.version===manifest.version;
       const sessionAllowed=client.trusted&&(!authRequired||(!!client.publicKey&&client.authenticated&&pairedCredential(client)));
       if(sessionAllowed&&!client.session)client.session=crypto.randomUUID();
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v1']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
     }
     if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
     client.seen = Date.now();
@@ -179,17 +183,22 @@ function createBridge(options = {}) {
       learningChallenges.set(value,{clientId:id,expiresAt:Date.now()+10000});
       return send(res,{ok:true,challenge:value});
     }
+    let learningBody, learningRaw='';
+    if(req.method==='POST' && req.url.startsWith('/learning/')) {
+      const parsed=await readBody(req); learningBody=parsed.value; learningRaw=parsed.raw;
+    }
     if(req.url.startsWith('/learning/')) {
       const challenge=typeof h['x-my-browser-learning-challenge']==='string'?h['x-my-browser-learning-challenge']:'';
       const proof=typeof h['x-my-browser-proof']==='string'?h['x-my-browser-proof']:'';
       const pending=learningChallenges.get(challenge);
-      const payload=challenge+'\\n'+req.method+'\\n'+req.url;
+      const bodyDigest=crypto.createHash('sha256').update(learningRaw).digest('base64url');
+      const payload=challenge+'\\n'+req.method+'\\n'+req.url+'\\n'+bodyDigest;
       const valid=pending?.clientId===id&&pending.expiresAt>Date.now()&&!!client.publicKey&&client.authenticated&&pairedCredential(client)&&normalizePublicKey(h['x-my-browser-key'])===client.publicKey&&verifyProof(client.publicKey,payload,proof);
       if(!valid)return send(res,failure('PAIRING_REQUIRED','Reconnect the paired browser extension before starting learning.'),403);
       learningChallenges.delete(challenge);
     }
     if (req.method === 'POST' && req.url === '/learning/start') {
-      const b=await body(req);
+      const b=learningBody;
       if(typeof b.id!=='string'||!/^[a-f0-9-]{36}$/.test(b.id))return send(res,failure('INVALID_ID','Invalid request.'),400);
       for(const [key,item] of learning)if(Date.now()>item.expiresAt)learning.delete(key);
       const previous=learning.get(b.id);
@@ -209,7 +218,7 @@ function createBridge(options = {}) {
       return send(res,{ok:true,id:b.id});
     }
     if(req.method==='POST' && ['/learning/result','/learning/cancel'].includes(req.url)) {
-      const b=await body(req),item=learning.get(b.id);
+      const b=learningBody,item=learning.get(b.id);
       if(!item || item.clientId!==id)return send(res,failure('REQUEST_EXPIRED','Request expired. Check the page before trying again.'),404);
       if(req.url==='/learning/cancel'){learning.delete(b.id);return send(res,{ok:true});}
       const gate=item.payload.source.url?P.check(policy,'text',item.payload.source.url):{ok:true};

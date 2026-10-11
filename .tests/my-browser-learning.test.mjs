@@ -82,12 +82,19 @@ test('learning requests are authenticated, deduplicated, cancellable and revoked
   const signed=async(path,body,extra={})=>{
     const challenge=await request('/learning/challenge');
     const method=body===undefined?'GET':'POST';
-    const proof=Buffer.from(await baseHeaders.__sign(challenge.challenge+'\\n'+method+'\\n'+path)).toString('base64url');
+    const serialized=body===undefined?'':JSON.stringify(body);
+    const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(serialized))).toString('base64url');
+    const proof=Buffer.from(await baseHeaders.__sign(challenge.challenge+'\\n'+method+'\\n'+path+'\\n'+digest)).toString('base64url');
     return request(path,body,{...extra,'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof});
   };
   // A copied client id/session is insufficient; the request must be signed by the paired key.
   assert.equal((await request('/learning/start',job)).status,403);
   assert.equal((await signed('/learning/start',job)).ok,true);await signed('/learning/start',job);assert.equal(notices.length,1);
+  const bodyChallenge=await request('/learning/challenge');
+  const body= {id:crypto.randomUUID(),request:{op:'config'}};
+  const bodyDigest=Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(body)))).toString('base64url');
+  const bodyProof=Buffer.from(await baseHeaders.__sign(bodyChallenge.challenge+'\\nPOST\\n/learning/start\\n'+bodyDigest)).toString('base64url');
+  assert.equal((await request('/learning/start',{...body,request:{op:'config',text:'tampered'}},{'X-My-Browser-Learning-Challenge':bodyChallenge.challenge,'X-My-Browser-Proof':bodyProof})).status,403);
   assert.equal((await bridge.request('learningActive',{id:job.id})).active,true);
   await bridge.request('learningProgress',{id:job.id,progress:{stage:'model',attempt:2,prompt:'must not escape'}});
   const progress=(await signed('/learning/result',{id:job.id})).progress;
@@ -271,7 +278,7 @@ test('completed bridge results do not occupy execution slots; evicted receipts n
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':client,'X-My-Browser-Version':version};
  const request=async(path,body,extra={})=>{const r=await fetch(`http://127.0.0.1:${port}${path}`,{method:body?'POST':'GET',headers:{...headers,...(session?{'X-My-Browser-Session':session}:{}),...extra},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,...await r.json()};};
  session=(await authenticate(bridge,port,headers)).session;
- const signed=async(path,body)=>{const challenge=await request('/learning/challenge');const method=body===undefined?'GET':'POST';const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\n'+method+'\\n'+path)).toString('base64url');return request(path,body,{'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof});};
+ const signed=async(path,body)=>{const challenge=await request('/learning/challenge');const method=body===undefined?'GET':'POST';const serialized=body===undefined?'':JSON.stringify(body);const digest=Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(serialized))).toString('base64url');const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\n'+method+'\\n'+path+'\\n'+digest)).toString('base64url');return request(path,body,{'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof});};
  let first,last;
  for(let n=0;n<70;n++){
    const job={id:crypto.randomUUID(),request:{op:'config'}};first ||=job;last=job;
@@ -293,7 +300,8 @@ test('bridge keeps a slow prefetched subtitle request active for the shared requ
  const health=await authenticate(bridge,port,headers);headers['X-My-Browser-Session']=health.session;
  const id=crypto.randomUUID(),request={op:'subtitles',editorial:true,words:[{text:'Hello.',start:0,end:1}]};
  const challenge=await (await fetch(`http://127.0.0.1:${port}/learning/challenge`,{headers})).json();
- const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\nPOST\\n/learning/start')).toString('base64url');
+ const bodyDigest=Buffer.from(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({id,request})))).toString('base64url');
+ const proof=Buffer.from(await headers.__sign(challenge.challenge+'\\nPOST\\n/learning/start\\n'+bodyDigest)).toString('base64url');
  assert.equal((await(await fetch(`http://127.0.0.1:${port}/learning/start`,{method:'POST',headers:{...headers,'X-My-Browser-Learning-Challenge':challenge.challenge,'X-My-Browser-Proof':proof},body:JSON.stringify({id,request})})).json()).ok,true);
  const realNow=Date.now,started=realNow();
  try{
