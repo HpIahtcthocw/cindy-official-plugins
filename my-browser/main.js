@@ -34,9 +34,19 @@ function sync() {
   return serialize(async () => {
     const {cfg,policy} = await load();
     const paired = await node('setTrustedClients',{clients:cfg.pairedClients || []});
-    if (!paired?.ok) throw new Error('Cannot synchronize paired browsers.');
+    if (!paired?.ok) {
+      const error = new Error(paired.message || 'Cannot synchronize paired browsers.');
+      error.code = paired.error || 'SETTINGS_ERROR';
+      error.execution = paired.execution || 'not_executed';
+      throw error;
+    }
     const r = await node('setPolicy',{policy});
-    if (!r?.ok && !(r?.error === 'REVOCATION_UNCONFIRMED' && r.applied === true)) throw new Error(r?.message || 'Cannot apply site permissions. Re-enable the plugin.');
+    if (!r?.ok && !(r?.error === 'REVOCATION_UNCONFIRMED' && r.applied === true)) {
+      const error = new Error(r?.message || 'Cannot apply site permissions. Re-enable the plugin.');
+      error.code = r?.error || 'SETTINGS_ERROR';
+      error.execution = r?.execution || 'not_executed';
+      throw error;
+    }
     return policy;
   });
 }
@@ -148,7 +158,7 @@ channel.onmessage = async ev => {
       return node('setTrustedClients',{clients:pairedClients});
     });
     else { await sync(); result = {...await node('status'),installation:await node('installation')}; }
-  } catch (e) { result = fail('SETTINGS_ERROR',e.message || 'Reload plugin settings.'); }
+  } catch (e) { result = fail(e?.code || 'SETTINGS_ERROR',e.message || 'Reload plugin settings.',e?.execution || 'not_executed'); }
   channel.postMessage({type:'response',id:m.id,result});
 };
 
