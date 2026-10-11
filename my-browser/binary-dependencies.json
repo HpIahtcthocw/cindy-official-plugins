@@ -20,80 +20,12 @@
           ],
           "files": [
             {
-              "source": "package/cmaps/78-EUC-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-EUC-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/78-EUC-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-EUC-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/78-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/78-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-RKSJ-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/78-RKSJ-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/78-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/78-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/78ms-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/78ms-RKSJ-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/78ms-RKSJ-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/78ms-RKSJ-V.bcmap"
-            },
-            {
               "source": "package/cmaps/83pv-RKSJ-H.bcmap",
               "target": "vendor/pdfjs/cmaps/83pv-RKSJ-H.bcmap"
             },
             {
-              "source": "package/cmaps/90ms-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/90ms-RKSJ-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/90ms-RKSJ-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/90ms-RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/90msp-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/90msp-RKSJ-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/90msp-RKSJ-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/90msp-RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/90pv-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/90pv-RKSJ-H.bcmap"
-            },
-            {
               "source": "package/cmaps/90pv-RKSJ-V.bcmap",
               "target": "vendor/pdfjs/cmaps/90pv-RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/Add-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/Add-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/Add-RKSJ-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/Add-RKSJ-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/Add-RKSJ-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/Add-RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/Add-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/Add-V.bcmap"
             },
             {
               "source": "package/cmaps/Adobe-CNS1-0.bcmap",
@@ -521,24 +453,12 @@
               "target": "vendor/pdfjs/cmaps/Katakana.bcmap"
             },
             {
-              "source": "package/cmaps/NWP-H.bcmap",
-              "target": "vendor/pdfjs/cmaps/NWP-H.bcmap"
-            },
-            {
-              "source": "package/cmaps/NWP-V.bcmap",
-              "target": "vendor/pdfjs/cmaps/NWP-V.bcmap"
-            },
-            {
               "source": "package/cmaps/RKSJ-H.bcmap",
               "target": "vendor/pdfjs/cmaps/RKSJ-H.bcmap"
             },
             {
               "source": "package/cmaps/RKSJ-V.bcmap",
               "target": "vendor/pdfjs/cmaps/RKSJ-V.bcmap"
-            },
-            {
-              "source": "package/cmaps/Roman.bcmap",
-              "target": "vendor/pdfjs/cmaps/Roman.bcmap"
             },
             {
               "source": "package/cmaps/UniCNS-UCS2-H.bcmap",
@@ -761,10 +681,6 @@
             {
               "source": "package/cmaps/V.bcmap",
               "target": "vendor/pdfjs/cmaps/V.bcmap"
-            },
-            {
-              "source": "package/cmaps/WP-Symbol.bcmap",
-              "target": "vendor/pdfjs/cmaps/WP-Symbol.bcmap"
             },
             {
               "source": "package/standard_fonts/FoxitDingbats.pfb",
