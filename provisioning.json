@@ -4,6 +4,9 @@
     "my-browser": {
       "audience": { "emails": [] }
     },
+    "cindy-contacts": {
+      "audience": { "emails": [] }
+    },
     "cindy-art": {
       "audience": "all"
     },
