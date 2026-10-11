@@ -80,12 +80,17 @@
     const link=el('a',t.open);link.href='cindy://focus';body.append(link);
   }
   function onPreferencesChanged(changes,area){
-    if(area!=='local'||!changes?.cindyReadingPreferences?.newValue)return;
-    const stored=changes.cindyReadingPreferences.newValue;
+    const change=changes?.cindyReadingPreferences;
+    if(area!=='local'||!change?.newValue)return;
+    const stored=change.newValue,previous=change.oldValue||{};
+    const videoWasEnabled=previous.autoVideo!==false,videoIsEnabled=stored.autoVideo!==false;
+    const siteWasEnabled=previous.autoSites?.[location.origin]===true,siteIsEnabled=stored.autoSites?.[location.origin]===true;
     prefs.autoVideo=stored.autoVideo!==false;
     prefs.autoSites=stored.autoSites&&typeof stored.autoSites==='object'?stored.autoSites:{};
-    if(prefs.autoVideo){nextAutoAttempt=0;if(!videoSession)autoOpen();}
-    else nextAutoAttempt=Date.now()+5000;
+    const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
+    const relevantEnable=youtube?!videoWasEnabled&&videoIsEnabled:!siteWasEnabled&&siteIsEnabled;
+    if(relevantEnable){nextAutoAttempt=0;if(!videoSession)autoOpen();}
+    else if(!videoIsEnabled)nextAutoAttempt=Date.now()+5000;
   }
   api.storage?.onChanged?.addListener(onPreferencesChanged);
   function selection(){
@@ -399,6 +404,7 @@
   async function autoOpen(){
     if(!runtimeReady()||autoOpening||videoSession)return;
     const youtube=/(^|\.)youtube\.com$/.test(location.hostname)&&!!document.querySelector('video');
+    if(!youtube&&(translated||translations.size))return;
     if(document.querySelector('video,audio'))ensureVideoEntry();
     let stored;
     try{stored=(await extensionCall(()=>api.storage.local.get('cindyReadingPreferences'))).cindyReadingPreferences||{};}catch{return;}

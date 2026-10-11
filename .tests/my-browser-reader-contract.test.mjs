@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 
 const source=await fs.readFile(new URL('../my-browser/extension/library.js',import.meta.url),'utf8');
 const content=await fs.readFile(new URL('../my-browser/extension/content.js',import.meta.url),'utf8');
+const pdf=await fs.readFile(new URL('../my-browser/extension/reader-pdf.js',import.meta.url),'utf8');
 
 test('text reader bounds total translation work before sending model requests',()=>{
   assert.match(source,/MAX_TEXT_TRANSLATION_PARTS=100/);
@@ -13,6 +14,15 @@ test('text reader bounds total translation work before sending model requests',(
 
 test('content script listens for cross-tab preference changes',()=>{
   assert.match(content,/storage\?\.onChanged\?\.addListener\(onPreferencesChanged\)/);
-  assert.match(content,/if\(prefs\.autoVideo\)\{nextAutoAttempt=0;if\(!videoSession\)autoOpen\(\);\}/);
+  assert.match(content,/const videoWasEnabled=previous\.autoVideo!==false,videoIsEnabled=stored\.autoVideo!==false/);
+  assert.match(content,/const relevantEnable=youtube\?!videoWasEnabled&&videoIsEnabled:!siteWasEnabled&&siteIsEnabled/);
+  assert.match(content,/if\(relevantEnable\)\{nextAutoAttempt=0;if\(!videoSession\)autoOpen\(\);\}/);
+  assert.match(content,/if\(!youtube&&\(translated\|\|translations\.size\)\)return;/);
   assert.match(content,/removeListener\(onPreferencesChanged\)/);
+});
+
+test('PDF reader bounds page translation before sending model requests',()=>{
+  assert.match(pdf,/MAX_TRANSLATION_BATCHES=20/);
+  assert.match(pdf,/MAX_TRANSLATION_CHARS=200000/);
+  assert.match(pdf,/batches\.length>MAX_TRANSLATION_BATCHES\|\|totalCharacters>MAX_TRANSLATION_CHARS\)throw Error\('IMPORT_TOO_LARGE'\)/);
 });

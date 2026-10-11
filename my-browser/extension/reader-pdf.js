@@ -1,7 +1,7 @@
 import {getDocument,GlobalWorkerOptions} from './vendor/pdfjs/pdf.mjs';
 import {createOCR,ocrLanguages} from './ocr.js';
 import {PdfBinaryDataFactory} from './pdf-cmap-bundle.js';
-const MAX_TEXT_PART=1000,MAX_BATCH_ITEMS=12,MAX_BATCH_CHARS=20000;
+const MAX_TEXT_PART=1000,MAX_BATCH_ITEMS=12,MAX_BATCH_CHARS=20000,MAX_TRANSLATION_BATCHES=20,MAX_TRANSLATION_CHARS=200000;
 function boundedParts(value,max=MAX_TEXT_PART){const parts=[];for(let start=0;start<value.length;start+=max)parts.push(value.slice(start,start+max));return parts;}
 function translationBatches(parts){const batches=[];let batch=[],characters=0;for(const part of parts){if(batch.length&&(batch.length>=MAX_BATCH_ITEMS||characters+part.length>MAX_BATCH_CHARS)){batches.push(batch);batch=[];characters=0;}batch.push(part);characters+=part.length;}if(batch.length)batches.push(batch);return batches;}
 GlobalWorkerOptions.workerSrc=new URL('./vendor/pdfjs/pdf.worker.mjs',import.meta.url).href;
@@ -40,7 +40,7 @@ export async function openPDF({file,container,call,target,t,report}) {
       const result=await ocr.recognize(input,language.value);if(g!==generation)return;translationRevision++;texts=result.match(/[\s\S]{1,1000}/g)||[];text.replaceChildren(el('p',result||t.ocrEmpty));progress.textContent='';
     }finally{ocrBusy=false;}
   }
-  async function translate(){const g=generation,revision=++translationRevision,textParts=[...texts],language=target();text.replaceChildren();for(const batch of translationBatches(textParts)){if(g!==generation||revision!==translationRevision)return;const r=await call({op:'translate',texts:batch,target:language});if(g!==generation||revision!==translationRevision)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
+  async function translate(){const g=generation,revision=++translationRevision,textParts=[...texts],batches=translationBatches(textParts),totalCharacters=textParts.reduce((sum,part)=>sum+part.length,0),language=target();if(batches.length>MAX_TRANSLATION_BATCHES||totalCharacters>MAX_TRANSLATION_CHARS)throw Error('IMPORT_TOO_LARGE');text.replaceChildren();for(const batch of batches){if(g!==generation||revision!==translationRevision)return;const r=await call({op:'translate',texts:batch,target:language});if(g!==generation||revision!==translationRevision)return;batch.forEach((original,j)=>{const section=el('section');section.className='card stack';section.append(el('p',original),el('p',r.translations[j]));text.append(section);});}}
   try{await page();}catch(e){ocr.close();await task.destroy();throw e;}
   return ()=>{generation++;renderTask?.cancel();ocr.close();task.destroy();};
 }
