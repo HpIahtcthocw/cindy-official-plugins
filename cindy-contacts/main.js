@@ -1234,7 +1234,7 @@ function automationPrompt(profile) {
   const p = PROFILES[profile] || PROFILES.colleagues;
   return [
     '整理我的通讯录（cindy-contacts 插件），做法见插件手册「自动维护」一节：',
-    '1. 调用 ghost_call({ ghost_id: "cindy-contacts", tool: "maintenance", args: { action: "begin" } })，按返回的时间段（segments）和来源说明（sources）逐段查找。',
+    '1. 调用 ghost_call({ ghost_id: "cindy-contacts", tool: "maintenance", args: { action: "begin" } })，先按 first_step 检查并报告来源，再按时间段（segments）和来源说明（sources）逐段查找。',
     '2. 每个来源只拉这段时间里的新内容；与我真实往来的人，用 record 记下每条往来（ref 填来源 id，重复的会自动跳过）。',
     '3. 有新往来的人：先 get，再用 save 更新 summary、narrative、latest（一句话说这次的新动静）、facts，并用 open_loops / close_loops 维护还没完的事。值得记的真人没有档案就新建；明显是同一个人的两份档案直接 merge 并写 reason。',
     `4. 本次最多改 ${p.maxChanges} 个人，其余留到下次。`,
@@ -1317,6 +1317,9 @@ async function maintenanceBegin(input) {
         ? `只查与「${contact.name}」有关的往来：用上面的身份（邮箱、平台账号）和名字去各来源搜索这段时间。`
         : p.guidance) + ' 每条往来用 record 记下（ref 填来源 id）；有新往来的人再用 save 改写 summary、narrative、latest、facts 和还没完的事。',
     stats: await stats(),
+    first_step:
+      '先逐个确认 sources 里的来源能不能用（用 ghost_list / ghost_info 看对应插件是否已安装、已连接账号；Cindy 对话看 cindy_helper 历史工具是否可用），' +
+      '再调用 maintenance，action 为 "sources"，sources_status 写每个来源的 status：ok / missing（没装）/ unauthorized（没连接或没授权）/ unavailable（这个任务里用不了）/ error，note 写一句原因。',
     manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
   };
 }
@@ -1368,13 +1371,41 @@ async function maintenanceEnd(input) {
   return { recorded: true, scope: record.scope, checkpoint };
 }
 
+const SOURCE_STATES = new Set(['ok', 'missing', 'unauthorized', 'unavailable', 'error', 'skipped']);
+
+/** 整理开始时 AI 先逐个确认来源能不能用，报回来给页面显示（插件自己看不到装了哪些插件）。 */
+async function reportSources(list) {
+  const items = [];
+  for (const x of Array.isArray(list) ? list.slice(0, 10) : []) {
+    const source = str(x && x.source);
+    if (!SOURCES.includes(source)) continue;
+    items.push({ source, status: SOURCE_STATES.has(str(x.status)) ? str(x.status) : 'error', note: str(x.note).slice(0, 160) });
+  }
+  if (!items.length) throw fail('INVALID_PARAMS', 'sources_status is required');
+  const prev = (await getMeta('sources_status')) || { items: [] };
+  const merged = [...items, ...prev.items.filter((p) => !items.some((i) => i.source === p.source))];
+  await batch([setMetaStmt('sources_status', { at: nowIso(), items: merged })]);
+  const usable = items.filter((i) => i.status === 'ok').map((i) => i.source);
+  return {
+    recorded: items.length,
+    usable,
+    next: usable.length
+      ? '按 segments 逐段读这些可用的来源。'
+      : '没有可用的来源：不要继续查找，直接调用 maintenance end（带 run_id），note 里写清每个来源为什么不能用。',
+  };
+}
+
 async function maintenance(input) {
+  if (input.action === 'sources') return reportSources(input.sourcesStatus);
   if (input.action === 'begin') {
     maybeAutoSyncMac();
     return maintenanceBegin(input);
   }
-  if (input.action === 'end') return maintenanceEnd(input);
-  throw fail('INVALID_PARAMS', 'action must be begin or end');
+  if (input.action === 'end') {
+    if (Array.isArray(input.sourcesStatus) && input.sourcesStatus.length) await reportSources(input.sourcesStatus);
+    return maintenanceEnd(input);
+  }
+  throw fail('INVALID_PARAMS', 'action must be begin, sources or end');
 }
 
 /** 批量建档/更新，单次最多 100 条；逐条返回结果，单条失败不影响其它条。 */
@@ -1754,14 +1785,22 @@ async function taskFor(key, title, fresh) {
  */
 async function ensureAutoReview(key, record, view) {
   const mode = String(view.permissionMode || '');
-  if (mode === 'auto' || record.autoAsked || typeof cindy.tasks.requestWriteAccess !== 'function') return view;
+  if (mode === 'auto') {
+    const known = await getMeta('auto_access');
+    if (!known || !known.granted) await batch([setMetaStmt('auto_access', { granted: true, at: nowIso() })]);
+    return view;
+  }
+  if (record.autoAsked || typeof cindy.tasks.requestWriteAccess !== 'function') return view;
+  let granted = false;
   try {
-    await cindy.tasks.requestWriteAccess({ taskId: view.taskId, mode: 'auto' });
+    const r = await cindy.tasks.requestWriteAccess({ taskId: view.taskId, mode: 'auto' });
+    granted = !!(r && (r.granted || (r.task && r.task.permissionMode === 'auto')));
   } catch (e) {
     // 任务正忙、宿主没准备好时还没问过用户，下次再问；其它情况（拒绝、不支持）不再打扰。
     if (e && (e.code === 'TASK_BUSY' || e.code === 'HOST_NOT_READY')) return view;
   }
-  await batch([setMetaStmt(`task:${key}`, { ...record, autoAsked: true })]);
+  // 用户没同意时页面要说清楚：整理会每步确认，以及去哪里改。
+  await batch([setMetaStmt(`task:${key}`, { ...record, autoAsked: true }), setMetaStmt('auto_access', { granted, at: nowIso() })]);
   try {
     const t = await cindy.tasks.get({ taskId: view.taskId });
     if (t && t.revision !== undefined) return { ...view, revision: t.revision, permissionMode: t.permissionMode };
@@ -1807,6 +1846,21 @@ function watchRun(entry) {
       entry.reply = '';
     }
     entry.status = status;
+    if (entry.key === 'maintain' || entry.purpose === 'backfill') {
+      await serial(async () => {
+        const m = (await getMeta('maintenance')) || {};
+        const ended = (m.runs || []).some((r) => r.at >= entry.sentAt);
+        await batch([
+          setMetaStmt('last_tidy', {
+            at: nowIso(),
+            purpose: entry.purpose || '',
+            contactId: entry.contactId || '',
+            status: status === 'done' && !ended ? 'incomplete' : status,
+            reply: entry.reply.slice(0, 600),
+          }),
+        ]);
+      }).catch(() => {});
+    }
     if (entry.contactId && entry.question) {
       await serial(() =>
         pushQa(entry.contactId, { key: `${entry.key}@${entry.sentAt}`, q: entry.question, a: entry.reply, at: entry.sentAt, via: 'task', status, taskId: entry.taskId }),
@@ -1893,10 +1947,11 @@ async function tidy(input) {
   }
   const text = [
     scope === 'recent' ? '整理我的通讯录：把最近的往来整理进去。' : `回补我的通讯录：往前补 ${months} 个月的往来。`,
-    `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "${scope}"${scope === 'backfill' ? `, months: ${months}` : ''} } })。`,
+    `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "${scope}"${scope === 'backfill' ? `, months: ${months}` : ''} } })，先按返回的 first_step 检查并报告来源。`,
     '2. 按返回的时间段（segments，新的在前）和来源说明逐段查找；与我真实往来的人，用 record 记下每条往来。',
     '3. 有新往来的人：get 之后用 save 更新 summary、narrative、latest、facts 和还没完的事；值得记的真人没有档案就新建，明显重复的直接 merge 并写 reason。先写来往最多的人。',
-    '4. 最后调用 maintenance，action 为 "end"，带上 run_id 和数量。最终回复一句话说整理了几个人。',
+    '4. 最后调用 maintenance，action 为 "end"，带上 run_id 和数量。',
+    '最终回复只写两行：第一行「整理了 N 个人」（或为什么没整理成）；第二行写哪些来源没读到、为什么，都读到了就不写。',
   ].join('\n');
   return sendToTask('maintain', '通讯录 · 整理', text, { purpose: scope });
 }
@@ -1934,6 +1989,9 @@ async function viewState() {
     maintenance: state.ready ? await getMeta('maintenance') : null,
     automationRequested: state.ready ? await getMeta('automation_requested') : null,
     coverage: state.ready ? await getMeta('coverage') : null,
+    sourcesStatus: state.ready ? await getMeta('sources_status') : null,
+    autoAccess: state.ready ? await getMeta('auto_access') : null,
+    lastTidy: state.ready ? await getMeta('last_tidy') : null,
     view: state.ready ? await getMeta('view') : null,
     running: [...running.values()].filter((r) => r.status === 'running'),
   };
@@ -2112,6 +2170,7 @@ const TOOLS = {
       contactId: a.contact_id,
       months: a.months,
       runId: a.run_id,
+      sourcesStatus: a.sources_status,
       checkpoint: a.checkpoint,
       scanned: a.scanned,
       created: a.created,

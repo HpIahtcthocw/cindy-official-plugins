@@ -17,7 +17,8 @@
       days: '第一次读最近', daysOpt: (d) => `${d} 天`,
       daysHint: '只影响第一次整理。想要更早的，可以在人物页「往来」里往前补。',
       sources: '读哪些来源',
-      src: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 等消息', cindy: 'Cindy 对话', github: 'GitHub' },
+      src: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 等消息', cindy: 'Cindy 对话（只有每天自动整理能读）', github: 'GitHub' },
+      state: { ok: '能读', missing: '没装插件', unauthorized: '没连接账号', unavailable: '这次用不了', error: '出错了', skipped: '跳过' },
       sourcesHint: '只用你已经装好并授权过的插件，没装的会自动跳过。',
       profile: '通讯录主要是', colleagues: '同事和朋友', clients: '很多客户',
       profileHint: { colleagues: '每天整理一次。', clients: '每 6 小时整理一次，客户按公司归类，记下需求、报价和跟进约定。改了之后要重新打开自动化页保存一次才会换频率。' },
@@ -35,7 +36,8 @@
       days: 'First run reads', daysOpt: (d) => `${d} days`,
       daysHint: 'Only affects the first tidy-up. Go further back from a person’s Exchanges tab.',
       sources: 'Sources',
-      src: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack chats', cindy: 'Cindy chats', github: 'GitHub' },
+      src: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack chats', cindy: 'Cindy chats (daily tidy-up only)', github: 'GitHub' },
+      state: { ok: 'readable', missing: 'not installed', unauthorized: 'not connected', unavailable: 'not available', error: 'error', skipped: 'skipped' },
       sourcesHint: 'Only plugins you already installed and allowed; missing ones are skipped.',
       profile: 'Contacts are mostly', colleagues: 'Colleagues and friends', clients: 'Many clients',
       profileHint: { colleagues: 'Tidies up once a day.', clients: 'Tidies up every 6 hours, groups clients by company and notes needs, quotes and follow-ups. Save the automation again to change its schedule.' },
@@ -119,7 +121,8 @@
     h += `<div class="item"><div class="label">${esc(T.days)}</div><div class="body">${seg('initialDays', [7, 14, 30], T.daysOpt)}<p class="hint">${esc(T.daysHint)}</p></div></div>`;
     h += `<div class="item"><div class="label">${esc(T.sources)}</div><div class="body"><div class="checks">`;
     for (const k of ['mail', 'calendar', 'im', 'cindy', 'github']) {
-      h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}</label>`;
+      const seen = ((m.sourcesStatus && m.sourcesStatus.items) || []).find((x) => x.source === k);
+      h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}${seen && st.sources && st.sources[k] ? `<span class="st${seen.status === 'ok' ? '' : ' bad'}">${esc(T.state[seen.status] || seen.status)}</span>` : ''}</label>`;
     }
     h += `</div><p class="hint">${esc(T.sourcesHint)}</p></div></div>`;
     h += `<div class="item"><div class="label">${esc(T.profile)}</div><div class="body">${seg('profile', ['colleagues', 'clients'], (v) => T[v])}<p class="hint">${esc(T.profileHint[st.profile] || '')}</p></div></div>`;

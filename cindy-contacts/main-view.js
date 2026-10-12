@@ -66,6 +66,21 @@
       macSync: '每天和 macOS 通讯录对一次账（不用 AI）', macSyncHint: '只在你导入过一次后生效；只读，不改 Mac 通讯录',
       openAutomation: '每天自动整理：去自动化页开启', automationOpened: '已打开 Cindy 的自动化页：选好模型后点保存，每天自动整理就开始了。',
       automationAgain: '重新打开自动化页', stopHint: '想停用或改频率：在 Cindy 的自动化页暂停或删除「整理通讯录」。',
+      srcName: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 消息', cindy: 'Cindy 对话', github: 'GitHub' },
+      srcState: { ok: '能读', missing: '没装插件', unauthorized: '没连接账号', unavailable: '这次用不了', error: '出错了', skipped: '跳过' },
+      srcTitle: '上次检查的来源',
+      srcFix: '没装或没连接的：在 Cindy 侧边栏「插件」里安装并连接账号，下次整理就能读到。',
+      srcFirst: '第一次整理会先检查能读到哪些来源（邮件、日历、飞书等插件是否已安装、已连接），结果显示在这里。',
+      before: '开始前要知道',
+      beforeItems: (d) => [
+        'Cindy 会请你确认一次「允许整理任务自动执行」，同意后整理时不再逐步问你。',
+        '邮件、飞书等插件第一次被读取时，可能还要各确认一次。',
+        `第一次读最近 ${d} 天，大约要几分钟，会用到 AI 额度；整理好一个人，左边就出现一个。`,
+      ],
+      accessDenied: '你没有允许整理任务自动执行，整理时每一步都会请你确认。想改：在 Cindy 侧边栏「插件」→「通讯录」详情页的「任务设置」里，把动手权限改成「自动审查」。',
+      lastOk: (w) => `上次整理（${w}）`, lastFail: '上次整理没有完成', lastIncomplete: '上次整理没有走完：AI 没有记下结果，可以再整理一次。',
+      stale: '每天自动整理好像没在跑：已经两天多没有整理了。去自动化页看看「整理通讯录」是不是没保存或被暂停了。', openAutomationShort: '打开自动化页',
+      footFail: '上次整理没有完成', footStale: '自动整理好像没在跑',
       runsTitle: '最近几次', runLine: (r) => `${r.scope === 'contact' ? '单人回补' : r.scope === 'backfill' ? '往前补' : '整理'} · 新增 ${r.created} · 更新 ${r.updated}`,
       noSchedule: '当前 Cindy 版本还不支持由插件发起自动化。',
     },
@@ -129,6 +144,21 @@
       macSync: 'Reconcile with macOS Contacts daily (no AI)', macSyncHint: 'Starts after your first import; read-only',
       openAutomation: 'Tidy up daily: open Automations', automationOpened: 'Cindy’s Automations page is open: pick a model and save to start daily tidy-ups.',
       automationAgain: 'Open Automations again', stopHint: 'To pause or change it, pause or delete “整理通讯录” on Cindy’s Automations page.',
+      srcName: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack', cindy: 'Cindy chats', github: 'GitHub' },
+      srcState: { ok: 'readable', missing: 'plugin not installed', unauthorized: 'account not connected', unavailable: 'not available here', error: 'error', skipped: 'skipped' },
+      srcTitle: 'Sources at the last check',
+      srcFix: 'For missing or unconnected ones, install and connect them under Plugins in the Cindy sidebar; the next tidy-up will read them.',
+      srcFirst: 'The first tidy-up checks which sources can be read (whether mail, calendar and chat plugins are installed and connected) and shows the result here.',
+      before: 'Before you start',
+      beforeItems: (d) => [
+        'Cindy asks you once to let tidy-up tasks run on their own; after that it stops asking at every step.',
+        'Mail and chat plugins may each ask once the first time they are read.',
+        `The first run reads the last ${d} days, takes a few minutes and uses AI quota; people appear on the left as they are written up.`,
+      ],
+      accessDenied: 'You did not let tidy-up tasks run on their own, so every step asks you. To change it, set the permission to Auto-review in Task settings on this plugin’s page under Plugins.',
+      lastOk: (w) => `Last tidy-up (${w})`, lastFail: 'The last tidy-up did not finish', lastIncomplete: 'The last tidy-up stopped early without recording a result; run it again.',
+      stale: 'The daily tidy-up seems to have stopped: nothing for over two days. Check whether “整理通讯录” was saved or paused on the Automations page.', openAutomationShort: 'Open Automations',
+      footFail: 'Last tidy-up did not finish', footStale: 'Daily tidy-up seems stopped',
       runsTitle: 'Recent runs', runLine: (r) => `${r.scope === 'contact' ? 'One person' : r.scope === 'backfill' ? 'Backfill' : 'Tidy'} · ${r.created} new · ${r.updated} updated`,
       noSchedule: 'This Cindy version cannot start automations from plugins yet.',
     },
@@ -383,11 +413,50 @@
 
   const tidyRunning = () => [...S.tasks.values()].some((t) => t.key === 'maintain' && t.status === 'running');
 
+  /** 每天自动整理请求过、但两天多没有任何整理：多半没保存或被暂停了。 */
+  function tidyStale() {
+    const req = S.meta?.automationRequested;
+    if (!req || !req.at) return false;
+    const last = S.meta?.maintenance?.lastRunAt || '';
+    const ref = last && last > req.at ? last : req.at;
+    return Date.now() - Date.parse(ref) > 50 * 3600 * 1000;
+  }
+
+  function statusBlock() {
+    const m = S.meta || {};
+    let h = '';
+    const lt = m.lastTidy;
+    if (lt && !tidyRunning()) {
+      if (lt.status === 'failed') h += `<div class="notice warn"><b>${esc(T.lastFail)}</b>${lt.reply ? `<p>${esc(lt.reply)}</p>` : ''}</div>`;
+      else if (lt.status === 'incomplete') h += `<div class="notice warn"><p>${esc(T.lastIncomplete)}</p>${lt.reply ? `<p class="muted">${esc(lt.reply)}</p>` : ''}</div>`;
+      else if (lt.reply) h += `<div class="notice"><b>${esc(T.lastOk(fmtWhen(lt.at)))}</b><p>${esc(lt.reply)}</p></div>`;
+    }
+    if (m.autoAccess && m.autoAccess.granted === false) h += `<div class="notice warn"><p>${esc(T.accessDenied)}</p></div>`;
+    if (tidyStale()) h += `<div class="notice warn"><p>${esc(T.stale)}</p><button class="pill" data-action="requestAutomation">${esc(T.openAutomationShort)}</button></div>`;
+    const ss = m.sourcesStatus;
+    if (ss && ss.items && ss.items.length) {
+      const enabled = m.settings?.sources || {};
+      const items = ss.items.filter((i) => enabled[i.source] !== false);
+      h += `<div class="srcs-status"><div class="sech">${esc(T.srcTitle)} · ${esc(fmtWhen(ss.at))}</div>`;
+      for (const i of items) {
+        h += `<div class="srow${i.status === 'ok' ? ' ok' : ''}"><span>${esc(T.srcName[i.source] || i.source)}</span><span class="st">${esc(T.srcState[i.status] || i.status)}${i.note && i.status !== 'ok' ? ` · ${esc(i.note)}` : ''}</span></div>`;
+      }
+      if (items.some((i) => i.status === 'missing' || i.status === 'unauthorized')) h += `<p class="small muted">${esc(T.srcFix)}</p>`;
+      h += '</div>';
+    } else {
+      h += `<p class="small muted">${esc(T.srcFirst)}</p>`;
+    }
+    return h;
+  }
+
   function listFooter() {
     if (S.boot !== 'ready' || !S.meta) return '';
     const m = S.meta.maintenance;
     let text;
+    const lt = S.meta.lastTidy;
     if (tidyRunning()) text = `<span class="spin s"></span><span>${esc(T.footRunning)}</span>`;
+    else if (lt && (lt.status === 'failed' || lt.status === 'incomplete') && (!m || !m.lastRunAt || m.lastRunAt < lt.at)) text = `<span class="warnline">${esc(T.footFail)}</span>`;
+    else if (tidyStale()) text = `<span class="warnline">${esc(T.footStale)}</span>`;
     else if (m && m.lastRunAt) text = `<span>${esc(T.footLast(fmtWhen(m.lastRunAt)))}</span>`;
     else text = `<span>${esc(T.footNever)}</span>`;
     return `<button class="lfoot" data-action="auto">${I('spark', 's')}${text}<b>${esc(T.footSettings)}</b></button>`;
@@ -567,13 +636,16 @@
     if (tidyRunning()) {
       h += `<p><span class="spin"></span>${esc(T.helloRunning)}</p>`;
     } else {
-      h += `<p>${esc(T.helloText(days))}</p><div class="acts">`;
+      h += `<p>${esc(T.helloText(days))}</p>`;
+      h += `<div class="before"><div class="sech">${esc(T.before)}</div><ul>${T.beforeItems(days).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+      h += statusBlock();
+      h += '<div class="acts">';
       if (S.meta?.tasks) h += `<button class="pill pri" data-action="tidyRecent">${esc(T.helloStart(days))}</button>`;
       if (S.meta?.schedule) h += `<button class="pill" data-action="requestAutomation">${esc(T.helloDaily)}</button>`;
       h += '</div>';
       h += `<p class="small">${esc(T.helloOther)} ${mac ? `<button class="link" data-action="import">${esc(T.helloMac)}</button> · ` : ''}<button class="link" data-action="new">${esc(T.helloManual)}</button></p>`;
     }
-    h += `<p class="small muted">${esc(T.helloNote)}</p>`;
+    if (tidyRunning()) h += statusBlock();
     if (S.autoOpened) h += `<p class="small">${esc(T.automationOpened)}</p>`;
     if (legacy && (legacy.status === 'error' || legacy.status === 'partial')) {
       h += `<p class="small">${esc(T.legacyFailed(legacy.message || legacy.status))} <button class="link" data-action="retryLegacy">${esc(T.retry)}</button></p>`;
@@ -623,6 +695,8 @@
     if (S.meta?.tasks) {
       h += `<div class="acts row-acts"><button class="pill pri" data-action="tidyRecent"${tidyRunning() ? ' disabled' : ''}>${esc(tidyRunning() ? T.footRunning : T.tidyNow)}</button><button class="pill" data-action="backfillAll"${tidyRunning() ? ' disabled' : ''}>${esc(T.backfillAll(months))}</button></div>`;
     }
+    h += statusBlock();
+    if (!S.meta?.maintenance?.lastRunAt) h += `<div class="before"><div class="sech">${esc(T.before)}</div><ul>${T.beforeItems(S.meta?.settings?.initialDays || 14).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
     h += `<p class="small muted">${esc(T.settingsWhere)}</p>`;
     if (m && m.runs && m.runs.length) {
       h += `<div class="sec"><div class="sech">${esc(T.runsTitle)}</div>`;

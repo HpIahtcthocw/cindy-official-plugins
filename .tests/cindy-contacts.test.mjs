@@ -154,7 +154,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
       },
       requestWriteAccess: async (req) => {
         tasks.access.push(structuredClone(req));
-        return { ok: true };
+        return { granted: tasks.grant !== false };
       },
       getRun: async () => ({ status: tasks.runStatus }),
       readMessages: async () => ({
@@ -472,6 +472,20 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.equal(b1.segments.length, 2, 'split into weeks');
     assert.ok(Date.parse(b1.segments[0].from) > Date.parse(b1.segments[1].from), 'newest first');
     assert.deepEqual(b1.sources.map((x) => x.source), ['mail', 'calendar', 'im', 'cindy']);
+    assert.match(b1.first_step, /sources/);
+    // 先报告来源能不能用，页面据此告诉用户哪些没连
+    const rs = ok(
+      await a.call('maintenance', {
+        action: 'sources',
+        sources_status: [
+          { source: 'mail', status: 'ok' },
+          { source: 'im', status: 'unauthorized', note: '没连接飞书' },
+        ],
+      }),
+    );
+    assert.deepEqual(rs.usable, ['mail']);
+    const st0 = (await a.view('state')).result;
+    assert.equal(st0.sourcesStatus.items.find((x) => x.source === 'im').note, '没连接飞书');
     ok(await a.call('maintenance', { action: 'end', run_id: b1.run_id, scanned: 4, created: 2, updated: 1, note: '新认识两位' }));
     // 同一个 run 不能结束两次
     assert.equal((await a.call('maintenance', { action: 'end', run_id: b1.run_id })).ok, false);
@@ -650,6 +664,7 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.equal(a.tasks.sent.length, 2);
     assert.match(a.tasks.sent[1].text, /scope: "contact"/);
     assert.equal(a.tasks.access.length, 1, 'reused task is not asked again');
+    assert.equal((await a.view('state')).result.autoAccess.granted, true);
 
     // 用户把任务切到完全访问后，插件不能再往里发：新开一个任务继续，并重新请求自动审查
     a.tasks.tooHigh.add('task-1');
@@ -664,6 +679,8 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 3; i++) await new Promise((r) => setTimeout(r, 20));
     const q3 = (await a.view('ask', { contactId: p.id, text: '她是谁' })).result;
     assert.equal(q3.kind, 'task');
+    // 回补跑完却没有调用 end：页面会提示没走完
+    assert.equal((await a.view('state')).result.lastTidy.status, 'incomplete');
 
     // 打开页面：半小时内反复打开不刷新「上次看过」
     const v1 = (await a.view('opened')).result;

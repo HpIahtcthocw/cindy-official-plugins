@@ -31,3 +31,5 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .checks input { width: 15px; height: 15px; margin: 0; accent-color: var(--c-ink); }
 .err { color: var(--error-fg, #d91f37); font-size: 12px; margin: 0; }
 @media (max-width: 520px) { .item { grid-template-columns: 1fr; gap: 6px; } .label { padding-top: 0; } }
+.checks .st { font-size: 11.5px; color: var(--c-text-3); margin-left: 2px; }
+.checks .st.bad { color: var(--error-fg, #d91f37); }

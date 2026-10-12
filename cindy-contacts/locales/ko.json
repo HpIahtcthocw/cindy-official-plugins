@@ -49,7 +49,7 @@
       "description": "최대 100개의 프로필을 한 번에 만들거나 수정합니다. 규칙은 save와 같습니다. 고객 목록, 표, 명함을 가져올 때 사용합니다. 항목별 결과를 반환하며 실패한 항목은 다른 항목에 영향을 주지 않습니다."
     },
     "maintenance": {
-      "description": "기간별 정리의 시작과 마무리. begin은 run_id, 기간, 확인할 소스와 시간별 조회 방법, 상한을 돌려줍니다. scope는 recent(지난 정리부터 지금까지, 처음은 최근 2주), backfill(모두 과거로), contact(한 사람만). 기록 후 run_id와 함께 end를 호출합니다."
+      "description": "기간별 정리의 시작·소스 확인·마무리. begin은 run_id, 기간, 소스와 시간별 조회 방법, first_step, 상한을 돌려줍니다. first_step대로 소스 사용 가능 여부를 확인해 action \"sources\"로 보고하고, 기록 후 run_id와 함께 end를 호출합니다."
     }
   }
 }

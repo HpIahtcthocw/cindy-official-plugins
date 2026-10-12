@@ -753,7 +753,7 @@
     },
     {
       "name": "maintenance",
-      "description": "按时间段整理通讯录的开始与收尾。begin 返回 run_id、时间段（from/to 与切好的 segments）、要查的来源及按时间查询的做法、改动上限和要求；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。查完、记完后调用 end 并带上 run_id。只在整理任务或用户要求整理、回补时使用。",
+      "description": "按时间段整理通讯录的开始、来源检查与收尾。begin 返回 run_id、时间段（from/to 与 segments）、要查的来源及按时间查询的做法、first_step 与改动上限；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。接着按 first_step 确认来源能不能用，用 action \"sources\" 报告；查完、记完后调用 end 并带上 run_id。只在整理任务或用户要求整理、回补时使用。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -761,6 +761,7 @@
             "type": "string",
             "enum": [
               "begin",
+              "sources",
               "end"
             ]
           },
@@ -812,6 +813,45 @@
           "run_id": {
             "type": "string",
             "description": "end 时传：begin 返回的 run_id"
+          },
+          "sources_status": {
+            "type": "array",
+            "description": "sources 时传（end 时也可带）：每个来源能不能用",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "mail",
+                    "calendar",
+                    "im",
+                    "cindy",
+                    "github"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "unauthorized",
+                    "unavailable",
+                    "error",
+                    "skipped"
+                  ]
+                },
+                "note": {
+                  "type": "string",
+                  "description": "一句话原因，如「没装 Gmail 插件」"
+                }
+              },
+              "required": [
+                "source",
+                "status"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
