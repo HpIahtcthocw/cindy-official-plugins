@@ -16,6 +16,7 @@ const globalWorkflow = readFileSync(
   'utf8',
 );
 const prWorkflow = readFileSync(new URL('pr-verify.yml', workflowRoot), 'utf8');
+const guidanceWorkflow = readFileSync(new URL('pr-guidance.yml', workflowRoot), 'utf8');
 
 test('changed-plugin detection uses the merge parents even when event base is stale', (t) => {
   const fixture = mkdtempSync(path.join(os.tmpdir(), 'cindy-plugin-pr-diff-'));
@@ -357,3 +358,232 @@ if (url === 'https://oidc.example.test/token?request=1&audience=cindy-plugin') {
     }
   }
 });
+
+const GUIDANCE_HEAD = 'c'.repeat(40);
+const GUIDANCE_UNSIGNED = 'a'.repeat(40);
+const GUIDANCE_REMEDIATE = 'b'.repeat(40);
+
+function extractGuidanceScript() {
+  const source = guidanceWorkflow.split('        run: |\n')[1];
+  assert.ok(source, 'pr-guidance.yml must contain an executable shell script');
+  return source.split('\n').map((line) => line.replace(/^          /, '')).join('\n');
+}
+
+function signedCommit(sha, message = 'feat: change') {
+  return {
+    sha,
+    parents: [{ sha: '0'.repeat(40) }],
+    author: { login: 'alice', type: 'User' },
+    commit: {
+      message: `${message}\n\nSigned-off-by: Alice <alice@example.test>\n`,
+      author: { name: 'Alice', email: 'alice@example.test' },
+    },
+  };
+}
+
+function runGuidance(t, overrides = {}) {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'cindy-pr-guidance-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const work = path.join(fixture, 'work');
+  const data = path.join(fixture, 'data');
+  const bin = path.join(fixture, 'bin');
+  mkdirSync(work);
+  mkdirSync(data);
+  mkdirSync(bin);
+  const files = {
+    'pull.json': {
+      draft: false,
+      body: '',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_HEAD },
+    },
+    'files.json': [],
+    'tree.json': { tree: [{ path: 'qq-mail/ghost.json' }, { path: 'LICENSE' }] },
+    'commits.json': [signedCommit(GUIDANCE_HEAD)],
+    'check-runs.json': { check_runs: [] },
+    'runs.json': { workflow_runs: [] },
+    'comments.json': [],
+    ...overrides,
+  };
+  for (const [name, value] of Object.entries(files)) {
+    writeFileSync(path.join(data, name), typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  writeFileSync(path.join(bin, 'gh'), `#!/usr/bin/env node
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2).filter((a) => a !== 'api' && a !== '--paginate' && a !== '--silent');
+const fixture = process.env.GUIDANCE_FIXTURE;
+const jqIdx = args.indexOf('--jq');
+let filter = null;
+if (jqIdx >= 0) {
+  filter = args[jqIdx + 1];
+  args.splice(jqIdx, 2);
+}
+const methodIdx = args.indexOf('-X');
+const method = methodIdx >= 0 ? args[methodIdx + 1] : 'GET';
+const bodyIdx = args.indexOf('-F');
+const bodyArg = bodyIdx >= 0 ? args[bodyIdx + 1] : null;
+const endpoint = args.find((a) => typeof a === 'string' && a.startsWith('repos/')) || '';
+if (method === 'PATCH' || method === 'POST') {
+  const dest = path.join(fixture, method === 'PATCH' ? 'patched.md' : 'posted.md');
+  const src = bodyArg && bodyArg.startsWith('body=@') ? bodyArg.slice(6) : null;
+  if (src) fs.copyFileSync(src, dest);
+  else fs.writeFileSync(dest, '');
+  process.exit(0);
+}
+let file = 'pull.json';
+if (endpoint.includes('/files')) file = 'files.json';
+else if (endpoint.includes('check-runs')) file = 'check-runs.json';
+else if (endpoint.includes('/commits')) file = 'commits.json';
+else if (endpoint.includes('/git/trees')) file = 'tree.json';
+else if (endpoint.includes('/actions/runs')) file = 'runs.json';
+else if (endpoint.includes('/comments')) file = 'comments.json';
+const json = fs.readFileSync(path.join(fixture, file), 'utf8');
+if (filter) {
+  process.stdout.write(execFileSync('jq', ['-r', filter], { input: json, encoding: 'utf8' }));
+} else {
+  process.stdout.write(json.endsWith('\\n') ? json : json + '\\n');
+}
+`, { mode: 0o755 });
+  const result = spawnSync('bash', ['-c', extractGuidanceScript()], {
+    cwd: work,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: bin + path.delimiter + process.env.PATH,
+      GH_TOKEN: 'fixture',
+      REPO: 'makecindy/cindy-official-plugins',
+      PR: '161',
+      GUIDANCE_FIXTURE: data,
+      GUIDANCE_RETRY_SLEEP: '0',
+    },
+  });
+  const posted = existsSync(path.join(data, 'posted.md'))
+    ? readFileSync(path.join(data, 'posted.md'), 'utf8')
+    : existsSync(path.join(data, 'patched.md'))
+      ? readFileSync(path.join(data, 'patched.md'), 'utf8')
+      : '';
+  return { result, posted, fixture: data, work };
+}
+
+test('contributor guidance never checks out PR code and refreshes when Verify completes', () => {
+  assert.match(guidanceWorkflow, /^name: PR contributor guidance$/m);
+  assert.match(guidanceWorkflow, /pull_request_target:/);
+  assert.match(guidanceWorkflow, /workflow_run:/);
+  assert.match(guidanceWorkflow, /workflows: \["Verify pull request"\]/);
+  assert.match(guidanceWorkflow, /types: \[requested, completed\]/);
+  assert.doesNotMatch(guidanceWorkflow, /actions\/checkout/);
+  assert.doesNotMatch(guidanceWorkflow, /github\.event\.pull_request\.body/);
+  assert.doesNotMatch(guidanceWorkflow, /id-token: write|secrets\./);
+  assert.match(guidanceWorkflow, /contents: read/);
+  assert.match(guidanceWorkflow, /MUST NEVER check out/);
+  for (const publisher of [cnWorkflow, globalWorkflow]) {
+    assert.doesNotMatch(publisher, /pr-guidance|workflow_run:/);
+  }
+});
+
+test('contributor guidance matches pr-verify gating and recomputes DCO each run', (t) => {
+  const licenseOnly = runGuidance(t, {
+    'files.json': [{ status: 'modified', filename: 'LICENSE' }],
+  });
+  assert.equal(licenseOnly.result.status, 0, licenseOnly.result.stderr || licenseOnly.result.stdout);
+  assert.match(licenseOnly.posted, /Cindy 实机验证\*\* is unchecked/);
+
+  const licenseChecked = runGuidance(t, {
+    'files.json': [{ status: 'modified', filename: 'LICENSE' }],
+    'pull.json': {
+      draft: false,
+      body: '- [x] **Cindy device verification / Cindy 实机验证** — stable 0.1.82',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_HEAD },
+    },
+  });
+  assert.equal(licenseChecked.result.status, 0, licenseChecked.result.stderr);
+  assert.match(licenseChecked.posted, /No missing items detected by this bot/);
+
+  const docsOnly = runGuidance(t, {
+    'files.json': [{ status: 'modified', filename: 'README.md' }],
+  });
+  assert.equal(docsOnly.result.status, 0, docsOnly.result.stderr);
+  assert.doesNotMatch(docsOnly.posted, /Cindy 实机验证\*\* is unchecked/);
+  assert.match(docsOnly.posted, /No missing items detected by this bot/);
+
+  const deletedPlugin = runGuidance(t, {
+    'files.json': [
+      { status: 'removed', filename: 'qq-mail/ghost.json' },
+      { status: 'removed', filename: 'qq-mail/main.js' },
+    ],
+  });
+  assert.equal(deletedPlugin.result.status, 0, deletedPlugin.result.stderr);
+  assert.doesNotMatch(deletedPlugin.posted, /Cindy 实机验证\*\* is unchecked/);
+
+  const unsigned = runGuidance(t, {
+    'commits.json': [{
+      sha: GUIDANCE_UNSIGNED,
+      parents: [{ sha: '0'.repeat(40) }],
+      author: { login: 'alice', type: 'User' },
+      commit: { message: 'feat: unsigned\n', author: { name: 'Alice', email: 'alice@example.test' } },
+    }],
+    'pull.json': {
+      draft: false,
+      body: '',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_UNSIGNED },
+    },
+  });
+  assert.equal(unsigned.result.status, 0, unsigned.result.stderr);
+  assert.match(unsigned.posted, /Commits without DCO sign-off/);
+  assert.match(unsigned.posted, new RegExp(GUIDANCE_UNSIGNED.slice(0, 7)));
+
+  const remediated = runGuidance(t, {
+    'commits.json': [
+      {
+        sha: GUIDANCE_UNSIGNED,
+        parents: [{ sha: '0'.repeat(40) }],
+        author: { login: 'alice', type: 'User' },
+        commit: { message: 'feat: unsigned\n', author: { name: 'Alice', email: 'alice@example.test' } },
+      },
+      {
+        sha: GUIDANCE_REMEDIATE,
+        parents: [{ sha: GUIDANCE_UNSIGNED }],
+        author: { login: 'alice', type: 'User' },
+        commit: {
+          message:
+            `I, Alice <alice@example.test>, hereby add my Signed-off-by to this commit: ${GUIDANCE_UNSIGNED}\n\n`
+            + 'Signed-off-by: Alice <alice@example.test>\n',
+          author: { name: 'Alice', email: 'alice@example.test' },
+        },
+      },
+    ],
+    'pull.json': {
+      draft: false,
+      body: '',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_REMEDIATE },
+    },
+  });
+  assert.equal(remediated.result.status, 0, remediated.result.stderr || remediated.result.stdout);
+  assert.doesNotMatch(remediated.posted, /Commits without DCO sign-off/);
+
+  const waiting = runGuidance(t, {
+    'runs.json': {
+      workflow_runs: [{ name: 'Verify pull request', status: 'waiting', conclusion: null }],
+    },
+  });
+  assert.equal(waiting.result.status, 0, waiting.result.stderr);
+  assert.match(waiting.posted, /waiting for a maintainer to approve/);
+
+  const afterApproval = runGuidance(t, {
+    'runs.json': {
+      workflow_runs: [{ name: 'Verify pull request', status: 'completed', conclusion: 'success' }],
+    },
+  });
+  assert.equal(afterApproval.result.status, 0, afterApproval.result.stderr);
+  assert.doesNotMatch(afterApproval.posted, /waiting for a maintainer to approve/);
+});
+

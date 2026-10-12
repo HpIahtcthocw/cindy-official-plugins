@@ -56,7 +56,10 @@
   fork PR 也能安全自动跑。若你是首次在 GitHub 上贡献的新账号，GitHub 可能要求维护者
   先点一次「Approve and run」，这期间 PR 上会显示等待批准，你无需操作。
 - **PR contributor guidance** 机器人会在 PR 下维护一条评论，列出仍缺的事项（实机验证
-  勾选、缺少 DCO 签名的 commit、CI 是否在等待批准），每次 push 或编辑描述后自动更新。
+  勾选、缺少 DCO 签名的 commit、CI 是否在等待批准）；每次 push、编辑描述，或
+  **Verify pull request** 被请求/完成（含维护者批准等待中的 fork 运行）时都会刷新。
+  每次运行都按当前 commit 列表重算（推送 DCO 补签 commit 即可，不必改写历史），
+  实机验证门禁与 Verify 相同（含根目录 `LICENSE` / `NOTICE` / `TRADEMARKS`）。
   它只读取 PR 元数据，从不执行 PR 中的代码。
 - 只剩「Require Cindy device verification attestation」失败、前面步骤全绿时，代码已通过，
   按 Job Summary 中的步骤完成实机验证并勾选即可；编辑 PR 描述会自动重跑检查。

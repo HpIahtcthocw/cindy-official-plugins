@@ -73,8 +73,13 @@ Record source identity and package hash; green CI alone is not device verificati
   "Approve and run" once; the PR shows it as awaiting approval — nothing for you to do.
 - The **PR contributor guidance** bot keeps one comment on your PR listing what is
   still missing (device-verification checkbox, commits without DCO sign-off, CI
-  awaiting approval) and updates it on every push or description edit. It only reads
-  PR metadata and never executes code from the PR.
+  awaiting approval) and updates it on every push, description edit, or when
+  **Verify pull request** is requested/completes (including after a maintainer
+  approves a waiting fork run). It recomputes from the current PR commits each
+  run (so a DCO remediation commit is enough; you do not need to rewrite history)
+  and uses the same packaged-file gate as Verify (including root `LICENSE` /
+  `NOTICE` / `TRADEMARKS`). It only reads PR metadata and never executes code from
+  the PR.
 - If only "Require Cindy device verification attestation" fails and every earlier
   step is green, your code passed: follow the Job Summary steps, verify on a device,
   and check the box. Editing the PR body re-runs the check.

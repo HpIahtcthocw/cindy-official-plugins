@@ -4,16 +4,21 @@ name: PR contributor guidance
 # is still missing (device verification checkbox, DCO sign-off, pending
 # maintainer approval of fork CI), instead of leaving a bare red X.
 #
-# SECURITY: pull_request_target runs in the base-repo context so it can comment
-# on fork PRs. It therefore MUST NEVER check out, build, install or execute PR
-# code. This job only reads PR metadata through the GitHub API and the event
-# payload; PR-controlled text (body, commit messages) is read as data by jq and
-# never interpolated into a shell command or `${{ }}` expression.
+# SECURITY: pull_request_target and workflow_run both run in the base-repo
+# context so they can comment on fork PRs. They therefore MUST NEVER check out,
+# build, install or execute PR code. This job only reads PR metadata through
+# the GitHub API; PR-controlled text (body, commit messages) is read as data by
+# jq and never interpolated into a shell command or `${{ }}` expression.
 # 安全约束：本工作流不 checkout、不执行任何 PR 代码，只读取 PR 元数据并评论。
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
     branches: [main]
+  # Refresh after Verify pull request starts/finishes (including when a
+  # maintainer approves a waiting fork run). Still metadata-only.
+  workflow_run:
+    workflows: ["Verify pull request"]
+    types: [requested, completed]
 
 permissions:
   contents: read
@@ -22,7 +27,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pr-guidance-${{ github.event.pull_request.number }}
+  group: pr-guidance-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: true
 
 jobs:
@@ -30,45 +35,135 @@ jobs:
     name: Contributor checklist guidance
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event.pull_request.draft == false
+    if: >
+      github.event.pull_request.draft != true &&
+      (
+        github.event_name == 'pull_request_target' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.name == 'Verify pull request' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.pull_requests[0].number > 0
+        )
+      )
     steps:
       - name: Build and post checklist comment
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
           marker='<!-- cindy-pr-guidance -->'
-          body="$(jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}")"
-          author="$(jq -r '.pull_request.user.login' "${GITHUB_EVENT_PATH}")"
-          association="$(jq -r '.pull_request.author_association' "${GITHUB_EVENT_PATH}")"
+          if [[ -z "${PR}" || "${PR}" == "null" ]]; then
+            echo "No pull request associated with this event; skipping."
+            exit 0
+          fi
 
-          # Changed plugin dirs (metadata only): top-level dirs that contain ghost.json on main.
-          gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename' > files.txt
-          plugins=""
-          while read -r d; do
-            if grep -qxF "${d}/ghost.json" files.txt \
-              || gh api "repos/${REPO}/contents/${d}/ghost.json?ref=main" --silent 2>/dev/null; then
-              plugins+="${d} "
+          # Always fetch live PR metadata this run (never reuse a previous
+          # comment's commit list, body, or head SHA).
+          gh api "repos/${REPO}/pulls/${PR}" > pull.json
+          if [[ "$(jq -r '.draft' pull.json)" == "true" ]]; then
+            echo "Draft pull request; skipping."
+            exit 0
+          fi
+          body="$(jq -r '.body // ""' pull.json)"
+          author="$(jq -r '.user.login' pull.json)"
+          association="$(jq -r '.author_association' pull.json)"
+          HEAD_SHA="$(jq -r '.head.sha' pull.json)"
+          if [[ ! "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unexpected pull request head SHA; skipping."
+            exit 1
+          fi
+
+          gh api "repos/${REPO}/pulls/${PR}/files" --paginate > files.json
+          gh api "repos/${REPO}/git/trees/main?recursive=1" > tree.json
+
+          # Match pr-verify's changed-plugin gate without a checkout:
+          # HEAD plugins ≈ main ghost.json dirs − deleted + added; shared
+          # packaged files (LICENSE/NOTICE/TRADEMARKS) select every HEAD plugin.
+          jq -r '.tree[].path // empty | select(test("^[^/]+/ghost\\.json$")) | split("/")[0]' tree.json \
+            | sort -u > main-plugins.txt
+          jq -r '.[] | select(.status == "removed" and (.filename | test("^[^/]+/ghost\\.json$"))) | .filename | split("/")[0]' files.json \
+            | sort -u > deleted-plugins.txt
+          jq -r '.[] | select(.status == "added" and (.filename | test("^[^/]+/ghost\\.json$"))) | .filename | split("/")[0]' files.json \
+            | sort -u > added-plugins.txt
+          comm -23 main-plugins.txt deleted-plugins.txt > kept-plugins.txt
+          sort -u kept-plugins.txt added-plugins.txt > head-plugins.txt
+
+          : > changed-files.txt
+          jq -r '.[].filename' files.json >> changed-files.txt
+          jq -r '.[] | select(.previous_filename != null) | .previous_filename' files.json >> changed-files.txt
+
+          needs_attestation=false
+          if [[ -s head-plugins.txt ]]; then
+            if grep -Eq '^(LICENSE|NOTICE|TRADEMARKS\.md|TRADEMARKS\.zh-CN\.md)$' changed-files.txt; then
+              needs_attestation=true
+            else
+              while IFS= read -r file; do
+                [[ -z "${file}" || "${file}" != */* ]] && continue
+                dir="${file%%/*}"
+                if grep -qxF "${dir}" head-plugins.txt; then
+                  needs_attestation=true
+                  break
+                fi
+              done < changed-files.txt
             fi
-          done < <(grep '/' files.txt | grep -v '^\.' | cut -d/ -f1 | sort -u)
+          fi
 
           todo=()
-          if [[ -n "${plugins}" ]] && ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' <<<"${body}"; then
+          if [[ "${needs_attestation}" == "true" ]] && ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' <<<"${body}"; then
             todo+=("**Cindy device verification / Cindy 实机验证** is unchecked. Download the package from the *Verify pull request* run → Artifacts, install on a stable/Beta Cindy device, record version/channel/SHA-256 under *Verification*, then check the box. / 实机验证未勾选：从 *Verify pull request* 的 Artifacts 下载测试包，在正式稳定版/Beta 实机安装验证，在「验证」一节记录版本/渠道/SHA-256 后勾选。")
           fi
 
-          unsigned="$(gh api "repos/${REPO}/pulls/${PR}/commits" --paginate \
-            --jq '.[] | select((.commit.message | test("(?m)^Signed-off-by: .+ <.+>$")) | not) | .sha[0:7]' | tr '\n' ' ')"
+          # Recompute DCO from the current PR commits this run. Merge/bot
+          # commits are exempt; CONTRIBUTING remediation commits cover the
+          # listed 40-char SHAs without rewriting history.
+          gh api "repos/${REPO}/pulls/${PR}/commits" --paginate > commits.json
+          dco_conclusion="$(
+            gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" > check-runs.json 2>/dev/null \
+              && jq -r '[.check_runs[] | select((.app.slug // "") == "dco" or .name == "DCO")] | first | .conclusion // "none"' check-runs.json \
+              || echo none
+          )"
+          jq -r '
+            def is_merge: (.parents | length) > 1;
+            def is_bot:
+              ((.author.login // "") | test("\\[bot\\]$"))
+              or ((.author.type // "") == "Bot");
+            def has_signoff: .commit.message | test("(?m)^Signed-off-by: .+ <.+>$");
+            .[] | select((is_merge or is_bot or has_signoff) | not) | .sha
+          ' commits.json > unsigned-shas.txt || true
+          jq -r '
+            def has_signoff: .commit.message | test("(?m)^Signed-off-by: .+ <.+>$");
+            .[] | select(has_signoff) | .commit.message
+          ' commits.json \
+            | grep -E '^(I, .+ <.+>, hereby add my Signed-off-by to this commit: |On behalf of .+ <.+>, I, .+ <.+>, hereby add my Signed-off-by to this commit: )[0-9a-f]{40}$' \
+            | grep -oE '[0-9a-f]{40}$' | sort -u > remediated-shas.txt || true
+          unsigned=""
+          if [[ "${dco_conclusion}" != "success" && -s unsigned-shas.txt ]]; then
+            if [[ -s remediated-shas.txt ]]; then
+              comm -23 <(sort -u unsigned-shas.txt) remediated-shas.txt > still-unsigned.txt || true
+            else
+              cp unsigned-shas.txt still-unsigned.txt
+            fi
+            unsigned="$(awk '{ print substr($0, 1, 7) }' still-unsigned.txt | tr '\n' ' ')"
+          fi
           if [[ -n "${unsigned// }" ]]; then
             todo+=("Commits without DCO sign-off: \`${unsigned% }\`. Use \`git commit -s\`, or push a remediation commit as described in CONTRIBUTING (DCO section). / 以下 commit 缺少 DCO 签名，用 \`git commit -s\` 或按 CONTRIBUTING 的 DCO 一节推一个补签 commit。")
           fi
 
-          verify_status="$(gh api "repos/${REPO}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request" \
-            --jq '[.workflow_runs[] | select(.name == "Verify pull request")][0].conclusion // "none"' 2>/dev/null || echo none)"
-          if [[ "${verify_status}" == "action_required" ]]; then
+          verify_status="none"
+          verify_conclusion="none"
+          for _ in 1 2 3 4 5; do
+            gh api "repos/${REPO}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request" > runs.json || true
+            verify_status="$(jq -r '[.workflow_runs[] | select(.name == "Verify pull request")] | first | .status // "none"' runs.json 2>/dev/null || echo none)"
+            verify_conclusion="$(jq -r '[.workflow_runs[] | select(.name == "Verify pull request")] | first | .conclusion // "none"' runs.json 2>/dev/null || echo none)"
+            if [[ "${verify_status}" != "none" ]]; then
+              break
+            fi
+            sleep "${GUIDANCE_RETRY_SLEEP:-2}"
+          done
+          if [[ "${verify_status}" == "waiting" || "${verify_conclusion}" == "action_required" ]]; then
             todo+=("CI (*Verify pull request*) is waiting for a maintainer to approve workflows for this fork PR — nothing for you to fix; a maintainer has been notified. / CI 正在等待维护者批准 fork PR 的工作流运行，你无需操作。")
           fi
 
