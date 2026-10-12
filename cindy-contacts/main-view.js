@@ -69,6 +69,7 @@
       srcName: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 消息', cindy: 'Cindy 对话', github: 'GitHub' },
       srcState: { ok: '能读', missing: '没装插件', unauthorized: '没连接账号', unavailable: '这次用不了', error: '出错了', skipped: '跳过' },
       srcTitle: '上次检查的来源',
+      covPartial: (n) => `没读完${n ? ` ${n} 处` : ''}，下次先补`, covNone: '这次没读到，下次接着读',
       srcFix: '没装或没连接的：在 Cindy 侧边栏「插件」里安装并连接账号，下次整理就能读到。',
       srcFirst: '第一次整理会先检查能读到哪些来源（邮件、日历、飞书等插件是否已安装、已连接），结果显示在这里。',
       before: '开始前要知道',
@@ -147,6 +148,7 @@
       srcName: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack', cindy: 'Cindy chats', github: 'GitHub' },
       srcState: { ok: 'readable', missing: 'plugin not installed', unauthorized: 'account not connected', unavailable: 'not available here', error: 'error', skipped: 'skipped' },
       srcTitle: 'Sources at the last check',
+      covPartial: (n) => `partly read${n ? ` (${n} gaps)` : ''}; next run fills in`, covNone: 'not read; next run continues',
       srcFix: 'For missing or unconnected ones, install and connect them under Plugins in the Cindy sidebar; the next tidy-up will read them.',
       srcFirst: 'The first tidy-up checks which sources can be read (whether mail, calendar and chat plugins are installed and connected) and shows the result here.',
       before: 'Before you start',
@@ -439,7 +441,11 @@
       const items = ss.items.filter((i) => enabled[i.source] !== false);
       h += `<div class="srcs-status"><div class="sech">${esc(T.srcTitle)} · ${esc(fmtWhen(ss.at))}</div>`;
       for (const i of items) {
-        h += `<div class="srow${i.status === 'ok' || i.status === 'unavailable' || i.status === 'skipped' ? ' ok' : ''}"><span>${esc(T.srcName[i.source] || i.source)}</span><span class="st">${esc(T.srcState[i.status] || i.status)}${i.note && i.status !== 'ok' ? ` · ${esc(i.note)}` : ''}</span></div>`;
+        const cov = i.coverage && i.status === 'ok' ? i.coverage : '';
+        const good = (i.status === 'ok' && cov !== 'partial' && cov !== 'none') || i.status === 'unavailable' || i.status === 'skipped';
+        const label = cov === 'partial' ? T.covPartial(i.gaps || 0) : cov === 'none' ? T.covNone : T.srcState[i.status] || i.status;
+        const note = cov && cov !== 'complete' ? i.coverageNote : i.status !== 'ok' ? i.note : '';
+        h += `<div class="srow${good ? ' ok' : ''}"><span>${esc(T.srcName[i.source] || i.source)}</span><span class="st">${esc(label)}${note ? ` · ${esc(note)}` : ''}</span></div>`;
       }
       if (items.some((i) => i.status === 'missing' || i.status === 'unauthorized')) h += `<p class="small muted">${esc(T.srcFix)}</p>`;
       h += '</div>';

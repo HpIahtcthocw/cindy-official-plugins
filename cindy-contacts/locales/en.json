@@ -222,7 +222,7 @@
       }
     },
     "maintenance": {
-      "description": "Start, check sources for and finish a time-window tidy-up. begin returns run_id, the window (from/to and segments), which sources to read and how to query them by time, first_step and the change limit; scope is recent (last run until now; the first run covers two weeks), backfill (everyone, further back) or contact (one person). Then check which sources work as first_step says and report them with action \"sources\"; after reading and recording, call end with run_id. Use only in tidy-up tasks or when the user asks to tidy up or backfill.",
+      "description": "Start, check sources for and finish a time-window tidy-up. begin returns run_id, the window, each source’s own from/to and how to query it (for chats, find group chats and direct messages separately), the backlog left unread last time, first_step and coverage_rule; scope is recent, backfill or contact. Report which sources work with action \"sources\"; after reading and recording, call end with run_id and each source’s coverage (complete / partial / none, partial with gaps). Only fully read sources move their checkpoint forward.",
       "parameters": {
         "/properties/checkpoint": {
           "description": "Legacy: without run_id, the time processed up to (ISO 8601)"
@@ -250,6 +250,12 @@
         },
         "/properties/sources_status": {
           "description": "For sources (also accepted by end): whether each source can be read"
+        },
+        "/properties/coverage": {
+          "description": "Required for end: whether each source was read completely this time"
+        },
+        "/properties/backlog_done": {
+          "description": "For end: backlog ids finished this time"
         }
       }
     }

@@ -486,16 +486,64 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.deepEqual(rs.usable, ['mail']);
     const st0 = (await a.view('state')).result;
     assert.equal(st0.sourcesStatus.items.find((x) => x.source === 'im').note, '没连接飞书');
-    ok(await a.call('maintenance', { action: 'end', run_id: b1.run_id, scanned: 4, created: 2, updated: 1, note: '新认识两位' }));
+    // 消息类来源要求群聊、单聊分别找
+    assert.match(b1.sources.find((x) => x.source === 'im').how, /p2p_chat/);
+    // 没报告覆盖情况不能收尾
+    const noCov = await a.call('maintenance', { action: 'end', run_id: b1.run_id });
+    assert.equal(noCov.ok, false);
+    assert.equal(noCov.errorCode, 'COVERAGE_REQUIRED');
+    const full = (src) => ({ source: src, coverage: 'complete' });
+    ok(
+      await a.call('maintenance', {
+        action: 'end',
+        run_id: b1.run_id,
+        scanned: 4,
+        created: 2,
+        updated: 1,
+        note: '新认识两位',
+        coverage: ['mail', 'calendar', 'im', 'cindy'].map(full),
+      }),
+    );
     // 同一个 run 不能结束两次
     assert.equal((await a.call('maintenance', { action: 'end', run_id: b1.run_id })).ok, false);
 
     const b2 = ok(await a.call('maintenance', { action: 'begin' }));
     assert.equal(b2.first_run, false);
     assert.ok(Math.abs(Date.parse(b2.from) - (Date.parse(b1.to) - 3600000)) < 5, 'continues from last run with 1h overlap');
-    ok(await a.call('maintenance', { action: 'end', run_id: b2.run_id }));
+    // 这次：一个群没读完、Cindy 对话没读到。读完的来源推进，没读完的留缺口，没读到的保持原位
+    ok(
+      await a.call('maintenance', {
+        action: 'end',
+        run_id: b2.run_id,
+        coverage: [
+          full('mail'),
+          full('calendar'),
+          { source: 'im', coverage: 'partial', gaps: [{ where: 'Cindy 群', from: b2.from, to: b2.to, reason: '超过 200 条' }] },
+          { source: 'cindy', coverage: 'none', note: '这个任务里读不到' },
+        ],
+      }),
+    );
+    const b2b = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.equal(b2b.backlog.length, 1);
+    assert.equal(b2b.backlog[0].where, 'Cindy 群');
+    const imFrom = b2b.sources.find((x) => x.source === 'im').from;
+    const cindyFrom = b2b.sources.find((x) => x.source === 'cindy').from;
+    assert.ok(Math.abs(Date.parse(imFrom) - (Date.parse(b2.to) - 3600000)) < 5, 'partially read source moves on, gap kept in backlog');
+    assert.ok(Math.abs(Date.parse(cindyFrom) - (Date.parse(b1.to) - 3600000)) < 5, 'unread source stays where it was');
+    assert.equal(b2b.from, cindyFrom);
+    ok(
+      await a.call('maintenance', {
+        action: 'end',
+        run_id: b2b.run_id,
+        backlog_done: [b2b.backlog[0].id],
+        coverage: ['mail', 'calendar', 'im', 'cindy'].map(full),
+      }),
+    );
+    assert.equal(ok(await a.call('maintenance', { action: 'begin' })).backlog.length, 0);
+    const stCov = (await a.view('state')).result;
+    assert.equal(stCov.maintenance.checkpoint, b2b.to);
     const st = (await a.view('state')).result;
-    assert.equal(st.maintenance.runs.length, 2);
+    assert.equal(st.maintenance.runs.length, 3);
     assert.equal(st.coverage.from, b1.from);
 
     // 所有人往前补 3 个月：从覆盖起点往前
@@ -505,7 +553,7 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     ok(await a.call('maintenance', { action: 'end', run_id: b3.run_id }));
     assert.equal((await a.view('state')).result.coverage.from, b3.from);
     // 回补不移动「上次整理到」的检查点
-    assert.equal((await a.view('state')).result.maintenance.checkpoint, b2.to);
+    assert.equal((await a.view('state')).result.maintenance.checkpoint, b2b.to);
 
     // 只补一个人：只给这个人的身份，结束后记下这个人补到了哪天
     const p = ok(await a.call('save', { name: '林知夏', identities: [{ platform: 'email', value: 'zhixia@example.test' }] }));

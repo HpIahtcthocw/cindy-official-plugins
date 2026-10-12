@@ -49,7 +49,7 @@
       "description": "最大 100 件のプロフィールを一括で作成・更新します。ルールは save と同じです。顧客リストや表、名刺の取り込みに使います。件ごとに結果を返し、失敗した件は他に影響しません。"
     },
     "maintenance": {
-      "description": "期間ごとの整理の開始・ソース確認・終了。begin は run_id、期間、ソースと時間指定の方法、first_step、上限を返します。first_step に従ってソースが使えるか確認し action \"sources\" で報告し、記録後に run_id を付けて end を呼びます。"
+      "description": "期間ごとの整理の開始・ソース確認・終了。begin はソースごとの期間、照会方法（チャットはグループと個別チャットを別々に探す）、前回の未読 backlog を返します。end では run_id と各ソースの coverage（complete / partial / none、partial は gaps 付き）を渡し、読み切ったソースだけがチェックポイントを進めます。"
     }
   }
 }

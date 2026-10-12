@@ -1207,7 +1207,11 @@ const SOURCE_GUIDE = {
   calendar:
     '日历：用已安装的日历插件（如 google_calendar 的 list_events，time_min / time_max 用本时间段）。参会人和会议主题记成往来，ref 填 event id。50 人以上的大会只记组织者。',
   im:
-    '即时消息：用已安装的飞书、Slack 等插件。先列出本时间段内活跃的会话（如飞书 im_list_chats，sort_type=ByActiveTimeDesc），再按 start_time / end_time 读这些会话里的消息，每个会话最多 50 条。ref 填消息 id；机器人消息不记。',
+    '即时消息：群聊和单聊要分别找，单聊优先。' +
+    '单聊（飞书）：im_list_chats 只列群，不含单聊；用 im_search_messages，query 传一个空格 " "、chat_type 传 "p2p_chat"，结果按时间倒序，翻页直到消息早于本时间段开始，收集出现过的单聊 chat_id 和对方。' +
+    '群聊（飞书）：im_list_chats，sort_type=ByActiveTimeDesc，取本时间段内有活动的群。' +
+    '然后用 im_read_messages（start_time / end_time 用本时间段，page_size 50）逐个会话读；has_more 为 true 就带 page_token 继续，单个会话最多读 200 条，读不完的那一段写进 coverage 的 gaps。' +
+    'Slack 等其它消息插件同理：私聊和群各自找全。ref 填消息 id；机器人消息不记。',
   cindy:
     'Cindy 对话：cindy_helper 的 list_sessions / get_chat_history（from / to 用本时间段，只看 user 和 assistant）。插件发起的任务里这组工具可能不可用，不可用就跳过。ref 填消息 id。',
   github:
@@ -1238,7 +1242,7 @@ function automationPrompt(profile) {
     '2. 每个来源只拉这段时间里的新内容；与我真实往来的人，用 record 记下每条往来（ref 填来源 id，重复的会自动跳过）。',
     '3. 有新往来的人：先 get，再用 save 更新 summary、narrative、latest（一句话说这次的新动静）、facts，并用 open_loops / close_loops 维护还没完的事。值得记的真人没有档案就新建；明显是同一个人的两份档案直接 merge 并写 reason。',
     `4. 本次最多改 ${p.maxChanges} 个人，其余留到下次。`,
-    '5. 最后调用 maintenance，action 为 "end"，带上 begin 返回的 run_id 和扫描、新增、更新的数量。',
+    '5. 最后调用 maintenance，action 为 "end"，带上 begin 返回的 run_id、扫描与新增更新的数量，以及 coverage（每个来源读全了没有、哪里没读完）。',
   ].join('\n');
 }
 
@@ -1277,10 +1281,19 @@ async function maintenanceBegin(input) {
   let from;
   let to;
   let contact = null;
+  const enabled = SOURCES.filter((k) => settings.sources[k]);
+  // 每个来源各自从上次读完的地方接着读（往前多看 1 小时防漏）；最多往前 30 天，更早的交给回补。
+  const sourceFrom = {};
   if (scope === 'recent') {
     to = now;
-    from = meta.checkpoint ? Date.parse(meta.checkpoint) - 3600000 : initialFrom;
-    if (!(from < to)) from = to - 3600000;
+    for (const k of enabled) {
+      const cp = (meta.sources && meta.sources[k] && meta.sources[k].checkpoint) || meta.checkpoint || '';
+      let f = cp ? Date.parse(cp) - 3600000 : initialFrom;
+      f = Math.max(f, now - 30 * DAY);
+      if (!(f < to)) f = to - 3600000;
+      sourceFrom[k] = f;
+    }
+    from = enabled.length ? Math.min(...enabled.map((k) => sourceFrom[k])) : initialFrom;
   } else if (scope === 'backfill') {
     to = coverage && coverage.from ? Date.parse(coverage.from) : initialFrom;
     from = addMonths(to, -months);
@@ -1298,10 +1311,17 @@ async function maintenanceBegin(input) {
     to: isoOf(to),
     contactId: contact ? contact.id : '',
     firstRun: scope === 'recent' && !meta.checkpoint,
+    sources: enabled,
     startedAt: nowIso(),
   };
   await batch([setMetaStmt(`run:${run.runId}`, run)]);
-  const sources = SOURCES.filter((k) => settings.sources[k]).map((k) => ({ source: k, how: SOURCE_GUIDE[k] }));
+  const sources = enabled.map((k) => ({
+    source: k,
+    from: isoOf(sourceFrom[k] !== undefined ? sourceFrom[k] : from),
+    to: isoOf(to),
+    how: SOURCE_GUIDE[k],
+  }));
+  const backlog = scope === 'recent' ? (meta.backlog || []).filter((g) => enabled.includes(g.source)).slice(0, 20) : [];
   return {
     run_id: run.runId,
     scope,
@@ -1310,6 +1330,7 @@ async function maintenanceBegin(input) {
     first_run: run.firstRun,
     segments: splitWindow(from, to, scope === 'recent' ? 7 : 14),
     sources,
+    backlog,
     contact,
     max_changes: scope === 'contact' ? 1 : p.maxChanges,
     guidance:
@@ -1317,11 +1338,33 @@ async function maintenanceBegin(input) {
         ? `只查与「${contact.name}」有关的往来：用上面的身份（邮箱、平台账号）和名字去各来源搜索这段时间。`
         : p.guidance) + ' 每条往来用 record 记下（ref 填来源 id）；有新往来的人再用 save 改写 summary、narrative、latest、facts 和还没完的事。',
     stats: await stats(),
+    coverage_rule:
+      '收尾 end 必须带 coverage：每个来源写 complete（这段时间读全了）/ partial（读了一部分，gaps 写清哪个会话或哪类、哪段时间没读到、为什么）/ none（没读到）。' +
+      '读完的来源才推进检查点；partial 的缺口和 none 的整段会留到下次先补。backlog 里是上次没读完的，先补，补完的 id 放进 backlog_done。',
     first_step:
       '先逐个确认 sources 里的来源能不能用（用 ghost_list / ghost_info 看对应插件是否已安装、已连接账号；Cindy 对话看 cindy_helper 历史工具是否可用），' +
       '再调用 maintenance，action 为 "sources"，sources_status 写每个来源的 status：ok / missing（没装）/ unauthorized（没连接或没授权）/ unavailable（这个任务里用不了）/ error，note 写一句原因。',
     manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
   };
+}
+
+function normalizeCoverage(list) {
+  const out = [];
+  for (const c of Array.isArray(list) ? list.slice(0, 10) : []) {
+    const source = str(c && c.source);
+    if (!SOURCES.includes(source) || out.some((x) => x.source === source)) continue;
+    const coverage = ['complete', 'partial', 'none'].includes(str(c.coverage)) ? str(c.coverage) : 'none';
+    const gaps = [];
+    for (const g of Array.isArray(c.gaps) ? c.gaps.slice(0, 20) : []) {
+      const where = str(g && g.where).slice(0, 120);
+      const from = str(g && g.from);
+      const to = str(g && g.to);
+      if (!where && !from) continue;
+      gaps.push({ where, from: Number.isNaN(Date.parse(from)) ? '' : from, to: Number.isNaN(Date.parse(to)) ? '' : to, reason: str(g && g.reason).slice(0, 160) });
+    }
+    out.push({ source, coverage, gaps, note: str(c.note).slice(0, 160) });
+  }
+  return out;
 }
 
 async function maintenanceEnd(input) {
@@ -1348,7 +1391,31 @@ async function maintenanceEnd(input) {
   };
   const next = { ...meta, runs: [record, ...(meta.runs || [])].slice(0, 10) };
   let checkpoint = meta.checkpoint || '';
-  if (!run || run.scope === 'recent') {
+  const covs = normalizeCoverage(input.coverage);
+  if (run && run.scope === 'recent' && Array.isArray(run.sources)) {
+    // 只有读全或读了大部分的来源才推进；缺口留到下次先补，没读到的来源保持原位。
+    const missing = run.sources.filter((k) => !covs.some((c) => c.source === k));
+    if (missing.length) {
+      throw fail('COVERAGE_REQUIRED', `end 需要 coverage：给 ${missing.join('、')} 各写 complete / partial / none（partial 带 gaps）。`);
+    }
+    const sources = { ...(meta.sources || {}) };
+    let backlog = (meta.backlog || []).filter((g) => !(Array.isArray(input.backlogDone) && input.backlogDone.includes(g.id)));
+    for (const c of covs) {
+      if (!run.sources.includes(c.source)) continue;
+      if (c.coverage === 'complete' || c.coverage === 'partial') sources[c.source] = { checkpoint: run.to, coverage: c.coverage, at: now };
+      else sources[c.source] = { ...(sources[c.source] || {}), coverage: 'none', at: now };
+      for (const g of c.gaps) backlog.push({ id: uuid(), source: c.source, ...g, addedAt: now });
+    }
+    // 30 天前的缺口交给回补，不再无限累积。
+    backlog = backlog.filter((g) => Date.now() - Date.parse(g.addedAt || now) < 30 * DAY).slice(-50);
+    next.sources = sources;
+    next.backlog = backlog;
+    const cps = run.sources.map((k) => (sources[k] && sources[k].checkpoint) || '').filter(Boolean).sort();
+    checkpoint = cps.length === run.sources.length ? cps[0] : meta.checkpoint || run.from;
+    next.checkpoint = checkpoint;
+    next.lastRunAt = now;
+    next.last = { ...record, coverage: covs.map((c) => ({ source: c.source, coverage: c.coverage, gaps: c.gaps.length })) };
+  } else if (!run || run.scope === 'recent') {
     checkpoint = run ? run.to : str(input.checkpoint) || now;
     if (Number.isNaN(Date.parse(checkpoint)) || Date.parse(checkpoint) > Date.now() + 3600000) checkpoint = now;
     next.checkpoint = checkpoint;
@@ -1403,7 +1470,20 @@ async function maintenance(input) {
   }
   if (input.action === 'end') {
     if (Array.isArray(input.sourcesStatus) && input.sourcesStatus.length) await reportSources(input.sourcesStatus);
-    return maintenanceEnd(input);
+    const result = await maintenanceEnd(input);
+    const cov = normalizeCoverage(input.coverage);
+    if (cov.length) {
+      const prev = (await getMeta('sources_status')) || { at: nowIso(), items: [] };
+      const items = prev.items.map((i) => {
+        const c = cov.find((x) => x.source === i.source);
+        return c ? { ...i, coverage: c.coverage, gaps: c.gaps.length, coverageNote: c.note || (c.gaps[0] && `${c.gaps[0].where} ${c.gaps[0].reason}`.trim()) || '' } : i;
+      });
+      for (const c of cov) {
+        if (!items.some((i) => i.source === c.source)) items.push({ source: c.source, status: c.coverage === 'none' ? 'error' : 'ok', note: '', coverage: c.coverage, gaps: c.gaps.length, coverageNote: c.note });
+      }
+      await batch([setMetaStmt('sources_status', { ...prev, items })]);
+    }
+    return result;
   }
   throw fail('INVALID_PARAMS', 'action must be begin, sources or end');
 }
@@ -1950,7 +2030,7 @@ async function tidy(input) {
     `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "${scope}"${scope === 'backfill' ? `, months: ${months}` : ''} } })，先按返回的 first_step 检查并报告来源。`,
     '2. 按返回的时间段（segments，新的在前）和来源说明逐段查找；与我真实往来的人，用 record 记下每条往来。',
     '3. 有新往来的人：get 之后用 save 更新 summary、narrative、latest、facts 和还没完的事；值得记的真人没有档案就新建，明显重复的直接 merge 并写 reason。先写来往最多的人。',
-    '4. 最后调用 maintenance，action 为 "end"，带上 run_id 和数量。',
+    '4. 最后调用 maintenance，action 为 "end"，带上 run_id、数量和 coverage（每个来源读全了没有、哪里没读完）。',
     '最终回复只写两行：第一行「整理了 N 个人」（或为什么没整理成）；第二行写哪些来源没读到、为什么，都读到了就不写。',
   ].join('\n');
   return sendToTask('maintain', '通讯录 · 整理', text, { purpose: scope });
@@ -2171,6 +2251,8 @@ const TOOLS = {
       months: a.months,
       runId: a.run_id,
       sourcesStatus: a.sources_status,
+      coverage: a.coverage,
+      backlogDone: a.backlog_done,
       checkpoint: a.checkpoint,
       scanned: a.scanned,
       created: a.created,

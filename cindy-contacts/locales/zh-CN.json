@@ -222,7 +222,7 @@
       }
     },
     "maintenance": {
-      "description": "按时间段整理通讯录的开始、来源检查与收尾。begin 返回 run_id、时间段（from/to 与 segments）、要查的来源及按时间查询的做法、first_step 与改动上限；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。接着按 first_step 确认来源能不能用，用 action \"sources\" 报告；查完、记完后调用 end 并带上 run_id。只在整理任务或用户要求整理、回补时使用。",
+      "description": "按时间段整理通讯录的开始、来源检查与收尾。begin 返回 run_id、时间段、每个来源各自的 from/to 与按时间查询的做法（消息类要群聊和单聊分别找）、上次没读完的 backlog、first_step 与 coverage_rule；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。先按 first_step 用 action \"sources\" 报告来源能不能用；查完、记完后调用 end，带 run_id 和每个来源的 coverage（complete / partial / none，partial 带 gaps），读全的来源才推进检查点。",
       "parameters": {
         "/properties/checkpoint": {
           "description": "旧做法：不传 run_id 时，本次已处理到的时间（ISO 8601）"
@@ -250,6 +250,12 @@
         },
         "/properties/sources_status": {
           "description": "sources 时传（end 时也可带）：每个来源能不能用"
+        },
+        "/properties/coverage": {
+          "description": "end 时必传：每个来源这次读全了没有"
+        },
+        "/properties/backlog_done": {
+          "description": "end 时传：这次补完的 backlog id"
         }
       }
     }
