@@ -1,7 +1,7 @@
 {
   "name": "通讯录",
-  "description": "本机的人物与组织通讯录：记住每个人是谁、你们的往来、关系和联系方式。首次启用时自动复制旧版智能通讯录的资料；可从 macOS 通讯录只读导入；AI 可以直接查人、建档、记事件、整理分组与合并重复。资料只保存在本机的插件资料库，卸载插件不会删除。",
-  "whenToUse": "遇到陌生邮箱、手机号或飞书/Slack/GitHub 等平台账号想知道是谁；要联系、发消息或 @ 某人；准备会议、回邮件需要人物背景；对话里提到同事、家人、朋友、客户的新情况（换工作、离职、新联系方式、约定）；要整理、分组、去重或导入通讯录时。",
+  "description": "本机的人物档案：AI 定期读你的邮件、日历、飞书和 Cindy 对话，为常来往的人写好档案——是谁、你们之间还没完的事、全部往来。第一次只整理最近两周，想要更早的可以整体或按人往前补。首次启用时复制旧版智能通讯录的资料；可从 macOS 通讯录只读导入。资料只保存在本机，卸载插件不会删除。",
+  "whenToUse": "遇到陌生邮箱、手机号或飞书/Slack/GitHub 账号想知道是谁；要联系、发消息、写邮件或 @ 某人；准备会议、回邮件需要人物背景或「上次聊到哪」；对话里提到同事、朋友、客户的新情况（换工作、新联系方式、约定）；要整理、回补、去重或导入通讯录时。",
   "tools": {
     "find": {
       "description": "用任意线索找人：姓名、别名、邮箱、手机号、飞书/Slack/GitHub 等平台 id，或公司、项目、事件里的关键词。返回最多 limit 个人的摘要、身份、分组、给 AI 的提示和最近事件；matchType 为 identity（身份精确命中，最可信）/ name（姓名或别名精确命中）/ partial（已存的名字被线索包含，如查全名找到只记了名的人，需确认）/ text（文字中包含）。",
@@ -15,7 +15,7 @@
       }
     },
     "get": {
-      "description": "按 id 读取一个人的完整档案：身份与联系方式、全部事件（按日期倒序）、故事、给 AI 的提示、分组与关系。id 来自 find 或 list。",
+      "description": "按 id 读取一个人的完整档案：身份与联系方式、介绍（narrative）、要点（facts）、最新动态（latest）、还没完的事（loops）、往来（interactions，新的在前，最多 200 条）、事件、分组、关系和合并记录。id 来自 find 或 list。",
       "parameters": {
         "/properties/id": {
           "description": "档案 id"
@@ -37,7 +37,7 @@
       }
     },
     "save": {
-      "description": "新建或更新档案。不传 id 为新建：名字与已有档案相似时返回 DUPLICATE_SUSPECT 和候选，先用 get 确认是不是同一人，是就带 id 更新，不是才传 allow_duplicate。传 id 为更新：只改传入的字段；aliases、identities、groups 是追加，不会删掉已有值。身份已属于另一个人时返回 IDENTITY_CONFLICT 和 conflictContactId。",
+      "description": "新建或更新档案。不传 id 为新建：名字与已有档案相似时返回 DUPLICATE_SUSPECT 和候选，先 get 确认；是同一人就带 id 更新。传 id 为更新：只改传入的字段；aliases、identities、groups、open_loops 是追加。身份已属于另一个人时返回 IDENTITY_CONFLICT 和 conflictContactId。",
       "parameters": {
         "/properties/id": {
           "description": "要更新的档案 id；新建时不传"
@@ -58,7 +58,7 @@
           "description": "一句话介绍：是谁、在哪、做什么。会覆盖原值"
         },
         "/properties/narrative": {
-          "description": "关于这个人的长期背景与你们的故事，几句自然语言。会覆盖原值，更新前先 get 读出原文再改写"
+          "description": "这个人的介绍：是谁、你们之间在做什么、最近的变化，几句自然语言。会覆盖原值，更新前先 get 读出原文再改写，保留仍然成立的旧内容"
         },
         "/properties/agent_notes": {
           "description": "给 AI 的处置提示，如偏好的联系方式、称呼。会覆盖原值"
@@ -83,6 +83,50 @@
         },
         "/properties/allow_duplicate": {
           "description": "确认与相似档案不是同一人后才传 true"
+        },
+        "/properties/facts": {
+          "description": "要点，整体覆盖：如 公司、常一起、怎么找 TA、记住；至多 12 条"
+        },
+        "/properties/latest": {
+          "description": "一句话最新动态（20 字以内），如「周日回完 5 个用户工单」；名单上显示在名字下面"
+        },
+        "/properties/open_loops": {
+          "description": "新增「还没完的事」：谁在等谁、答应过的事、待回复；同一句已开着的不会重复"
+        },
+        "/properties/close_loops": {
+          "description": "已经完结的事：loop id（来自 get），可带 detail 写一句结果"
+        }
+      }
+    },
+    "record": {
+      "description": "把从邮件、飞书、日历、Cindy 对话、GitHub 读到的往来记进某人的档案，单次最多 200 条。每条用 contact_id，或用 identity / email / name 让插件自己找人；找不到的返回 UNRESOLVED，先 find 或 save 建档再记。同一个人同一个 ref（来源 id）只记一次，可以放心重复提交。只记与用户真实往来的人；营销、通知和机器人不记。",
+      "parameters": {
+        "/properties/items/items/properties/contact_id": {
+          "description": "档案 id；不知道时用 identity、email 或 name"
+        },
+        "/properties/items/items/properties/email": {
+          "description": "对方邮箱"
+        },
+        "/properties/items/items/properties/name": {
+          "description": "对方名字（只在唯一同名时用来找人）"
+        },
+        "/properties/items/items/properties/occurred_at": {
+          "description": "发生时间，ISO 8601"
+        },
+        "/properties/items/items/properties/title": {
+          "description": "邮件主题、会议名或一句话标题"
+        },
+        "/properties/items/items/properties/summary": {
+          "description": "一两句发生了什么，写清谁在等谁"
+        },
+        "/properties/items/items/properties/quote": {
+          "description": "可选：值得留的一句原话"
+        },
+        "/properties/items/items/properties/link": {
+          "description": "可选：原文的 https 链接"
+        },
+        "/properties/items/items/properties/ref": {
+          "description": "来源 id：邮件 message id、飞书消息 id、日程 id、PR URL 等，用于去重"
         }
       }
     },
@@ -117,13 +161,16 @@
       }
     },
     "merge": {
-      "description": "把 source 档案并入 target 后删除 source：身份、事件、分组、关系整体迁移，别名取并集，故事拼接。仅在用户确认两份是同一人后使用。",
+      "description": "把 source 档案并入 target 后删除 source：身份、事件、往来、还没完的事、分组、关系整体迁移。有把握时直接合并（同一邮箱、手机号或平台账号；或同名且公司、上下文一致），写上 reason；合并会留下记录，用户可以在资料页拆开。拿不准就不合并。",
       "parameters": {
         "/properties/source_id": {
           "description": "被并入并删除的档案"
         },
         "/properties/target_id": {
           "description": "保留的档案，选信息更全的那份"
+        },
+        "/properties/reason": {
+          "description": "为什么是同一个人，一句话，如「同一个工作邮箱」"
         }
       }
     },
@@ -175,10 +222,10 @@
       }
     },
     "maintenance": {
-      "description": "自动维护的开始与收尾。begin 返回上次检查点、单次改动上限、当前档位（同事为主 / 客户很多）的整理要求和概况；整理完调用 end 记录本次扫描与改动数量和新的检查点，用户会在通讯录里看到这次整理的结果。只在自动维护任务或用户要求整理通讯录时使用。",
+      "description": "按时间段整理通讯录的开始与收尾。begin 返回 run_id、时间段（from/to 与切好的 segments）、要查的来源及按时间查询的做法、改动上限和要求；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。查完、记完后调用 end 并带上 run_id。只在整理任务或用户要求整理、回补时使用。",
       "parameters": {
         "/properties/checkpoint": {
-          "description": "end 时传：本次已处理到的时间（ISO 8601），通常是 begin 返回的 now"
+          "description": "旧做法：不传 run_id 时，本次已处理到的时间（ISO 8601）"
         },
         "/properties/scanned": {
           "description": "end 时传：本次读过的会话或邮件数"
@@ -188,6 +235,18 @@
         },
         "/properties/note": {
           "description": "可选：一句话说明，最多 300 字"
+        },
+        "/properties/scope": {
+          "description": "begin 时传，默认 recent"
+        },
+        "/properties/contact_id": {
+          "description": "scope 为 contact 时传"
+        },
+        "/properties/months": {
+          "description": "backfill / contact 往前补几个月，默认 3"
+        },
+        "/properties/run_id": {
+          "description": "end 时传：begin 返回的 run_id"
         }
       }
     }

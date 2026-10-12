@@ -133,7 +133,32 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
     }
   }
   const schedules = [];
+  const oneshots = [];
+  const tasks = { created: [], sent: [], reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
   const cindy = {
+    tasks: {
+      capabilities: async () => ({ operations: ['create', 'get', 'send', 'getRun', 'readMessages'] }),
+      create: async (req) => {
+        const taskId = `task-${tasks.created.length + 1}`;
+        tasks.created.push({ ...structuredClone(req), taskId });
+        return { taskId, revision: 1 };
+      },
+      get: async ({ taskId }) => {
+        if (!tasks.created.some((t) => t.taskId === taskId)) throw new Error('NOT_FOUND');
+        return { taskId, revision: tasks.sent.filter((x) => x.taskId === taskId).length + 1 };
+      },
+      send: async (req) => {
+        tasks.sent.push(structuredClone(req));
+        return { runId: `run-${tasks.sent.length}` };
+      },
+      getRun: async () => ({ status: tasks.runStatus }),
+      readMessages: async () => ({
+        messages: [
+          { role: 'user', text: 'q', createdAt: new Date(Date.now() - 1000).toISOString() },
+          { role: 'assistant', content: [{ type: 'text', text: tasks.reply }], createdAt: new Date(Date.now() + 1000).toISOString() },
+        ],
+      }),
+    },
     library,
     node: { request: worker.request },
     agent: {
@@ -150,6 +175,10 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
         results.set(m.callId, m);
         waiters.get(m.callId)?.(m);
       }
+      if (m.type === 'cindy-request' && m.kind === 'oneshot_text') {
+        oneshots.push(m);
+        return structuredClone(tasks.quick);
+      }
       return { ok: true };
     },
   };
@@ -159,7 +188,9 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
     t.unref();
     return t;
   };
-  const ctx = vm.createContext({ cindy, BroadcastChannel: Channel, crypto: globalThis.crypto, console, setTimeout: unrefTimeout, clearTimeout });
+  // 任务轮询用的计时器在测试里加速。
+  const fastTimeout = (fn, ms) => unrefTimeout(fn, Math.min(ms, 20));
+  const ctx = vm.createContext({ cindy, BroadcastChannel: Channel, crypto: globalThis.crypto, console, setTimeout: fastTimeout, clearTimeout });
   vm.runInContext(mainSource, ctx, { filename: 'main.js' });
   let n = 0;
   const call = (tool, args = {}) =>
@@ -185,7 +216,13 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
     worker.close();
     library.close();
   };
-  return { call, view, close, library, schedules };
+  // 页面会收到的广播事件（任务进度等）
+  const events = [];
+  const tap = new Channel('cindy-contacts');
+  tap.onmessage = (ev) => {
+    if (ev.data && ev.data.kind === 'event') events.push(ev.data);
+  };
+  return { call, view, close, library, schedules, oneshots, tasks, events, ctx };
 }
 
 /* ───────── 旧版通讯录夹具（与旧版内置 schema 同构，数据全部为占位） ───────── */
@@ -416,38 +453,206 @@ test('主视图请求通道：列表、详情与修改后的变更通知', async
   }
 });
 
-test('自动维护：begin 给出检查点与档位，end 记录结果并推进检查点；档位切换改变节奏', async () => {
+test('按时间段整理：第一次只看最近两周；之后从上次整理接着往后；回补所有人或一个人都往前推进覆盖范围', async () => {
   const dir = tmp();
   const a = boot({ libDir: dir });
   try {
+    const DAY = 86400000;
     const b1 = ok(await a.call('maintenance', { action: 'begin' }));
-    assert.equal(b1.firstRun, true);
-    assert.equal(b1.profile, 'colleagues');
-    assert.equal(b1.maxChanges, 30);
-    assert.ok(Date.parse(b1.checkpoint) < Date.parse(b1.now));
-    ok(await a.call('maintenance', { action: 'end', checkpoint: b1.now, scanned: 4, created: 2, updated: 1, pending: 1, note: '新认识两位' }));
+    assert.equal(b1.scope, 'recent');
+    assert.equal(b1.first_run, true);
+    assert.equal(b1.max_changes, 30);
+    const span = Date.parse(b1.to) - Date.parse(b1.from);
+    assert.ok(Math.abs(span - 14 * DAY) < 60000, 'first run covers 14 days');
+    assert.equal(b1.segments.length, 2, 'split into weeks');
+    assert.ok(Date.parse(b1.segments[0].from) > Date.parse(b1.segments[1].from), 'newest first');
+    assert.deepEqual(b1.sources.map((x) => x.source), ['mail', 'calendar', 'im', 'cindy']);
+    ok(await a.call('maintenance', { action: 'end', run_id: b1.run_id, scanned: 4, created: 2, updated: 1, note: '新认识两位' }));
+    // 同一个 run 不能结束两次
+    assert.equal((await a.call('maintenance', { action: 'end', run_id: b1.run_id })).ok, false);
+
     const b2 = ok(await a.call('maintenance', { action: 'begin' }));
-    assert.equal(b2.firstRun, false);
-    assert.equal(b2.checkpoint, b1.now);
+    assert.equal(b2.first_run, false);
+    assert.ok(Math.abs(Date.parse(b2.from) - (Date.parse(b1.to) - 3600000)) < 5, 'continues from last run with 1h overlap');
+    ok(await a.call('maintenance', { action: 'end', run_id: b2.run_id }));
     const st = (await a.view('state')).result;
-    assert.equal(st.maintenance.last.created, 2);
-    assert.equal(st.maintenance.runs.length, 1);
+    assert.equal(st.maintenance.runs.length, 2);
+    assert.equal(st.coverage.from, b1.from);
 
-    // 未来的检查点不被接受
-    ok(await a.call('maintenance', { action: 'end', checkpoint: '2999-01-01T00:00:00Z' }));
-    assert.ok(Date.parse(ok(await a.call('maintenance', { action: 'begin' })).checkpoint) <= Date.now() + 1000);
+    // 所有人往前补 3 个月：从覆盖起点往前
+    const b3 = ok(await a.call('maintenance', { action: 'begin', scope: 'backfill' }));
+    assert.equal(b3.to, b1.from);
+    assert.ok(Date.parse(b3.from) < Date.parse(b3.to) - 80 * DAY);
+    ok(await a.call('maintenance', { action: 'end', run_id: b3.run_id }));
+    assert.equal((await a.view('state')).result.coverage.from, b3.from);
+    // 回补不移动「上次整理到」的检查点
+    assert.equal((await a.view('state')).result.maintenance.checkpoint, b2.to);
 
-    // 客户很多：节奏更快、上限更高；请求自动化时带上对应间隔
-    const set = await a.view('settings', { profile: 'clients' });
-    assert.equal(set.result.profile, 'clients');
-    assert.equal(ok(await a.call('maintenance', { action: 'begin' })).maxChanges, 100);
+    // 只补一个人：只给这个人的身份，结束后记下这个人补到了哪天
+    const p = ok(await a.call('save', { name: '林知夏', identities: [{ platform: 'email', value: 'zhixia@example.test' }] }));
+    const b4 = ok(await a.call('maintenance', { action: 'begin', scope: 'contact', contact_id: p.id, months: 6 }));
+    assert.equal(b4.contact.name, '林知夏');
+    assert.equal(b4.contact.identities[0].value, 'zhixia@example.test');
+    assert.equal(b4.to, b3.from);
+    ok(await a.call('maintenance', { action: 'end', run_id: b4.run_id }));
+    assert.equal(ok(await a.call('get', { id: p.id })).coveredFrom, b4.from);
+
+    // 设置：初始天数与来源开关
+    const set = (await a.view('settings', { profile: 'clients', initialDays: 7, sources: { github: true, cindy: false } })).result;
+    assert.equal(set.initialDays, 7);
+    assert.equal(set.sources.github, true);
+    const b5 = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.equal(b5.max_changes, 100);
+    assert.deepEqual(b5.sources.map((x) => x.source), ['mail', 'calendar', 'im', 'github']);
+
     const req = await a.view('requestAutomation');
     assert.equal(req.ok, true);
-    assert.equal(a.schedules.length, 1);
     assert.equal(a.schedules[0].intervalMs, 6 * 3600 * 1000);
-    assert.match(a.schedules[0].prompt, /maintenance/);
+    assert.match(a.schedules[0].prompt, /run_id/);
     assert.ok(a.schedules[0].prompt.length <= 2000);
-    assert.equal((await a.view('state')).result.automationRequested.profile, 'clients');
+  } finally {
+    a.close();
+  }
+});
+
+test('往来：按身份或名字归到人、按来源 id 去重；还没完的事、要点与最新动态写进档案', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  try {
+    const kim = ok(await a.call('save', { name: 'Kim Wager', identities: [{ platform: 'email', value: 'kim@example.test' }] }));
+    const zx = ok(await a.call('save', { name: '徐紫旎', aliases: ['mila'], identities: [{ platform: 'feishu', value: 'ou_zixi' }] }));
+    const r1 = ok(
+      await a.call('record', {
+        items: [
+          { email: 'KIM@example.test', occurred_at: '2026-10-11T15:46:00Z', channel: 'mail', title: 'Bug', summary: '更新后 Android 仍收不到', quote: 'still don’t load', ref: 'gm-1', link: 'javascript:alert(1)' },
+          { identity: { platform: 'feishu', value: 'ou_zixi' }, occurred_at: '2026-10-10T09:16:00Z', channel: 'im', title: '周六发版', ref: 'om-1' },
+          { name: 'mila', occurred_at: '2026-10-11T15:29:00Z', channel: 'mail', title: '回复 5 个用户', ref: 'gm-2', link: 'https://mail.example.test/x' },
+          { name: '没有这个人', occurred_at: '2026-10-11T15:29:00Z', channel: 'mail', title: 'x', ref: 'gm-3' },
+          { contact_id: kim.id, occurred_at: 'not a date', channel: 'mail', title: 'x', ref: 'gm-4' },
+        ],
+      }),
+    );
+    assert.equal(r1.added, 3);
+    assert.equal(r1.failed, 2);
+    assert.equal(r1.results.find((x) => x.index === 3).errorCode, 'UNRESOLVED');
+    // 重复提交不重复记
+    const r2 = ok(await a.call('record', { items: [{ contact_id: kim.id, occurred_at: '2026-10-11T15:46:00Z', channel: 'mail', title: 'Bug', ref: 'gm-1' }] }));
+    assert.equal(r2.added, 0);
+    assert.equal(r2.duplicates, 1);
+
+    ok(
+      await a.call('save', {
+        id: kim.id,
+        latest: '更新后 Android 仍收不到',
+        facts: [{ label: '设备', value: 'Android、iPad、MacBook' }],
+        open_loops: [{ text: 'Android + iCloud 仍收不到', detail: '新诊断待看', since: '2026-10-11', source: 'mail' }],
+      }),
+    );
+    // 同一句未完的事不重复开
+    ok(await a.call('save', { id: kim.id, open_loops: [{ text: 'Android + iCloud 仍收不到' }] }));
+    const k = ok(await a.call('get', { id: kim.id }));
+    assert.equal(k.interactions.length, 1);
+    assert.equal(k.interactions[0].link, '', 'only http(s) links are kept');
+    assert.equal(k.interactions[0].quote, 'still don’t load');
+    assert.equal(k.loops.length, 1);
+    assert.equal(k.facts[0].value, 'Android、iPad、MacBook');
+    assert.equal(k.latest, '更新后 Android 仍收不到');
+    ok(await a.call('save', { id: kim.id, close_loops: [{ id: k.loops[0].id, detail: '紫旎已回复' }] }));
+    const k2 = ok(await a.call('get', { id: kim.id }));
+    assert.equal(k2.loops[0].status, 'done');
+    assert.equal(k2.loops[0].detail, '紫旎已回复');
+
+    const z = ok(await a.call('get', { id: zx.id }));
+    assert.equal(z.interactions.length, 2);
+    assert.equal(z.interactions[0].ref, 'gm-2', 'newest first');
+
+    const list = (await a.view('list')).result.contacts;
+    const kRow = list.find((c) => c.id === kim.id);
+    assert.equal(kRow.rich, true);
+    assert.equal(kRow.openLoops, 0);
+    assert.equal(kRow.latest, '更新后 Android 仍收不到');
+    assert.equal(kRow.last, '2026-10-11T15:46:00.000Z');
+  } finally {
+    a.close();
+  }
+});
+
+test('合并会留下记录，可以拆开：原档案连同它带来的身份、往来、未完的事和分组都还回去', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  try {
+    const t = ok(await a.call('save', { name: '徐紫旎', summary: 'Filo 实习生', identities: [{ platform: 'feishu', value: 'ou_zixi' }] }));
+    const s = ok(await a.call('save', { name: 'mila', identities: [{ platform: 'email', value: 'xuzini@example.test' }], groups: ['Filo'], allow_duplicate: true }));
+    ok(await a.call('record', { items: [{ contact_id: s.id, occurred_at: '2026-10-11T15:29:00Z', channel: 'mail', title: '回复用户', ref: 'gm-9' }] }));
+    ok(await a.call('save', { id: s.id, open_loops: [{ text: '等 Kim 回复' }] }));
+    const m = ok(await a.call('merge', { source_id: s.id, target_id: t.id, reason: '同一个支持邮箱' }));
+    const merged = ok(await a.call('get', { id: t.id }));
+    assert.equal(merged.identities.length, 2);
+    assert.equal(merged.interactions.length, 1);
+    assert.equal(merged.loops.length, 1);
+    assert.equal(merged.merges[0].reason, '同一个支持邮箱');
+    assert.ok(merged.aliases.includes('mila'));
+
+    const u = await a.view('unmerge', { id: m.mergeId });
+    assert.equal(u.ok, true, JSON.stringify(u.error));
+    const back = ok(await a.call('get', { id: s.id }));
+    assert.equal(back.name, 'mila');
+    assert.equal(back.identities[0].value, 'xuzini@example.test');
+    assert.equal(back.interactions.length, 1);
+    assert.equal(back.loops.length, 1);
+    assert.deepEqual(back.groups.map((g) => g.name), ['Filo']);
+    const kept = ok(await a.call('get', { id: t.id }));
+    assert.equal(kept.identities.length, 1);
+    assert.equal(kept.interactions.length, 0);
+    assert.ok(!kept.aliases.includes('mila'));
+    assert.equal(kept.merges.length, 0);
+    assert.equal((await a.view('unmerge', { id: m.mergeId })).error.code, 'ALREADY_UNDONE');
+  } finally {
+    a.close();
+  }
+});
+
+test('人物页提问：只问这个人的事当场回答，写邮件和回补发到这个人的固定任务里，结果读回页面', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  try {
+    const p = ok(await a.call('save', { name: '徐紫旎', summary: 'Filo 实习生' }));
+    ok(await a.call('record', { items: [{ contact_id: p.id, occurred_at: '2026-10-11T15:29:00Z', channel: 'mail', title: '回复 5 个用户', ref: 'gm-1' }] }));
+
+    const q1 = (await a.view('ask', { contactId: p.id, text: '她最近在忙什么' })).result;
+    assert.equal(q1.kind, 'answer');
+    assert.equal(q1.a, '她在推进 Pi 清单。');
+    assert.equal(a.tasks.created.length, 0, 'quick questions do not open tasks');
+    assert.match(a.oneshots[0].prompt, /回复 5 个用户/);
+
+    const q2 = (await a.view('ask', { contactId: p.id, text: '给她写封邮件，问问六项需求的进度' })).result;
+    assert.equal(q2.kind, 'task');
+    assert.equal(a.tasks.created.length, 1);
+    assert.match(a.tasks.sent[0].text, /只创建草稿/);
+    // 结果读回页面：任务结束后广播回复，并记进这个人的问答
+    for (let i = 0; i < 100 && !a.events.some((e) => e.name === 'task' && e.data.status === 'done'); i++) await new Promise((r) => setTimeout(r, 20));
+    const done = a.events.find((e) => e.name === 'task' && e.data.status === 'done');
+    assert.equal(done.data.reply, '已经记下了。');
+    const qa = (await a.view('qa', { contactId: p.id })).result;
+    assert.equal(qa.length, 2);
+    assert.equal(qa[1].a, '已经记下了。');
+
+    // 同一个人再发：复用同一个任务
+    ok({ ok: true, result: (await a.view('tidy', { scope: 'contact', contactId: p.id })).result });
+    assert.equal(a.tasks.created.length, 1);
+    assert.equal(a.tasks.sent.length, 2);
+    assert.match(a.tasks.sent[1].text, /scope: "contact"/);
+
+    // 没有快速通道时改走任务
+    a.tasks.quick = { ok: false, errorCode: 'NO_CANDIDATE', message: 'none' };
+    for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    const q3 = (await a.view('ask', { contactId: p.id, text: '她是谁' })).result;
+    assert.equal(q3.kind, 'task');
+
+    // 打开页面：半小时内反复打开不刷新「上次看过」
+    const v1 = (await a.view('opened')).result;
+    const v2 = (await a.view('opened')).result;
+    assert.equal(v1.current, v2.current);
   } finally {
     a.close();
   }

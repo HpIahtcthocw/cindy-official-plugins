@@ -1,103 +1,133 @@
 'use strict';
 /**
- * 通讯录主视图：两栏（书页式名单 + 信笺式详情）。
+ * 通讯录主视图：左边是 Cindy 整理过的人，右边是一个人的档案（概览 / 往来 / 资料）。
  * 页面没有任何宿主能力，所有数据经同源 BroadcastChannel 交给 main.js 处理。
  */
 (() => {
   /* ───────── 文案 ───────── */
   const STRINGS = {
     'zh-CN': {
-      all: '所有人', recent: '最近联系', pending: '待确认', orgs: '公司与团队', groups: '分组',
-      byName: '按名字', byRecent: '按最近', people: (n) => `${n} 人`, search: '找一个人…',
-      pendingLine: (n) => ['有 ', `${n} 件事`, '等你确认'],
-      week: '这周', month: '这个月', earlier: '更早',
-      today: '今天', yesterday: '昨天', days: (n) => `${n}天`, weeks: (n) => `${n}周`, months: (n) => `${n}个月`, years: (n) => `${n}年`,
+      title: '人', all: '所有人', recent: '最近联系', pending: '待确认', orgs: '公司与团队', groups: '分组',
+      search: '找一个人…',
+      secNew: '上次看过之后', secRecent: '最近在来往', secEarlier: '更早认识的',
+      folded: (n) => `另有 ${n} 人只有联系方式`, expand: '展开', collapse: '收起',
+      subNew: (n) => `上次看过之后更新了 ${n} 人`, subCount: (n) => `Cindy 整理了 ${n} 人的档案`,
+      today: '今天', yesterday: '昨天', days: (n) => `${n} 天前`, weeks: (n) => `${n} 周前`, months: (n) => `${n} 个月前`, years: (n) => `${n} 年前`,
       noMatch: '没有找到这个人。', emptyScope: '这里还没有人。',
       edit: '编辑', more: '更多', back: '返回', save: '保存', cancel: '取消', create: '新建',
-      newContact: '新建联系人', importMac: '从 macOS 通讯录导入', findDups: '查找重复', retryLegacy: '重新导入旧版通讯录',
-      related: '相关的人', events: '往来', showAll: (n) => `查看全部 ${n} 条`, showLess: '收起',
-      addEvent: '记一笔，比如：约了下周四午饭', add: '添加',
-      emptyStory: '还没有关于 TA 的故事。点这里写几句，或让 AI 帮忙补全。',
-      noteLabel: '给 AI 的提示',
-      pendingAsk: 'AI 不太确定这份档案，确认后才会正式记下。', confirm: '确认', notThis: '删除',
-      inGroups: '分组', copied: (v) => `已复制 ${v}`,
+      newContact: '新建联系人', importMac: '从 macOS 通讯录导入', findDups: '查找重复', retryLegacy: '重新导入旧版通讯录', autoSettings: '整理设置',
+      tabOverview: '概览', tabHistory: '往来', tabInfo: '资料',
+      since: '上次看过之后', sinceCount: (n) => `${n} 件事`,
+      loops: '你们之间还没完的事', loopsNone: '没有还没完的事。', doneTag: '已完成', markDone: '标记为已完成', reopen: '重新打开',
+      cv: '履历与关系', related: '常一起', inGroups: '分组',
+      thin: 'Cindy 还没读到和 TA 的往来。', thinAct: '去邮件和飞书里找找',
+      contactLine: (n) => `往来 ${n} 次`, lastLine: (d) => `上次 ${d}`,
+      filterAll: (n) => `全部 ${n}`, ch: { mail: '邮件', im: '消息', calendar: '日程', cindy: 'Cindy 对话', github: 'GitHub', call: '通话', other: '其它' },
+      open: '打开原文', coveredTo: (d) => `已补到 ${d}`, coveredNone: '还没有往前补过', backfillBtn: (m) => `再往前补 ${m} 个月`, backfilling: 'Cindy 正在往前补…',
+      noHistory: '还没有记下往来。',
+      ids: '联系方式', merges: 'Cindy 自动合并的档案', split: '拆开', splitDone: (n) => `已拆开，「${n}」恢复成单独的档案`,
+      mergeNote: 'Cindy 会自己判断哪些是同一个人并直接合并。合错了点「拆开」，或者直接告诉 Cindy 哪句不对。',
+      copied: (v) => `已复制 ${v}`,
+      askPh: (n) => (n ? `问关于${n}的事，或让 Cindy 写封邮件` : '让 Cindy 帮你整理通讯录'),
+      thinking: 'Cindy 在想…', working: (n) => `Cindy 正在处理，过程在侧边栏「通讯录 · ${n}」任务里`, failedTask: '这次没有完成，可以在侧边栏的任务里看原因。',
       markPending: '标记为待确认', markConfirmed: '标记为已确认', addToGroup: '加入分组', newGroup: '新分组名，回车创建',
-      removeFromGroup: (g) => `移出「${g}」`, del: '删除这个人…', delAsk: (n) => `确定删除「${n}」？他的往来和联系方式会一起删除，无法恢复。`, delYes: '删除',
-      deleted: (n) => `已删除 ${n}`, savedOk: '已保存', added: '已记下', confirmed: '已确认',
-      fName: '名字', fAliases: '别名（逗号分隔）', fKind: '类型', person: '人', org: '组织', fSummary: '一句话介绍', fStory: '你们的故事',
+      removeFromGroup: (g) => `移出「${g}」`, del: '删除这个人…', delAsk: (n) => `确定删除「${n}」？往来和联系方式会一起删除，无法恢复。`, delYes: '删除',
+      deleted: (n) => `已删除 ${n}`, savedOk: '已保存', confirmed: '已确认',
+      fName: '名字', fAliases: '别名（逗号分隔）', fKind: '类型', person: '人', org: '组织', fSummary: '一句话介绍', fStory: '介绍',
       fNote: '给 AI 的提示（只给 AI 看）', fIds: '联系方式与身份', addId: '添加一项', fGroups: '分组（逗号分隔）',
       dupSuspect: '已有名字相似的人：', createAnyway: '仍然新建',
-      helloTitle: '建立你的通讯录', helloText: '从 Mac 的通讯录导入名片，之后 AI 会在对话中帮你慢慢记住每个人是谁、你们聊过什么。',
-      helloManual: '手动新建一位', helloNonMac: '可以先手动新建，之后让 AI 在对话中帮你记人。',
+      helloTitle: '让 Cindy 认识你身边的人',
+      helloText: (d) => `Cindy 会读你最近 ${d} 天的邮件、日历、飞书和 Cindy 对话，给常来往的人写好档案：是谁、你们之间还没完的事、全部往来。之后每天自动更新；想要更早的，随时往前补。`,
+      helloStart: (d) => `整理最近 ${d} 天`, helloDaily: '每天自动整理', helloOther: '也可以', helloMac: '从 Mac 通讯录导入', helloManual: '手动新建一位',
+      helloRunning: 'Cindy 正在整理。先写来往最多的人，写好一个，左边就出现一个。',
+      helloNote: '整理会用到你已经装好的邮件、日历和飞书插件，每次都会用到 AI 额度。过程在侧边栏「通讯录 · 整理」任务里，第一次用某个插件时可能要你点一下允许。',
       legacyFailed: (m) => `旧版通讯录没有导入成功：${m}`,
       loading: '正在打开通讯录…', importingLegacy: '正在从旧版通讯录导入…', legacyDone: (n) => `已从旧版通讯录导入 ${n} 份档案`,
       readMac: '读取 Mac 通讯录', reading: '正在读取 Mac 通讯录…第一次会弹出系统授权，请选择允许。',
-      importIntro: '只读取，不会修改 Mac 通讯录。邮箱或电话相同的名片会并入已有档案，名字相似的会放进「待确认」。',
+      importIntro: '只读取，不会修改 Mac 通讯录。邮箱或电话相同的名片会并入已有档案。',
       preview: (r) => `共 ${r.total} 张名片：新建 ${r.created} 位，补全 ${r.updated} 位已有档案，${r.unchanged} 位已经在了。`,
-      previewReview: (n) => `其中 ${n} 位和已有档案重名，会放进「待确认」等你判断。`,
+      previewReview: (n) => `其中 ${n} 位和已有档案重名。`,
       doImport: '导入', importing: '正在导入…', imported: (r) => `已导入：新建 ${r.created} 位，补全 ${r.updated} 位`,
       noPerm: '没有通讯录权限。请到「系统设置 › 隐私与安全性 › 自动化」允许 Cindy 控制「通讯录」，然后重试。',
       macOnly: '只有 Mac 可以从系统通讯录导入。', retry: '重试',
       dupsTitle: '可能重复的档案', dupsNone: '没有发现重复的档案。', mergeLeft: '并入左边', notSame: '不是同一人', merged: '已合并',
-      askPh: (n) => (n ? `问 AI 关于${n}的任何事` : '让 AI 帮你整理通讯录'), askSent: '已交给 AI，在新任务里处理', failed: '没有成功：',
-      libError: '通讯录资料库暂时打不开：',
-      autoOff: '让 AI 自动整理通讯录', autoOn: '开启', autoWaiting: '自动整理：等你在自动化页保存', settingsLink: '设置',
-      autoLast: (when, r) => `上次自动整理 ${when} · 新增 ${r.created} · 更新 ${r.updated}${r.pending ? ` · 待确认 ${r.pending}` : ''}`,
-      autoTitle: '自动整理',
-      autoText: '开启后，Cindy 会定期读一遍你最近的对话（装了邮件、日历插件时也会看），把新认识的人、职位变化、联系方式和约定记进通讯录。拿不准的放进「待确认」，不会删除或合并。每一轮都会用到 AI 额度。',
+      failed: '没有成功：', libError: '通讯录资料库暂时打不开：',
+      footLast: (w) => `上次整理 ${w}`, footNever: '还没有整理过', footRunning: 'Cindy 正在整理…', footSettings: '设置',
+      autoTitle: '整理设置',
+      autoText: 'Cindy 按时间段整理：每次只读上次整理之后的新往来，给有变化的人改写档案。第一次只读最近一段，想要更早的可以往前补。每次整理都会用到 AI 额度。',
+      firstDays: '第一次读最近', daysOpt: (d) => `${d} 天`,
+      sourcesLabel: '读哪些来源', src: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 等消息', cindy: 'Cindy 对话', github: 'GitHub' },
+      srcHint: '只用你已经装好、授权过的插件；没装的会自动跳过。',
+      backLabel: '往前补每次', monthsOpt: (m) => `${m} 个月`,
+      tidyNow: '现在整理一次', backfillAll: (m) => `所有人往前补 ${m} 个月`, tidySent: '已交给 Cindy，在侧边栏「通讯录 · 整理」任务里可以看过程',
       profileLabel: '你的通讯录主要是', profColleagues: '同事和朋友', profClients: '很多客户',
       profColleaguesHint: '每天整理一次', profClientsHint: '每 6 小时整理一次，客户按公司归类，记下需求、报价和跟进约定',
       macSync: '每天和 macOS 通讯录对一次账（不用 AI）', macSyncHint: '只在你导入过一次后生效；只读，不改 Mac 通讯录',
-      openAutomation: '去自动化页开启', automationOpened: '已打开 Cindy 的自动化页：选好模型后点保存，自动整理就开始了。',
+      openAutomation: '每天自动整理：去自动化页开启', automationOpened: '已打开 Cindy 的自动化页：选好模型后点保存，每天自动整理就开始了。',
       automationAgain: '重新打开自动化页', stopHint: '想停用或改频率：在 Cindy 的自动化页暂停或删除「整理通讯录」。',
-      runsTitle: '最近几次', runLine: (r) => `新增 ${r.created} · 更新 ${r.updated} · 待确认 ${r.pending} · 读了 ${r.scanned} 段对话`,
+      runsTitle: '最近几次', runLine: (r) => `${r.scope === 'contact' ? '单人回补' : r.scope === 'backfill' ? '往前补' : '整理'} · 新增 ${r.created} · 更新 ${r.updated}`,
       noSchedule: '当前 Cindy 版本还不支持由插件发起自动化。',
     },
     en: {
-      all: 'Everyone', recent: 'Recent', pending: 'To confirm', orgs: 'Companies & teams', groups: 'Groups',
-      byName: 'By name', byRecent: 'By recent', people: (n) => `${n} people`, search: 'Find someone…',
-      pendingLine: (n) => ['', `${n} ${n === 1 ? 'item' : 'items'}`, ' to confirm'],
-      week: 'This week', month: 'This month', earlier: 'Earlier',
-      today: 'today', yesterday: 'yesterday', days: (n) => `${n}d`, weeks: (n) => `${n}w`, months: (n) => `${n}mo`, years: (n) => `${n}y`,
+      title: 'People', all: 'Everyone', recent: 'Recent', pending: 'To confirm', orgs: 'Companies & teams', groups: 'Groups',
+      search: 'Find someone…',
+      secNew: 'Since you last looked', secRecent: 'In touch lately', secEarlier: 'Known for a while',
+      folded: (n) => `${n} more with contact details only`, expand: 'Show', collapse: 'Hide',
+      subNew: (n) => `${n} updated since you last looked`, subCount: (n) => `Cindy has written up ${n} people`,
+      today: 'today', yesterday: 'yesterday', days: (n) => `${n}d ago`, weeks: (n) => `${n}w ago`, months: (n) => `${n}mo ago`, years: (n) => `${n}y ago`,
       noMatch: 'No one matches.', emptyScope: 'No one here yet.',
       edit: 'Edit', more: 'More', back: 'Back', save: 'Save', cancel: 'Cancel', create: 'Create',
-      newContact: 'New contact', importMac: 'Import from macOS Contacts', findDups: 'Find duplicates', retryLegacy: 'Re-import old contacts',
-      related: 'Related', events: 'Timeline', showAll: (n) => `Show all ${n}`, showLess: 'Show less',
-      addEvent: 'Note something, e.g. lunch next Thursday', add: 'Add',
-      emptyStory: 'No story yet. Click to write a few lines, or let AI fill it in.',
-      noteLabel: 'Note for AI',
-      pendingAsk: 'AI is not sure about this entry. Confirm it to keep it.', confirm: 'Confirm', notThis: 'Delete',
-      inGroups: 'Groups', copied: (v) => `Copied ${v}`,
+      newContact: 'New contact', importMac: 'Import from macOS Contacts', findDups: 'Find duplicates', retryLegacy: 'Re-import old contacts', autoSettings: 'Tidy-up settings',
+      tabOverview: 'Overview', tabHistory: 'Exchanges', tabInfo: 'Details',
+      since: 'Since you last looked', sinceCount: (n) => `${n} ${n === 1 ? 'item' : 'items'}`,
+      loops: 'Still open between you', loopsNone: 'Nothing open.', doneTag: 'Done', markDone: 'Mark done', reopen: 'Reopen',
+      cv: 'Timeline & people', related: 'Works with', inGroups: 'Groups',
+      thin: 'Cindy has not found any exchanges with them yet.', thinAct: 'Look in mail and chats',
+      contactLine: (n) => `${n} exchanges`, lastLine: (d) => `last ${d}`,
+      filterAll: (n) => `All ${n}`, ch: { mail: 'Mail', im: 'Chat', calendar: 'Calendar', cindy: 'Cindy', github: 'GitHub', call: 'Call', other: 'Other' },
+      open: 'Open', coveredTo: (d) => `Covered back to ${d}`, coveredNone: 'Not backfilled yet', backfillBtn: (m) => `Go back ${m} more months`, backfilling: 'Cindy is going further back…',
+      noHistory: 'No exchanges recorded yet.',
+      ids: 'Contact details', merges: 'Merged by Cindy', split: 'Split', splitDone: (n) => `Split: “${n}” is a separate entry again`,
+      mergeNote: 'Cindy decides on its own which entries are the same person and merges them. If one is wrong, split it, or tell Cindy what is off.',
+      copied: (v) => `Copied ${v}`,
+      askPh: (n) => (n ? `Ask about ${n}, or have Cindy draft an email` : 'Ask Cindy to tidy up your contacts'),
+      thinking: 'Cindy is thinking…', working: (n) => `Cindy is on it; follow along in the “通讯录 · ${n}” task in the sidebar`, failedTask: 'This did not finish; the task in the sidebar shows why.',
       markPending: 'Mark as to confirm', markConfirmed: 'Mark as confirmed', addToGroup: 'Add to group', newGroup: 'New group name, press Enter',
-      removeFromGroup: (g) => `Remove from “${g}”`, del: 'Delete…', delAsk: (n) => `Delete “${n}”? Their timeline and contact details are deleted too. This cannot be undone.`, delYes: 'Delete',
-      deleted: (n) => `Deleted ${n}`, savedOk: 'Saved', added: 'Noted', confirmed: 'Confirmed',
-      fName: 'Name', fAliases: 'Other names (comma separated)', fKind: 'Type', person: 'Person', org: 'Organization', fSummary: 'One-line intro', fStory: 'Your story',
+      removeFromGroup: (g) => `Remove from “${g}”`, del: 'Delete…', delAsk: (n) => `Delete “${n}”? Their exchanges and contact details are deleted too. This cannot be undone.`, delYes: 'Delete',
+      deleted: (n) => `Deleted ${n}`, savedOk: 'Saved', confirmed: 'Confirmed',
+      fName: 'Name', fAliases: 'Other names (comma separated)', fKind: 'Type', person: 'Person', org: 'Organization', fSummary: 'One-line intro', fStory: 'Intro',
       fNote: 'Note for AI (only AI sees this)', fIds: 'Contact details', addId: 'Add', fGroups: 'Groups (comma separated)',
       dupSuspect: 'Someone with a similar name exists: ', createAnyway: 'Create anyway',
-      helloTitle: 'Start your contacts', helloText: 'Import cards from your Mac’s Contacts. Later, AI remembers who people are and what you talked about.',
-      helloManual: 'Add someone', helloNonMac: 'Add people by hand, and let AI remember people as you chat.',
+      helloTitle: 'Let Cindy get to know your people',
+      helloText: (d) => `Cindy reads the last ${d} days of your mail, calendar, Feishu and Cindy chats and writes up the people you deal with: who they are, what is still open, every exchange. It updates daily after that; go further back whenever you like.`,
+      helloStart: (d) => `Tidy up the last ${d} days`, helloDaily: 'Tidy up daily', helloOther: 'Or', helloMac: 'import Mac Contacts', helloManual: 'add someone',
+      helloRunning: 'Cindy is working. The people you deal with most come first; each appears on the left as soon as it is written.',
+      helloNote: 'Tidying uses the mail, calendar and chat plugins you already installed and uses AI quota. Follow along in the “通讯录 · 整理” task in the sidebar; the first use of a plugin may ask you to allow it.',
       legacyFailed: (m) => `Old contacts were not imported: ${m}`,
       loading: 'Opening contacts…', importingLegacy: 'Importing your old contacts…', legacyDone: (n) => `Imported ${n} entries from old contacts`,
       readMac: 'Read Mac Contacts', reading: 'Reading Mac Contacts… macOS asks for permission the first time.',
-      importIntro: 'Read-only: your Mac Contacts are not changed. Cards with the same email or phone join existing entries; similar names go to “To confirm”.',
+      importIntro: 'Read-only: your Mac Contacts are not changed. Cards with the same email or phone join existing entries.',
       preview: (r) => `${r.total} cards: ${r.created} new, ${r.updated} existing entries completed, ${r.unchanged} already here.`,
-      previewReview: (n) => `${n} share a name with an existing entry and go to “To confirm”.`,
+      previewReview: (n) => `${n} share a name with an existing entry.`,
       doImport: 'Import', importing: 'Importing…', imported: (r) => `Imported: ${r.created} new, ${r.updated} completed`,
       noPerm: 'No access to Contacts. Allow Cindy to control Contacts in System Settings › Privacy & Security › Automation, then retry.',
       macOnly: 'Importing from system contacts works only on a Mac.', retry: 'Retry',
       dupsTitle: 'Possible duplicates', dupsNone: 'No duplicates found.', mergeLeft: 'Merge into left', notSame: 'Not the same', merged: 'Merged',
-      askPh: (n) => (n ? `Ask AI anything about ${n}` : 'Ask AI to tidy up your contacts'), askSent: 'Sent to AI in a new task', failed: 'Did not work: ',
-      libError: 'The contacts library cannot be opened right now: ',
-      autoOff: 'Let AI keep your contacts up to date', autoOn: 'Turn on', autoWaiting: 'Auto-tidy: waiting for you to save the automation', settingsLink: 'Settings',
-      autoLast: (when, r) => `Last tidy ${when} · ${r.created} new · ${r.updated} updated${r.pending ? ` · ${r.pending} to confirm` : ''}`,
-      autoTitle: 'Auto-tidy',
-      autoText: 'When on, Cindy regularly reads your recent conversations (and mail or calendar, if those plugins are installed) and records new people, role changes, contact details and plans. Anything uncertain goes to “To confirm”; nothing is deleted or merged. Each run uses AI quota.',
+      failed: 'Did not work: ', libError: 'The contacts library cannot be opened right now: ',
+      footLast: (w) => `Last tidy ${w}`, footNever: 'Not tidied yet', footRunning: 'Cindy is tidying up…', footSettings: 'Settings',
+      autoTitle: 'Tidy-up settings',
+      autoText: 'Cindy works in time windows: each run reads only what is new since the last one and rewrites the people who changed. The first run reads a short recent window; go further back whenever you like. Each run uses AI quota.',
+      firstDays: 'First run reads the last', daysOpt: (d) => `${d} days`,
+      sourcesLabel: 'Sources to read', src: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack chats', cindy: 'Cindy chats', github: 'GitHub' },
+      srcHint: 'Only plugins you already installed and allowed; missing ones are skipped.',
+      backLabel: 'Each backfill goes back', monthsOpt: (m) => `${m} ${m === 1 ? 'month' : 'months'}`,
+      tidyNow: 'Tidy up now', backfillAll: (m) => `Go back ${m} months for everyone`, tidySent: 'Sent to Cindy; follow along in the “通讯录 · 整理” task in the sidebar',
       profileLabel: 'Your contacts are mostly', profColleagues: 'Colleagues and friends', profClients: 'Many clients',
       profColleaguesHint: 'Tidy once a day', profClientsHint: 'Tidy every 6 hours, group clients by company, note needs, quotes and follow-ups',
-      macSync: 'Reconcile with macOS Contacts daily (no AI)', macSyncHint: 'Starts after your first import; read-only, your Mac Contacts are not changed',
-      openAutomation: 'Open Automations to turn on', automationOpened: 'Cindy’s Automations page is open: pick a model and save to start auto-tidy.',
-      automationAgain: 'Open Automations again', stopHint: 'To pause or change the schedule, pause or delete “整理通讯录” on Cindy’s Automations page.',
-      runsTitle: 'Recent runs', runLine: (r) => `${r.created} new · ${r.updated} updated · ${r.pending} to confirm · ${r.scanned} conversations read`,
+      macSync: 'Reconcile with macOS Contacts daily (no AI)', macSyncHint: 'Starts after your first import; read-only',
+      openAutomation: 'Tidy up daily: open Automations', automationOpened: 'Cindy’s Automations page is open: pick a model and save to start daily tidy-ups.',
+      automationAgain: 'Open Automations again', stopHint: 'To pause or change it, pause or delete “整理通讯录” on Cindy’s Automations page.',
+      runsTitle: 'Recent runs', runLine: (r) => `${r.scope === 'contact' ? 'One person' : r.scope === 'backfill' ? 'Backfill' : 'Tidy'} · ${r.created} new · ${r.updated} updated`,
       noSchedule: 'This Cindy version cannot start automations from plugins yet.',
     },
   };
@@ -115,16 +145,19 @@
     mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
     phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+    cal: '<rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     git: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M18 11.5c0 3-3 4-6.5 4.5"/>',
     at: '<circle cx="12" cy="12" r="3.5"/><path d="M15.5 12v1.5a2.5 2.5 0 0 0 5 0V12a8.5 8.5 0 1 0-3.4 6.8"/>',
     link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
     spark: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
     back: '<path d="M15 6l-6 6 6 6"/>',
+    check: '<path d="M5 12l5 5 9-10"/>',
   };
   const I = (n, cls) => `<svg class="i${cls ? ` ${cls}` : ''}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
   const PLATFORM_ICON = { email: 'mail', phone: 'phone', feishu: 'chat', lark: 'chat', slack: 'chat', wechat: 'chat', telegram: 'chat', dingtalk: 'chat', discord: 'chat', github: 'git', gitlab: 'git', x: 'at', twitter: 'at' };
-  const PLATFORM_NAME = { feishu: '飞书', lark: 'Lark', slack: 'Slack', wechat: '微信', telegram: 'Telegram', dingtalk: '钉钉', discord: 'Discord' };
+  const PLATFORM_NAME = { email: '邮箱', phone: '电话', feishu: '飞书', lark: 'Lark', slack: 'Slack', wechat: '微信', telegram: 'Telegram', dingtalk: '钉钉', discord: 'Discord', github: 'GitHub', x: 'X' };
+  const CHANNEL_ICON = { mail: 'mail', im: 'chat', calendar: 'cal', cindy: 'spark', github: 'git', call: 'phone', other: 'link' };
   /** 飞书 open_id 这类机器 id 不直接给人看，显示平台名，点击仍复制原值。 */
   function identityLabel(i) {
     const opaque = /^[a-z]{2,3}_[0-9a-z]{16,}$/i.test(i.value) || (i.value.length > 28 && !/[\s@.]/.test(i.value));
@@ -136,6 +169,8 @@
     const clean = String(text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
     return esc(clean).replace(/\*\*([^*\n]+?)\*\*/g, '<b>$1</b>');
   }
+  const paragraphs = (text) =>
+    String(text || '').replace(/<!--[\s\S]*?-->/g, '').split(/\n{2,}|\r\n\r\n/).map((p) => p.trim()).filter(Boolean);
   const PLATFORMS = ['email', 'phone', 'feishu', 'wechat', 'slack', 'telegram', 'github', 'x', 'other'];
 
   function uid() {
@@ -187,15 +222,19 @@
   const S = {
     boot: 'loading',
     meta: null,
+    view: { prev: '', current: '' },
     contacts: [],
     groups: [],
     scope: 'all',
-    sort: 'az',
     query: '',
+    showFolded: false,
     selId: null,
     detail: null,
-    mode: 'view', // view | edit | new | import | dups | hello
-    showAllEvents: false,
+    qa: [],
+    asking: false,
+    tab: 'overview',
+    filter: 'all',
+    mode: 'view', // view | edit | new | import | dups | hello | auto
     confirmDelete: false,
     importStep: null,
     importResult: null,
@@ -204,29 +243,29 @@
     dismissedDups: new Set(),
     formError: null,
     progress: null,
+    tasks: new Map(), // key -> 任务状态（来自 main.js 广播）
   };
 
-  /* ───────── 名单分组与时间 ───────── */
+  /* ───────── 时间 ───────── */
   const collator = new Intl.Collator(['zh-Hans-CN-u-co-pinyin', 'zh-Hans', 'en'], { sensitivity: 'base', numeric: true });
-  const BOUNDS = [['A', '阿'], ['B', '八'], ['C', '嚓'], ['D', '哒'], ['E', '妸'], ['F', '发'], ['G', '旮'], ['H', '哈'], ['J', '讥'], ['K', '咔'], ['L', '垃'], ['M', '妈'], ['N', '拿'], ['O', '噢'], ['P', '妑'], ['Q', '七'], ['R', '呥'], ['S', '仨'], ['T', '他'], ['W', '屲'], ['X', '夕'], ['Y', '丫'], ['Z', '帀']];
-  function letterOf(name) {
-    const ch = String(name || '').trim().charAt(0);
-    if (/[A-Za-z]/.test(ch)) return ch.toUpperCase();
-    if (/[㐀-鿿]/.test(ch)) {
-      for (let i = BOUNDS.length - 1; i >= 0; i--) if (collator.compare(ch, BOUNDS[i][1]) >= 0) return BOUNDS[i][0];
-    }
-    return '#';
+  const pad = (n) => String(n).padStart(2, '0');
+  function localDay(v) {
+    if (!v) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
-  function daysSince(day) {
+  function daysSince(v) {
+    const day = localDay(v);
     if (!day) return Infinity;
     const d = Date.parse(`${day}T00:00:00`);
-    if (Number.isNaN(d)) return Infinity;
     const now = new Date();
     const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     return Math.max(0, Math.round((t0 - d) / 86400000));
   }
-  function ago(day) {
-    const n = daysSince(day);
+  function ago(v) {
+    const n = daysSince(v);
     if (n === Infinity) return '';
     if (n === 0) return T.today;
     if (n === 1) return T.yesterday;
@@ -235,94 +274,99 @@
     if (n < 365) return T.months(Math.floor(n / 30));
     return T.years(Math.floor(n / 365));
   }
-  function fmtDate(day) {
+  function fmtDay(v) {
+    const day = localDay(v);
+    if (!day) return '';
     const d = new Date(`${day}T00:00:00`);
-    if (Number.isNaN(d.getTime())) return day;
     const sameYear = d.getFullYear() === new Date().getFullYear();
     return d.toLocaleDateString(LOCALE, sameYear ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' });
   }
+  function fmtWhen(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const n = daysSince(iso);
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (n === 0) return `${T.today} ${time}`;
+    if (n === 1) return `${T.yesterday} ${time}`;
+    return `${fmtDay(iso)} ${time}`;
+  }
+  const isNew = (iso) => !!(S.view.prev && iso && iso > S.view.prev);
 
-  function visible() {
+  /* ───────── 名单 ───────── */
+  function scoped() {
     let rows = S.contacts;
     if (S.scope === 'recent') rows = rows.filter((c) => daysSince(c.last) <= 30);
     else if (S.scope === 'pending') rows = rows.filter((c) => c.status === 'pending');
     else if (S.scope === 'orgs') rows = rows.filter((c) => c.kind === 'org');
     else if (S.scope.startsWith('g:')) rows = rows.filter((c) => c.groups.includes(S.scope.slice(2)));
     const q = S.query.trim().toLowerCase();
-    if (q) {
-      rows = rows.filter((c) =>
-        [c.name, c.summary, ...c.aliases, ...c.groups].some((v) => String(v || '').toLowerCase().includes(q)),
-      );
-    }
+    if (q) rows = rows.filter((c) => [c.name, c.summary, c.latest, ...c.aliases, ...c.groups].some((v) => String(v || '').toLowerCase().includes(q)));
     return rows;
   }
+  const byLast = (a, b) => String(b.last || '').localeCompare(String(a.last || '')) || collator.compare(a.name, b.name);
+  const changedSinceView = (c) => isNew(c.lastIngest) || isNew(c.latestAt);
 
-  function grouped(rows) {
-    if (S.sort === 'recent') {
-      const sorted = rows.slice().sort((a, b) => daysSince(a.last) - daysSince(b.last) || collator.compare(a.name, b.name));
-      const buckets = [[T.week, 7], [T.month, 31], [T.earlier, Infinity]];
-      const out = [];
-      let lo = -1;
-      for (const [label, hi] of buckets) {
-        const items = sorted.filter((c) => {
-          const d = daysSince(c.last);
-          return d > lo && d <= hi;
-        });
-        if (items.length) out.push({ key: label, when: true, items });
-        lo = hi;
-      }
-      return out;
-    }
-    const withLetter = rows.map((c) => ({ c, l: letterOf(c.name) }));
-    withLetter.sort((a, b) => (a.l === b.l ? collator.compare(a.c.name, b.c.name) : a.l === '#' ? 1 : b.l === '#' ? -1 : a.l.localeCompare(b.l)));
-    const out = [];
-    for (const { c, l } of withLetter) {
-      if (!out.length || out[out.length - 1].key !== l) out.push({ key: l, items: [] });
-      out[out.length - 1].items.push(c);
-    }
-    return out;
+  /** 有搜索或筛选时平铺；否则分成「上次看过之后 / 最近在来往 / 更早认识的」，只有联系方式的折叠起来。 */
+  function sections() {
+    const rows = scoped();
+    if (S.query.trim() || S.scope !== 'all') return { secs: [{ key: '', items: rows.slice().sort(byLast) }], folded: [] };
+    const rich = rows.filter((c) => c.rich);
+    const fresh = rich.filter(changedSinceView).sort(byLast);
+    const rest = rich.filter((c) => !changedSinceView(c));
+    const recent = rest.filter((c) => daysSince(c.last) <= 14).sort(byLast);
+    const earlier = rest.filter((c) => daysSince(c.last) > 14).sort(byLast);
+    const folded = rows.filter((c) => !c.rich).sort((a, b) => collator.compare(a.name, b.name));
+    const secs = [];
+    if (fresh.length) secs.push({ key: T.secNew, items: fresh });
+    if (recent.length) secs.push({ key: T.secRecent, items: recent });
+    if (earlier.length) secs.push({ key: T.secEarlier, items: earlier });
+    return { secs, folded };
   }
+  const flatVisible = () => {
+    const { secs, folded } = sections();
+    return [...secs.flatMap((s) => s.items), ...(S.showFolded ? folded : [])];
+  };
 
   function scopeTitle() {
-    if (S.scope === 'all') return T.all;
+    if (S.scope === 'all') return T.title;
     if (S.scope === 'recent') return T.recent;
     if (S.scope === 'pending') return T.pending;
     if (S.scope === 'orgs') return T.orgs;
     return S.scope.slice(2);
   }
 
-  /* ───────── 渲染：名单 ───────── */
   const listpane = $('#listpane');
   const detailEl = $('#detail');
 
+  function rowHtml(c) {
+    const line = c.latest || c.summary || c.groups[0] || '';
+    const fresh = changedSinceView(c) && c.latest;
+    return `<button class="row" data-id="${esc(c.id)}" aria-selected="${c.id === S.selId}">
+      <span class="nm">${esc(c.name)}</span><span class="t">${esc(ago(c.last))}</span>
+      <span class="sub${fresh ? ' fresh' : ''}">${esc(line)}</span></button>`;
+  }
+
   function renderList() {
-    const rows = visible();
-    const pendingCount = S.contacts.filter((c) => c.status === 'pending').length;
+    const { secs, folded } = sections();
+    const richCount = S.contacts.filter((c) => c.rich).length;
+    const freshCount = S.contacts.filter((c) => c.rich && changedSinceView(c)).length;
     let h = `<div class="lhead">
       <button class="scope" id="scopeBtn" aria-haspopup="menu">${esc(scopeTitle())}${I('down')}</button>
-      <div class="lsub"><span>${esc(T.people(rows.length))}</span><span>·</span>
-        <button data-sort="az" aria-pressed="${S.sort === 'az'}">${esc(T.byName)}</button><span>/</span>
-        <button data-sort="recent" aria-pressed="${S.sort === 'recent'}">${esc(T.byRecent)}</button></div>
-      <label class="find">${I('search')}<input id="findInput" type="search" value="${esc(S.query)}" placeholder="${esc(T.search)}" autocomplete="off" spellcheck="false">${S.query ? `<button class="clear" id="clearFind" aria-label="clear">${I('x', 's')}</button>` : ''}</label>`;
-    if (pendingCount && S.scope !== 'pending') {
-      const [a, b, c] = T.pendingLine(pendingCount);
-      h += `<button class="pend" id="pendLink"><span>${esc(a)}<b>${esc(b)}</b>${esc(c)}</span>${I('arrow', 's')}</button>`;
+      <div class="lsub">${freshCount ? `<b>${esc(T.subNew(freshCount))}</b>` : esc(T.subCount(richCount))}</div>
+      <label class="find">${I('search')}<input id="findInput" type="search" value="${esc(S.query)}" placeholder="${esc(T.search)}" autocomplete="off" spellcheck="false">${S.query ? `<button class="clear" id="clearFind" aria-label="clear">${I('x', 's')}</button>` : ''}</label></div>`;
+    h += '<div class="lscroll" id="lscroll">';
+    const any = secs.some((s) => s.items.length) || folded.length;
+    if (!any) h += `<div class="lempty">${esc(S.query ? T.noMatch : T.emptyScope)}</div>`;
+    for (const s of secs) {
+      if (!s.items.length) continue;
+      if (s.key) h += `<div class="lsec">${esc(s.key)}</div>`;
+      h += s.items.map(rowHtml).join('');
     }
-    h += '</div><div class="lscroll" id="lscroll">';
-    if (!rows.length) {
-      h += `<div class="lempty">${esc(S.query ? T.noMatch : T.emptyScope)}</div>`;
-    } else {
-      for (const g of grouped(rows)) {
-        const cur = g.items.some((c) => c.id === S.selId);
-        h += `<div class="lg${cur ? ' cur' : ''}${g.when ? ' when' : ''}"><div class="ll">${esc(g.key)}</div><div>`;
-        for (const c of g.items) {
-          h += `<button class="row${c.status === 'pending' ? ' pending' : ''}" data-id="${esc(c.id)}" aria-selected="${c.id === S.selId}">
-            <span class="nm">${esc(c.name)}</span><span class="sub">${esc(c.summary || c.groups[0] || '')}</span><span class="t">${esc(ago(c.last))}</span></button>`;
-        }
-        h += '</div></div>';
-      }
+    if (folded.length) {
+      h += `<button class="fold" data-action="toggleFolded"><span>${esc(T.folded(folded.length))}</span><span>${esc(S.showFolded ? T.collapse : T.expand)} ›</span></button>`;
+      if (S.showFolded) h += `<div class="folded">${folded.map(rowHtml).join('')}</div>`;
     }
-    h += '</div>' + autoFooter();
+    h += '</div>' + listFooter();
     const keepScroll = $('#lscroll')?.scrollTop || 0;
     const hadFocus = document.activeElement?.id === 'findInput';
     const caret = hadFocus ? document.activeElement.selectionStart : null;
@@ -335,104 +379,152 @@
     }
   }
 
-  function whenText(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const time = d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
-    const n = daysSince(day);
-    return n === 0 ? `${T.today} ${time}` : n === 1 ? `${T.yesterday} ${time}` : fmtDate(day);
-  }
+  const tidyRunning = () => [...S.tasks.values()].some((t) => t.key === 'maintain' && t.status === 'running');
 
-  function autoFooter() {
-    if (S.boot !== 'ready' || !S.meta || !S.meta.schedule) return '';
+  function listFooter() {
+    if (S.boot !== 'ready' || !S.meta) return '';
     const m = S.meta.maintenance;
     let text;
-    if (m && m.last) text = `<span>${esc(T.autoLast(whenText(m.lastRunAt), m.last))}</span>`;
-    else if (S.meta.automationRequested) text = `<span>${esc(T.autoWaiting)}</span>`;
-    else text = `<span>${esc(T.autoOff)}</span>`;
-    const action = m && m.last || S.meta.automationRequested ? T.settingsLink : T.autoOn;
-    return `<button class="lfoot" data-action="auto">${I('spark', 's')}${text}<b>${esc(action)}</b></button>`;
+    if (tidyRunning()) text = `<span class="spin s"></span><span>${esc(T.footRunning)}</span>`;
+    else if (m && m.lastRunAt) text = `<span>${esc(T.footLast(fmtWhen(m.lastRunAt)))}</span>`;
+    else text = `<span>${esc(T.footNever)}</span>`;
+    return `<button class="lfoot" data-action="auto">${I('spark', 's')}${text}<b>${esc(T.footSettings)}</b></button>`;
   }
 
-  /* ───────── 渲染：详情 ───────── */
-  function contactFooter(d) {
-    const ids = d.identities.filter((i) => i.platform !== 'apple-contacts');
+  /* ───────── 详情：概览 / 往来 / 资料 ───────── */
+  function sinceBlock(d) {
+    const fresh = d.interactions.filter((i) => isNew(i.addedAt)).slice(0, 6);
+    if (!fresh.length) return '';
+    let h = `<section class="since"><div class="sh"><b>${esc(T.since)}</b><span>${esc(T.sinceCount(fresh.length))}</span></div>`;
+    for (const i of fresh) {
+      h += `<div class="si"><span class="t">${esc(fmtWhen(i.at))}</span><div>${esc(i.summary || i.title)}${i.quote ? `<q>${esc(i.quote)}</q>` : ''}</div></div>`;
+    }
+    return h + '</section>';
+  }
+
+  function overviewTab(d) {
     let h = '';
-    if (ids.length) {
-      h += '<div class="contact">';
-      for (const i of ids) {
-        h += `<button data-copy="${esc(i.value)}" title="${esc(i.platform)}">${I(PLATFORM_ICON[i.platform] || 'link')}<span>${esc(identityLabel(i))}</span></button>`;
+    const paras = paragraphs(d.narrative);
+    if (paras.length) h += `<div class="portrait">${paras.map((p) => `<p>${richText(p)}</p>`).join('')}</div>`;
+    if (!d.interactions.length && !paras.length) {
+      h += `<div class="thin"><p>${esc(T.thin)}</p>${S.meta?.tasks ? `<button class="pill" data-action="backfill">${I('search', 's')}${esc(T.thinAct)}</button>` : ''}</div>`;
+    }
+    if (String(d.agentNotes || '').trim()) h += `<p class="note">${richText(d.agentNotes)}</p>`;
+    const open = d.loops.filter((l) => l.status === 'open');
+    const done = d.loops.filter((l) => l.status === 'done').slice(0, 3);
+    if (open.length || done.length) {
+      h += `<h3>${esc(T.loops)}</h3><div class="loops">`;
+      for (const l of [...open, ...done]) {
+        const fresh = l.status === 'open' && isNew(l.updatedAt);
+        h += `<div class="loop${l.status === 'done' ? ' done' : ''}">
+          <button class="dot" data-loop="${esc(l.id)}" data-status="${l.status === 'done' ? 'open' : 'done'}" title="${esc(l.status === 'done' ? T.reopen : T.markDone)}" aria-label="${esc(l.status === 'done' ? T.reopen : T.markDone)}">${l.status === 'done' ? I('check', 's') : ''}</button>
+          <div class="tx">${esc(l.text)}${fresh ? '<span class="tag">新</span>' : ''}${l.detail ? `<div>${esc(l.detail)}</div>` : ''}</div>
+          <span class="when">${esc(l.status === 'done' ? T.doneTag : fmtDay(l.since || l.updatedAt))}</span></div>`;
       }
       h += '</div>';
     }
-    if (d.groups.length) {
-      h += `<div class="groups"${ids.length ? '' : ' style="margin-top:44px"'}><span>${esc(T.inGroups)}</span>${d.groups
-        .map((g) => `<button data-scope="g:${esc(g.name)}">${esc(g.name)}</button>`)
-        .join('')}</div>`;
+    const kv = [...d.facts.map((f) => [f.label, esc(f.value)])];
+    if (d.relations.length) {
+      kv.push([T.related, d.relations.map((r) => `<span class="link" data-goto="${esc(r.otherId)}">${esc(r.otherName)}</span>${r.relation ? `<small>${esc(r.relation)}</small>` : ''}`).join('　')]);
+    }
+    if (d.groups.length) kv.push([T.inGroups, d.groups.map((g) => `<span class="link" data-scope="g:${esc(g.name)}">${esc(g.name)}</span>`).join('　')]);
+    if (d.events.length || kv.length) {
+      h += `<h3>${esc(T.cv)}</h3><div class="cv">`;
+      h += `<div class="tl">${d.events.slice(0, 8).map((e) => `<div class="ti"><div class="y">${esc(fmtDay(e.date))}</div><div class="e">${esc(e.text)}</div></div>`).join('')}</div>`;
+      h += `<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
     }
     return h;
   }
 
-  function storyBlock(d) {
-    const paras = String(d.narrative || '').replace(/<!--[\s\S]*?-->/g, '').split(/\n{2,}|\r\n\r\n/).map((p) => p.trim()).filter(Boolean);
-    let h = '<div class="story">';
-    if (paras.length) h += paras.map((p) => `<p>${richText(p)}</p>`).join('');
-    else if (!d.events.length) h += `<p class="empty" data-action="edit">${esc(T.emptyStory)}</p>`;
-    if (String(d.agentNotes || '').trim()) h += `<p class="note">${richText(d.agentNotes)}</p>`;
-    if (d.relations.length) {
-      const zh = LOCALE === 'zh-CN';
-      h += `<p class="note">${esc(T.related)}${zh ? '：' : ': '}${d.relations
-        .map((r) => `<span class="link" data-goto="${esc(r.otherId)}">${esc(r.otherName)}</span>${r.relation ? (zh ? `（${esc(r.relation)}）` : ` (${esc(r.relation)})`) : ''}`)
-        .join(zh ? '、' : ', ')}</p>`;
+  function historyTab(d) {
+    const all = d.interactions;
+    const kinds = [...new Set(all.map((i) => i.channel))];
+    let h = '';
+    if (all.length) {
+      h += `<div class="filt"><button data-filter="all" aria-pressed="${S.filter === 'all'}">${esc(T.filterAll(d.interactionTotal))}</button>`;
+      for (const k of kinds) h += `<button data-filter="${esc(k)}" aria-pressed="${S.filter === k}">${esc(T.ch[k] || k)} ${all.filter((i) => i.channel === k).length}</button>`;
+      h += '</div>';
+    } else {
+      h += `<p class="muted">${esc(T.noHistory)}</p>`;
     }
+    let lastMonth = '';
+    for (const i of all.filter((x) => S.filter === 'all' || x.channel === S.filter)) {
+      const dt = new Date(i.at);
+      const month = dt.toLocaleDateString(LOCALE, { year: dt.getFullYear() === new Date().getFullYear() ? undefined : 'numeric', month: 'long' });
+      if (month !== lastMonth) {
+        h += `<div class="month">${esc(month)}</div>`;
+        lastMonth = month;
+      }
+      h += `<div class="evx${isNew(i.addedAt) ? ' fresh' : ''}"><div class="dt">${esc(fmtWhen(i.at))}</div><div class="ch">${I(CHANNEL_ICON[i.channel] || 'link')}</div>
+        <div><div class="tt">${esc(i.title || T.ch[i.channel] || '')}<span>${esc(T.ch[i.channel] || i.channel)}</span></div>
+        ${i.summary ? `<div class="sm">${esc(i.summary)}</div>` : ''}${i.quote ? `<q>${esc(i.quote)}</q>` : ''}
+        ${i.link ? `<a class="go" href="${esc(i.link)}" target="_blank" rel="noopener noreferrer">${esc(T.open)} ›</a>` : ''}</div></div>`;
+    }
+    const covered = d.coveredFrom || S.meta?.coverage?.from || '';
+    const months = S.meta?.settings?.backfillMonths || 3;
+    const busy = S.tasks.get(`c:${d.id}`)?.status === 'running';
+    h += `<div class="cover"><span>${esc(covered ? T.coveredTo(fmtDay(covered)) : T.coveredNone)}</span>`;
+    if (S.meta?.tasks) h += busy ? `<span class="muted"><span class="spin s"></span>${esc(T.backfilling)}</span>` : `<button class="pill" data-action="backfill">${esc(T.backfillBtn(months))}</button>`;
     return h + '</div>';
   }
 
-  function eventsBlock(d) {
-    const list = S.showAllEvents ? d.events : d.events.slice(0, 6);
-    let h = `<div class="sec"><div class="sech"><span>${esc(T.events)}</span>`;
-    if (d.events.length > 6) h += `<button data-action="toggleEvents">${esc(S.showAllEvents ? T.showLess : T.showAll(d.events.length))}</button>`;
-    h += '</div>';
-    for (const e of list) {
-      h += `<div class="ev"><span class="d">${esc(fmtDate(e.date))}</span><span class="tx">${esc(e.text)}</span><button class="x" data-del-event="${esc(e.id)}" aria-label="delete">${I('x', 's')}</button></div>`;
+  function infoTab(d) {
+    const ids = d.identities.filter((i) => i.platform !== 'apple-contacts');
+    let h = `<h3>${esc(T.ids)}</h3>`;
+    for (const i of ids) {
+      h += `<button class="idr" data-copy="${esc(i.value)}">${I(PLATFORM_ICON[i.platform] || 'link')}<span class="k">${esc(i.label || PLATFORM_NAME[i.platform] || i.platform)}</span><span class="v">${esc(identityLabel(i))}</span></button>`;
     }
-    const today = new Date();
-    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    h += `<form class="addev" id="addEvent"><input id="evText" placeholder="${esc(T.addEvent)}" autocomplete="off"><input id="evDate" type="date" value="${iso}"><button class="pill" type="submit">${esc(T.add)}</button></form></div>`;
+    if (d.merges.length) {
+      h += `<h3>${esc(T.merges)}</h3>`;
+      for (const m of d.merges) {
+        h += `<div class="mg"><div>${esc(m.sourceName)}<span>${esc([m.reason, fmtDay(m.at)].filter(Boolean).join(' · '))}</span></div><button class="link" data-unmerge="${esc(m.id)}">${esc(T.split)}</button></div>`;
+      }
+    }
+    h += `<p class="note small">${esc(T.mergeNote)}</p>`;
     return h;
   }
 
+  function qaBlock(d) {
+    const list = S.qa.slice(-3);
+    const running = S.tasks.get(`c:${d.id}`);
+    if (!list.length && !S.asking) return '';
+    let h = '<section class="qa">';
+    for (const x of list) {
+      h += `<div class="qq">${esc(x.q)}</div>`;
+      if (x.status === 'running' || (running && running.status === 'running' && x === list[list.length - 1] && !x.a)) h += `<div class="qa-a muted"><span class="spin s"></span>${esc(T.working(d.name))}</div>`;
+      else if (x.status === 'failed' && !x.a) h += `<div class="qa-a muted">${esc(T.failedTask)}</div>`;
+      else h += `<div class="qa-a">${paragraphs(x.a).map((p) => `<p>${richText(p)}</p>`).join('')}</div>`;
+    }
+    if (S.asking) h += `<div class="qa-a muted"><span class="spin s"></span>${esc(T.thinking)}</div>`;
+    return h + '</section>';
+  }
+
   function askBar(d) {
-    if (!S.meta?.tasks) return '';
+    if (!S.meta?.tasks && !d) return '';
     return `<div class="askwrap"><form class="askbar" id="askForm">${I('spark')}<input id="askInput" placeholder="${esc(T.askPh(d ? d.name : ''))}" autocomplete="off"><button class="askgo" type="submit" aria-label="send">${I('arrow', 's')}</button></form></div>`;
   }
 
   function renderView() {
     const d = S.detail;
     if (!d) {
-      detailEl.innerHTML = askBar(null);
+      detailEl.innerHTML = '';
       return;
     }
     const latin = d.aliases.find((a) => /^[A-Za-z][A-Za-z .'-]*$/.test(a));
     let h = `<div class="tools"><button class="tbtn back" data-action="back">${I('back', 's')}${esc(T.back)}</button>`;
-    if (S.confirmDelete) {
-      h += '</div>';
-    } else {
-      h += `<button class="tbtn" data-action="edit">${esc(T.edit)}</button><button class="tbtn" id="moreBtn" aria-label="${esc(T.more)}">${I('more')}</button></div>`;
-    }
+    if (!S.confirmDelete) h += `<button class="tbtn" data-action="edit">${esc(T.edit)}</button><button class="tbtn" id="moreBtn" aria-label="${esc(T.more)}">${I('more')}</button>`;
+    h += '</div>';
     h += `<article class="page"><h1 class="name">${esc(d.name)}${latin ? `<small>${esc(latin)}</small>` : ''}</h1>`;
-    h += `<div class="who">${esc(d.summary || '')}</div>`;
+    const who = [d.summary, d.interactionTotal ? T.contactLine(d.interactionTotal) : '', d.interactions[0] ? T.lastLine(fmtDay(d.interactions[0].at)) : ''].filter(Boolean);
+    h += `<div class="who">${who.map((w) => `<span>${esc(w)}</span>`).join('')}</div>`;
     if (S.confirmDelete) {
       h += `<div class="confirmrow"><span>${esc(T.delAsk(d.name))}</span><span class="sp"></span><button class="pill" data-action="cancelDelete">${esc(T.cancel)}</button><button class="pill pri" data-action="doDelete">${esc(T.delYes)}</button></div>`;
     }
-    h += storyBlock(d);
-    if (d.status === 'pending') {
-      h += `<div class="confirmrow"><span>${esc(T.pendingAsk)}</span><span class="sp"></span><button class="pill" data-action="askDelete">${esc(T.notThis)}</button><button class="pill pri" data-action="confirm">${esc(T.confirm)}</button></div>`;
-    }
-    h += eventsBlock(d);
-    h += contactFooter(d);
+    h += sinceBlock(d);
+    const tab = (key, label, n) => `<button role="tab" data-tab="${key}" aria-selected="${S.tab === key}">${esc(label)}${n ? `<em>${n}</em>` : ''}</button>`;
+    h += `<nav class="tabs" role="tablist">${tab('overview', T.tabOverview)}${tab('history', T.tabHistory, d.interactionTotal)}${tab('info', T.tabInfo)}</nav>`;
+    h += `<div class="tabbody">${S.tab === 'history' ? historyTab(d) : S.tab === 'info' ? infoTab(d) : overviewTab(d)}</div>`;
+    h += qaBlock(d);
     h += '</article>';
     h += askBar(d);
     detailEl.innerHTML = h;
@@ -445,8 +537,8 @@
       <button type="button" class="rm" data-rm-row="${n}" aria-label="remove">${I('x', 's')}</button></div>`;
   }
 
-  function renderForm(isNew) {
-    const d = isNew ? { name: '', kind: 'person', aliases: [], summary: '', narrative: '', agentNotes: '', identities: [], groups: [] } : S.detail;
+  function renderForm(isNewForm) {
+    const d = isNewForm ? { name: '', kind: 'person', aliases: [], summary: '', narrative: '', agentNotes: '', identities: [], groups: [] } : S.detail;
     const ids = d.identities.filter((i) => i.platform !== 'apple-contacts');
     let h = `<div class="tools"><button class="tbtn" data-action="cancelEdit">${esc(T.cancel)}</button></div><article class="page"><form class="form" id="editForm">`;
     h += `<label class="field"><span>${esc(T.fName)}</span><input class="big" name="name" value="${esc(d.name)}" required autocomplete="off"></label>`;
@@ -458,22 +550,31 @@
     h += `<label class="field"><span>${esc(T.fGroups)}</span><input name="groups" value="${esc((d.groups || []).map((g) => g.name || g).join(', '))}" autocomplete="off"></label>`;
     h += `<label class="field"><span>${esc(T.fNote)}</span><textarea name="agentNotes" style="min-height:80px">${esc(d.agentNotes)}</textarea></label>`;
     if (S.formError) h += `<div class="err" id="formErr">${S.formError}</div>`;
-    h += `<div class="formacts"><span class="sp"></span><button type="button" class="pill" data-action="cancelEdit">${esc(T.cancel)}</button><button type="submit" class="pill pri">${esc(isNew ? T.create : T.save)}</button></div>`;
+    h += `<div class="formacts"><span class="sp"></span><button type="button" class="pill" data-action="cancelEdit">${esc(T.cancel)}</button><button type="submit" class="pill pri">${esc(isNewForm ? T.create : T.save)}</button></div>`;
     h += '</form></article>';
     detailEl.innerHTML = h;
-    detailEl.dataset.kind = d.kind === 'org' ? 'org' : 'person';
     $('#editForm [name=name]').focus();
   }
 
   function renderHello() {
     const legacy = S.meta?.legacy;
     const mac = S.meta?.platform === 'darwin';
+    const days = S.meta?.settings?.initialDays || 14;
     let h = '<div class="center"><div class="hello">';
-    h += `<h1>${esc(T.helloTitle)}</h1><p>${esc(mac ? T.helloText : T.helloNonMac)}</p><div class="acts">`;
-    if (mac) h += `<button class="pill pri" data-action="import">${esc(T.importMac)}</button>`;
-    h += `<button class="pill" data-action="new">${esc(T.helloManual)}</button></div>`;
+    h += `<h1>${esc(T.helloTitle)}</h1>`;
+    if (tidyRunning()) {
+      h += `<p><span class="spin"></span>${esc(T.helloRunning)}</p>`;
+    } else {
+      h += `<p>${esc(T.helloText(days))}</p><div class="acts">`;
+      if (S.meta?.tasks) h += `<button class="pill pri" data-action="tidyRecent">${esc(T.helloStart(days))}</button>`;
+      if (S.meta?.schedule) h += `<button class="pill" data-action="requestAutomation">${esc(T.helloDaily)}</button>`;
+      h += '</div>';
+      h += `<p class="small">${esc(T.helloOther)} ${mac ? `<button class="link" data-action="import">${esc(T.helloMac)}</button> · ` : ''}<button class="link" data-action="new">${esc(T.helloManual)}</button></p>`;
+    }
+    h += `<p class="small muted">${esc(T.helloNote)}</p>`;
+    if (S.autoOpened) h += `<p class="small">${esc(T.automationOpened)}</p>`;
     if (legacy && (legacy.status === 'error' || legacy.status === 'partial')) {
-      h += `<div class="stat">${esc(T.legacyFailed(legacy.message || legacy.status))} <button class="link" data-action="retryLegacy">${esc(T.retry)}</button></div>`;
+      h += `<p class="small">${esc(T.legacyFailed(legacy.message || legacy.status))} <button class="link" data-action="retryLegacy">${esc(T.retry)}</button></p>`;
     }
     h += '</div></div>';
     detailEl.innerHTML = h;
@@ -500,8 +601,8 @@
   function renderDups() {
     const pairs = (S.dups || []).filter((p) => !S.dismissedDups.has(`${p.a.id}|${p.b.id}`));
     let h = `<div class="tools"><button class="tbtn" data-action="closePanel">${esc(T.cancel)}</button></div><article class="page"><h1 class="name" style="font-size:34px">${esc(T.dupsTitle)}</h1><div class="who"></div>`;
-    if (S.dups === null) h += `<p><span class="spin"></span></p>`;
-    else if (!pairs.length) h += `<p class="who">${esc(T.dupsNone)}</p>`;
+    if (S.dups === null) h += '<p><span class="spin"></span></p>';
+    else if (!pairs.length) h += `<p class="muted">${esc(T.dupsNone)}</p>`;
     for (const p of pairs) {
       h += `<div class="dup"><div class="who2"><b>${esc(p.a.name)}</b><small>${esc(p.a.summary)}</small></div><span class="arrow">${I('back', 's')}</span>
         <div class="who2"><b>${esc(p.b.name)}</b><small>${esc(p.b.summary)}</small></div>
@@ -512,27 +613,38 @@
   }
 
   function renderAuto() {
-    const st = S.meta?.settings || { profile: 'colleagues', macAutoSync: true };
+    const st = S.meta?.settings || { profile: 'colleagues', macAutoSync: true, initialDays: 14, backfillMonths: 3, sources: {} };
     const m = S.meta?.maintenance;
-    const opt = (key, label, hint) =>
-      `<button class="opt" data-profile="${key}" aria-pressed="${st.profile === key}"><b>${esc(label)}</b><small>${esc(hint)}</small></button>`;
+    const seg = (key, values, label) =>
+      `<div class="seg">${values.map((v) => `<button type="button" data-set="${key}" data-value="${v}" aria-pressed="${st[key] === v}">${esc(label(v))}</button>`).join('')}</div>`;
+    const opt = (key, label, hint) => `<button class="opt" data-profile="${key}" aria-pressed="${st.profile === key}"><b>${esc(label)}</b><small>${esc(hint)}</small></button>`;
     let h = `<div class="tools"><button class="tbtn" data-action="closePanel">${esc(T.cancel)}</button></div><article class="page">`;
-    h += `<h1 class="name" style="font-size:36px">${esc(T.autoTitle)}</h1><p class="who" style="margin-bottom:30px">${esc(T.autoText)}</p>`;
-    h += `<div class="sech">${esc(T.profileLabel)}</div><div class="opts">${opt('colleagues', T.profColleagues, T.profColleaguesHint)}${opt('clients', T.profClients, T.profClientsHint)}</div>`;
+    h += `<h1 class="name" style="font-size:36px">${esc(T.autoTitle)}</h1><p class="who" style="margin-bottom:26px">${esc(T.autoText)}</p>`;
+    if (S.meta?.tasks) {
+      h += `<div class="acts row-acts"><button class="pill pri" data-action="tidyRecent"${tidyRunning() ? ' disabled' : ''}>${esc(tidyRunning() ? T.footRunning : T.tidyNow)}</button><button class="pill" data-action="backfillAll"${tidyRunning() ? ' disabled' : ''}>${esc(T.backfillAll(st.backfillMonths))}</button></div>`;
+    }
+    h += `<div class="setrow"><span>${esc(T.firstDays)}</span>${seg('initialDays', [7, 14, 30], T.daysOpt)}</div>`;
+    h += `<div class="setrow"><span>${esc(T.backLabel)}</span>${seg('backfillMonths', [1, 3, 6, 12], T.monthsOpt)}</div>`;
+    h += `<div class="sech" style="margin-top:26px">${esc(T.sourcesLabel)}</div><div class="srcs">`;
+    for (const k of ['mail', 'calendar', 'im', 'cindy', 'github']) {
+      h += `<label class="src"><input type="checkbox" data-source="${k}"${st.sources?.[k] ? ' checked' : ''}><span>${esc(T.src[k])}</span></label>`;
+    }
+    h += `</div><p class="small muted">${esc(T.srcHint)}</p>`;
+    h += `<div class="sech" style="margin-top:26px">${esc(T.profileLabel)}</div><div class="opts">${opt('colleagues', T.profColleagues, T.profColleaguesHint)}${opt('clients', T.profClients, T.profClientsHint)}</div>`;
     if (S.meta?.platform === 'darwin') {
       h += `<label class="toggle"><span><b>${esc(T.macSync)}</b><small>${esc(T.macSyncHint)}</small></span><input type="checkbox" id="macSync"${st.macAutoSync ? ' checked' : ''}></label>`;
     }
     h += '<div class="sec">';
-    if (!S.meta?.schedule) h += `<p class="who">${esc(T.noSchedule)}</p>`;
+    if (!S.meta?.schedule) h += `<p class="muted">${esc(T.noSchedule)}</p>`;
     else {
-      h += `<div class="acts" style="display:flex;gap:10px;flex-wrap:wrap"><button class="pill pri" data-action="requestAutomation">${esc(S.meta.automationRequested ? T.automationAgain : T.openAutomation)}</button></div>`;
-      if (S.autoOpened) h += `<p class="who" style="margin:14px 0 0">${esc(T.automationOpened)}</p>`;
-      h += `<p class="who" style="margin:14px 0 0;color:var(--c-text-3)">${esc(T.stopHint)}</p>`;
+      h += `<div class="acts"><button class="pill" data-action="requestAutomation">${esc(S.meta.automationRequested ? T.automationAgain : T.openAutomation)}</button></div>`;
+      if (S.autoOpened) h += `<p class="small">${esc(T.automationOpened)}</p>`;
+      h += `<p class="small muted">${esc(T.stopHint)}</p>`;
     }
     h += '</div>';
     if (m && m.runs && m.runs.length) {
       h += `<div class="sec"><div class="sech">${esc(T.runsTitle)}</div>`;
-      for (const r of m.runs.slice(0, 6)) h += `<div class="ev"><span class="d">${esc(whenText(r.at))}</span><span class="tx">${esc(T.runLine(r))}${r.note ? `<br><span style="color:var(--c-text-3)">${esc(r.note)}</span>` : ''}</span><span></span></div>`;
+      for (const r of m.runs.slice(0, 6)) h += `<div class="runrow"><span class="d">${esc(fmtWhen(r.at))}</span><span>${esc(T.runLine(r))}${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}</span></div>`;
       h += '</div>';
     }
     h += '</article>';
@@ -576,10 +688,13 @@
   async function loadDetail(id) {
     if (!id) {
       S.detail = null;
+      S.qa = [];
       return;
     }
     try {
-      S.detail = await rpc('get', { id });
+      const [d, qa] = await Promise.all([rpc('get', { id }), rpc('qa', { contactId: id }).catch(() => [])]);
+      S.detail = d;
+      S.qa = qa || [];
     } catch (e) {
       if (e.code === 'NOT_FOUND') {
         S.detail = null;
@@ -591,8 +706,10 @@
   async function select(id) {
     S.selId = id;
     S.mode = 'view';
-    S.showAllEvents = false;
+    S.tab = 'overview';
+    S.filter = 'all';
     S.confirmDelete = false;
+    S.asking = false;
     renderList();
     await loadDetail(id);
     renderDetail();
@@ -600,15 +717,15 @@
   }
 
   function pickDefault() {
-    const rows = visible();
-    if (!S.contacts.length) {
-      S.mode = S.mode === 'import' || S.mode === 'new' ? S.mode : 'hello';
+    const rich = S.contacts.some((c) => c.rich);
+    if (!rich && !['import', 'new', 'auto', 'edit'].includes(S.mode)) {
+      S.mode = 'hello';
       S.selId = null;
       return;
     }
     if (S.mode === 'hello') S.mode = 'view';
     if (!S.selId || !S.contacts.some((c) => c.id === S.selId)) {
-      const first = grouped(rows)[0]?.items[0];
+      const first = flatVisible()[0];
       S.selId = first ? first.id : null;
     }
   }
@@ -631,6 +748,21 @@
       boot();
       return;
     }
+    if (m.name === 'task' && m.data) {
+      S.tasks.set(m.data.key, m.data);
+      if (S.boot !== 'ready') return;
+      if (m.data.contactId && m.data.contactId === S.selId && S.mode === 'view') {
+        rpc('qa', { contactId: S.selId })
+          .then((qa) => {
+            S.qa = qa || [];
+            renderView();
+          })
+          .catch(() => {});
+      }
+      renderList();
+      if (S.mode === 'hello' || S.mode === 'auto') renderDetail();
+      return;
+    }
     if (m.name === 'changed' && S.boot === 'ready') {
       clearTimeout(changeTimer);
       changeTimer = setTimeout(() => {
@@ -644,7 +776,7 @@
           })
           .catch(() => {})
           .finally(() => refreshAll().catch(() => {}));
-      }, 150);
+      }, 250);
     }
   }
 
@@ -682,7 +814,7 @@
 
   /* ───────── 菜单 ───────── */
   const menu = $('#menu');
-  function openMenu(anchor, html, onReady) {
+  function openMenu(anchor, html) {
     menu.innerHTML = html;
     menu.hidden = false;
     const r = anchor.getBoundingClientRect();
@@ -690,7 +822,6 @@
     const left = Math.min(window.innerWidth - w - 8, Math.max(8, r.left));
     menu.style.left = `${anchor.id === 'moreBtn' ? Math.max(8, r.right - w) : left}px`;
     menu.style.top = `${Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8)}px`;
-    if (onReady) onReady();
   }
   function closeMenu() {
     menu.hidden = true;
@@ -700,12 +831,14 @@
     const count = (fn) => S.contacts.filter(fn).length;
     const item = (key, label, n) => `<button class="mi" data-scope="${esc(key)}"><span>${esc(label)}</span><span class="r">${n}</span></button>`;
     let h = item('all', T.all, S.contacts.length) + item('recent', T.recent, count((c) => daysSince(c.last) <= 30));
-    h += item('pending', T.pending, count((c) => c.status === 'pending')) + item('orgs', T.orgs, count((c) => c.kind === 'org'));
+    const pendingN = count((c) => c.status === 'pending');
+    if (pendingN) h += item('pending', T.pending, pendingN);
+    h += item('orgs', T.orgs, count((c) => c.kind === 'org'));
     if (S.groups.length) {
       h += `<div class="msep"></div><div class="mhead">${esc(T.groups)}</div>`;
       for (const g of S.groups) h += item(`g:${g.name}`, g.name, g.members);
     }
-    h += `<div class="msep"></div><button class="mi" data-action="new">${esc(T.newContact)}</button>`;
+    h += `<div class="msep"></div><button class="mi" data-action="auto">${esc(T.autoSettings)}</button><button class="mi" data-action="new">${esc(T.newContact)}</button>`;
     if (S.meta?.platform === 'darwin') h += `<button class="mi" data-action="import">${esc(T.importMac)}</button>`;
     h += `<button class="mi" data-action="dups">${esc(T.findDups)}</button>`;
     if (S.meta?.legacy?.status === 'partial' || S.meta?.legacy?.status === 'error') h += `<button class="mi" data-action="retryLegacy">${esc(T.retryLegacy)}</button>`;
@@ -715,8 +848,9 @@
     const d = S.detail;
     if (!d) return;
     const inGroups = new Set(d.groups.map((g) => g.name));
-    let h = `<button class="mi" data-action="${d.status === 'pending' ? 'confirm' : 'markPending'}">${esc(d.status === 'pending' ? T.markConfirmed : T.markPending)}</button>`;
-    h += `<div class="msep"></div><div class="mhead">${esc(T.addToGroup)}</div>`;
+    let h = '';
+    if (d.status === 'pending') h += `<button class="mi" data-action="confirm">${esc(T.markConfirmed)}</button><div class="msep"></div>`;
+    h += `<div class="mhead">${esc(T.addToGroup)}</div>`;
     for (const g of S.groups) {
       if (!inGroups.has(g.name)) h += `<button class="mi" data-add-group="${esc(g.name)}">${esc(g.name)}</button>`;
     }
@@ -753,14 +887,14 @@
   }
 
   async function submitForm(allowDuplicate) {
-    const isNew = S.mode === 'new';
+    const isNewForm = S.mode === 'new';
     const v = readForm();
     if (!v.name) return;
     try {
-      if (isNew) {
+      if (isNewForm) {
         const r = await rpc('save', {
           name: v.name, kind: v.kind, summary: v.summary, narrative: v.narrative, agentNotes: v.agentNotes, aliases: v.aliases, groups: v.groups,
-          identities: v.rows.filter((r) => r.value).map((r) => ({ platform: r.platform, value: r.value })), allowDuplicate: !!allowDuplicate,
+          identities: v.rows.filter((x) => x.value).map((x) => ({ platform: x.platform, value: x.value })), allowDuplicate: !!allowDuplicate,
         });
         S.formError = null;
         S.mode = 'view';
@@ -770,10 +904,10 @@
         return;
       }
       const d = S.detail;
-      const keptIds = new Set(v.rows.filter((r) => r.id).map((r) => r.id));
-      const changedIds = v.rows.filter((r) => r.id && d.identities.some((i) => i.id === r.id && (i.value !== r.value || i.platform !== r.platform)));
+      const keptIds = new Set(v.rows.filter((x) => x.id).map((x) => x.id));
+      const changedIds = v.rows.filter((x) => x.id && d.identities.some((i) => i.id === x.id && (i.value !== x.value || i.platform !== x.platform)));
       const removeIdentityIds = d.identities.filter((i) => i.platform !== 'apple-contacts' && (!keptIds.has(i.id) || changedIds.some((c) => c.id === i.id))).map((i) => i.id);
-      const identities = v.rows.filter((r) => r.value && (!r.id || changedIds.some((c) => c.id === r.id))).map((r) => ({ platform: r.platform, value: r.value }));
+      const identities = v.rows.filter((x) => x.value && (!x.id || changedIds.some((c) => c.id === x.id))).map((x) => ({ platform: x.platform, value: x.value }));
       const oldGroups = d.groups.map((g) => g.name);
       await rpc('save', {
         id: d.id, name: v.name, kind: v.kind, summary: v.summary, narrative: v.narrative, agentNotes: v.agentNotes,
@@ -797,8 +931,7 @@
         S.formError = esc(T.failed + e.message);
       }
       const keep = readForm();
-      renderForm(isNew);
-      // 保留已填写的内容
+      renderForm(isNewForm);
       const f = $('#editForm');
       f.querySelector('[name=name]').value = keep.name;
       f.querySelector('[name=summary]').value = keep.summary;
@@ -806,7 +939,7 @@
       f.querySelector('[name=agentNotes]').value = keep.agentNotes;
       f.querySelector('[name=aliases]').value = keep.aliases.join(', ');
       f.querySelector('[name=groups]').value = keep.groups.join(', ');
-      $('#idRows').innerHTML = keep.rows.map((r, n) => idRow(r, n)).join('');
+      $('#idRows').innerHTML = keep.rows.map((x, n) => idRow(x, n)).join('');
     }
   }
 
@@ -852,6 +985,36 @@
     if (S.mode === 'dups') renderDups();
   }
 
+  async function startTidy(params) {
+    try {
+      const r = await rpc('tidy', params);
+      S.tasks.set(r.key, r);
+      if (params.scope !== 'contact') toast(T.tidySent);
+    } catch (e) {
+      failToast(e);
+    }
+    render();
+  }
+
+  async function ask(text) {
+    const id = S.selId;
+    S.asking = true;
+    renderView();
+    try {
+      const r = await rpc('ask', { text, contactId: id || '' });
+      if (r.kind === 'task') S.tasks.set(r.key, r);
+      if (id) S.qa = await rpc('qa', { contactId: id });
+    } catch (e) {
+      failToast(e);
+    }
+    S.asking = false;
+    if (S.selId === id && S.mode === 'view') {
+      renderView();
+      const qa = $('.qa');
+      if (qa) qa.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
   /* ───────── 事件绑定 ───────── */
   document.addEventListener('click', async (e) => {
     const t = e.target;
@@ -864,23 +1027,12 @@
       closeMenu();
       S.scope = x.dataset.scope;
       S.selId = null;
-      S.mode = S.contacts.length ? 'view' : 'hello';
+      S.mode = 'view';
       pickDefault();
       renderList();
       if (S.selId) return select(S.selId);
       S.detail = null;
       return renderDetail();
-    }
-    if ((x = c('[data-sort]'))) {
-      S.sort = x.dataset.sort;
-      return renderList();
-    }
-    if (c('#pendLink')) {
-      S.scope = 'pending';
-      S.selId = null;
-      pickDefault();
-      renderList();
-      return select(S.selId);
     }
     if (c('#clearFind')) {
       S.query = '';
@@ -891,14 +1043,23 @@
     if ((x = c('[data-goto]'))) {
       const id = x.dataset.goto;
       if (!id) return;
-      if (!visible().some((r) => r.id === id)) {
-        S.scope = 'all';
-        S.query = '';
-      }
+      S.scope = 'all';
+      S.query = '';
+      if (!S.contacts.find((r) => r.id === id)?.rich) S.showFolded = true;
       return select(id);
     }
+    if ((x = c('[data-tab]'))) {
+      S.tab = x.dataset.tab;
+      S.filter = 'all';
+      return renderView();
+    }
+    if ((x = c('[data-filter]'))) {
+      S.filter = x.dataset.filter;
+      return renderView();
+    }
+    if ((x = c('[data-loop]'))) return mutate(() => rpc('loop', { id: x.dataset.loop, status: x.dataset.status }));
+    if ((x = c('[data-unmerge]'))) return mutate(() => rpc('unmerge', { id: x.dataset.unmerge }), (r) => T.splitDone(r.name));
     if ((x = c('[data-copy]'))) return copy(x.dataset.copy);
-    if ((x = c('[data-del-event]'))) return mutate(() => rpc('deleteEvent', { id: x.dataset.delEvent }));
     if ((x = c('[data-add-group]'))) {
       closeMenu();
       return mutate(() => rpc('organize', { action: 'add_to_group', contactIds: [S.selId], group: x.dataset.addGroup }), T.savedOk);
@@ -910,7 +1071,7 @@
     if ((x = c('[data-merge]'))) {
       const [sourceId, targetId] = x.dataset.merge.split('|');
       try {
-        await rpc('merge', { sourceId, targetId });
+        await rpc('merge', { sourceId, targetId, reason: '' });
         toast(T.merged);
         S.dups = S.dups.filter((p) => p.a.id !== sourceId && p.b.id !== sourceId);
         await loadList();
@@ -933,6 +1094,14 @@
       }
       return renderAuto();
     }
+    if ((x = c('[data-set]'))) {
+      try {
+        S.meta.settings = await rpc('settings', { [x.dataset.set]: Number(x.dataset.value) });
+      } catch (err) {
+        failToast(err);
+      }
+      return renderAuto();
+    }
     if ((x = c('[data-rm-row]'))) return x.closest('.idrow').remove();
     if ((x = c('[data-kind]'))) {
       for (const b of x.parentNode.children) b.setAttribute('aria-pressed', String(b === x));
@@ -941,6 +1110,10 @@
     if (!(x = c('[data-action]'))) return;
     const a = x.dataset.action;
     closeMenu();
+    if (a === 'toggleFolded') {
+      S.showFolded = !S.showFolded;
+      return renderList();
+    }
     if (a === 'edit') {
       S.mode = 'edit';
       S.formError = null;
@@ -952,7 +1125,7 @@
       return renderDetail();
     }
     if (a === 'cancelEdit' || a === 'closePanel') {
-      S.mode = S.contacts.length ? 'view' : 'hello';
+      S.mode = 'view';
       S.formError = null;
       S.importStep = null;
       S.importError = null;
@@ -966,12 +1139,7 @@
       box.insertAdjacentHTML('beforeend', idRow({ platform: 'email', value: '' }, box.children.length));
       return box.lastElementChild.querySelector('input').focus();
     }
-    if (a === 'toggleEvents') {
-      S.showAllEvents = !S.showAllEvents;
-      return renderView();
-    }
     if (a === 'confirm') return mutate(() => rpc('organize', { action: 'confirm', contactIds: [S.selId] }), T.confirmed);
-    if (a === 'markPending') return mutate(() => rpc('organize', { action: 'mark_pending', contactIds: [S.selId] }), T.savedOk);
     if (a === 'askDelete') {
       S.confirmDelete = true;
       renderView();
@@ -1014,6 +1182,13 @@
       }
       return render();
     }
+    if (a === 'tidyRecent') return startTidy({ scope: 'recent' });
+    if (a === 'backfillAll') return startTidy({ scope: 'backfill' });
+    if (a === 'backfill' && S.selId) {
+      await startTidy({ scope: 'contact', contactId: S.selId });
+      S.qa = await rpc('qa', { contactId: S.selId }).catch(() => S.qa);
+      return renderView();
+    }
     if (a === 'readMac') return readMac();
     if (a === 'doImport') return doImport();
     if (a === 'dups') return openDups();
@@ -1038,11 +1213,20 @@
   });
 
   document.addEventListener('change', async (e) => {
-    if (e.target.id === 'macSync') {
+    const t = e.target;
+    if (t.id === 'macSync') {
       try {
-        S.meta.settings = await rpc('settings', { macAutoSync: e.target.checked });
+        S.meta.settings = await rpc('settings', { macAutoSync: t.checked });
       } catch (err) {
-        e.target.checked = !e.target.checked;
+        t.checked = !t.checked;
+        failToast(err);
+      }
+    }
+    if (t.dataset && t.dataset.source) {
+      try {
+        S.meta.settings = await rpc('settings', { sources: { [t.dataset.source]: t.checked } });
+      } catch (err) {
+        t.checked = !t.checked;
         failToast(err);
       }
     }
@@ -1086,19 +1270,13 @@
     }
     if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'ArrowUp' || e.key === 'k') {
       e.preventDefault();
-      const flat = grouped(visible()).flatMap((g) => g.items);
+      const flat = flatVisible();
       const i = flat.findIndex((c) => c.id === S.selId);
       const next = flat[Math.max(0, Math.min(flat.length - 1, i + (e.key === 'ArrowDown' || e.key === 'j' ? 1 : -1)))];
       if (next && next.id !== S.selId) {
         await select(next.id);
         listpane.querySelector(`[data-id="${CSS.escape(next.id)}"]`)?.scrollIntoView({ block: 'nearest' });
       }
-      return;
-    }
-    if (e.key === 'e' && S.detail) {
-      e.preventDefault();
-      S.mode = 'edit';
-      return renderDetail();
     }
   });
 
@@ -1106,23 +1284,12 @@
     e.preventDefault();
     const f = e.target;
     if (f.id === 'editForm') return submitForm(false);
-    if (f.id === 'addEvent') {
-      const text = $('#evText').value.trim();
-      if (!text) return;
-      return mutate(() => rpc('logEvent', { contactId: S.selId, text, date: $('#evDate').value, source: 'manual' }), T.added);
-    }
     if (f.id === 'askForm') {
       const inp = $('#askInput');
       const text = inp.value.trim();
       if (!text) return;
       inp.value = '';
-      try {
-        await rpc('ask', { text, contactId: S.selId || '' });
-        toast(T.askSent);
-      } catch (err) {
-        inp.value = text;
-        failToast(err);
-      }
+      return ask(text);
     }
   });
 
@@ -1148,6 +1315,12 @@
       renderStatus();
       pollTimer = setTimeout(boot, 1000);
       return;
+    }
+    for (const r of S.meta.running || []) S.tasks.set(r.key, r);
+    try {
+      S.view = await rpc('opened');
+    } catch (_) {
+      /* 没有「上次看过」也能用 */
     }
     S.boot = 'ready';
     await refreshAll();

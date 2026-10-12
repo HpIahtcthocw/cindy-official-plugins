@@ -7,13 +7,16 @@
       "description": "名前、別名、メール、電話番号、Feishu/Slack/GitHub などの ID、または会社・プロジェクト・出来事のキーワードなど、あらゆる手がかりで人を探します。最大 limit 人の概要、ID、グループ、AI へのメモ、最近の出来事を返します。matchType は identity（ID 完全一致、最も確実）/ name（名前または別名の完全一致）/ text（本文に含まれる）。"
     },
     "get": {
-      "description": "ID で 1 件の完全なプロフィールを読みます：ID と連絡先、すべての出来事（新しい順）、ストーリー、AI へのメモ、グループ、関係。ID は find または list から取得します。"
+      "description": "id で一人の完全なファイルを読みます：ID と連絡先、紹介、要点、最新の動き、未完了の事、やり取り（新しい順、最大 200 件）、出来事、グループ、関係、統合履歴。"
     },
     "list": {
       "description": "プロフィールの概要をページ単位で一覧します（ストーリーと出来事の全文は含まない）。グループ・状態・種類で絞り込めます。特定の人を探すときは find を使います。"
     },
     "save": {
-      "description": "プロフィールを新規作成または更新します。id なしは新規作成：似た名前があると DUPLICATE_SUSPECT と候補を返すので、get で同一人物か確認し、同じなら id 付きで更新、違う場合だけ allow_duplicate を渡します。id ありは渡した項目だけ更新し、aliases・identities・groups は追加のみです。ID が別の人のものなら IDENTITY_CONFLICT と conflictContactId を返します。"
+      "description": "ファイルを作成または更新します。id なしで作成し、似た名前があると DUPLICATE_SUSPECT と候補を返します。id ありでは渡した項目だけを更新し、aliases・identities・groups・open_loops は追加です。"
+    },
+    "record": {
+      "description": "メール、Feishu、カレンダー、Cindy の会話、GitHub から読んだやり取りを人物ファイルに記録します（1 回最大 200 件）。contact_id、または identity / email / name で人物を特定します。同じ ref は一度だけ記録されます。"
     },
     "log_event": {
       "description": "日付付きの出来事を追加します：覚えておく価値のあるやり取り、約束、変化。"
@@ -25,7 +28,7 @@
       "description": "一括整理：グループへの追加・削除・移動（他のグループから外れる）、確認待ちの確定、確認待ちへの変更。"
     },
     "merge": {
-      "description": "source を target に統合してから source を削除します：ID、出来事、グループ、関係を移し、別名を統合し、ストーリーを連結します。ユーザーが同一人物だと確認した後にのみ使います。"
+      "description": "source を target に統合してから source を削除します。確信がある場合（同じメール・電話・アカウント、または同名で会社や文脈が一致）は reason を付けて直接統合します。統合は記録され、ユーザーは元に戻せます。"
     },
     "delete": {
       "description": "プロフィールとその ID、出来事、所属を削除します。元に戻せません。ユーザーが明確に削除を求めたときだけ confirm:true で呼びます。"
@@ -46,7 +49,7 @@
       "description": "最大 100 件のプロフィールを一括で作成・更新します。ルールは save と同じです。顧客リストや表、名刺の取り込みに使います。件ごとに結果を返し、失敗した件は他に影響しません。"
     },
     "maintenance": {
-      "description": "自動メンテナンスの開始と終了。begin は前回のチェックポイント、1 回あたりの変更上限、現在のプロファイル（同僚中心 / 顧客が多い）の整理方針と概要を返します。整理後に end で今回の件数と新しいチェックポイントを記録します。"
+      "description": "期間ごとの整理の開始と終了。begin は run_id、期間、調べるソースと時間指定の方法、上限を返します。scope は recent（前回から今まで、初回は直近 2 週間）、backfill（全員をさかのぼる）、contact（一人だけ）。記録後に run_id を付けて end を呼びます。"
     }
   }
 }

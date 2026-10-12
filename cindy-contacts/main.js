@@ -48,6 +48,26 @@ function parseAliases(raw) {
   }
 }
 
+/** 要点：[{ label, value }]，至多 12 条。 */
+function parseFacts(raw) {
+  try {
+    const a = JSON.parse(raw || '[]');
+    return Array.isArray(a) ? a.filter((f) => f && str(f.label) && str(f.value)).slice(0, 12) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function normalizeFacts(list) {
+  const out = [];
+  for (const f of Array.isArray(list) ? list : []) {
+    const label = Array.isArray(f) ? str(f[0]) : str(f && f.label);
+    const value = Array.isArray(f) ? str(f[1]) : str(f && f.value);
+    if (label && value) out.push({ label: label.slice(0, 20), value: value.slice(0, 200) });
+  }
+  return out.slice(0, 12);
+}
+
 function uniqueStrings(list) {
   const seen = new Set();
   const out = [];
@@ -218,7 +238,56 @@ const SCHEMA_V1 = [
   )`,
 ];
 
-const SCHEMA_VERSION = 1;
+/**
+ * v2：往来（每条来自邮件/飞书/日历/对话的原始往来摘要，按来源 id 去重）、未完的事、
+ * 合并记录（可拆开）、档案上的要点/最新动态/回补进度。
+ */
+const SCHEMA_V2 = [
+  `CREATE TABLE IF NOT EXISTS contact_interactions (
+    id TEXT PRIMARY KEY,
+    contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    occurred_at TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    quote TEXT NOT NULL DEFAULT '',
+    link TEXT NOT NULL DEFAULT '',
+    ref TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (contact_id, ref)
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_contact_interactions_contact ON contact_interactions(contact_id, occurred_at DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_contact_interactions_created ON contact_interactions(created_at)',
+  `CREATE TABLE IF NOT EXISTS contact_loops (
+    id TEXT PRIMARY KEY,
+    contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    since TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_contact_loops_contact ON contact_loops(contact_id, status)',
+  `CREATE TABLE IF NOT EXISTS contact_merges (
+    id TEXT PRIMARY KEY,
+    target_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    snapshot TEXT NOT NULL,
+    at TEXT NOT NULL,
+    undone_at TEXT NOT NULL DEFAULT ''
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_contact_merges_target ON contact_merges(target_id)',
+  "ALTER TABLE contacts ADD COLUMN facts TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE contacts ADD COLUMN latest TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE contacts ADD COLUMN latest_at TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE contacts ADD COLUMN covered_from TEXT NOT NULL DEFAULT ''",
+];
+
+const SCHEMA_VERSION = 2;
 
 const state = {
   ready: false,
@@ -246,7 +315,15 @@ function ensureReady() {
         version = -1;
       }
       if (!(version >= SCHEMA_VERSION)) {
-        await lib({ op: 'db.migrate', dbPath: DB, targetVersion: SCHEMA_VERSION, steps: [{ toVersion: 1, sql: SCHEMA_V1 }] });
+        await lib({
+          op: 'db.migrate',
+          dbPath: DB,
+          targetVersion: SCHEMA_VERSION,
+          steps: [
+            { toVersion: 1, sql: SCHEMA_V1 },
+            { toVersion: 2, sql: SCHEMA_V2 },
+          ],
+        });
       }
       state.ready = true;
       state.error = null;
@@ -301,12 +378,21 @@ async function platform() {
 /* ───────────── 读 ───────────── */
 
 const LIST_SQL = `SELECT c.id, c.kind, c.display_name, c.aliases, c.summary, c.status, c.source, c.updated_at,
+  c.latest, c.latest_at, length(c.narrative) AS story_len,
   (SELECT MAX(e.date) FROM contact_events e WHERE e.contact_id = c.id) AS last_event,
+  (SELECT count(*) FROM contact_events e WHERE e.contact_id = c.id) AS event_count,
+  (SELECT MAX(i.occurred_at) FROM contact_interactions i WHERE i.contact_id = c.id) AS last_ix,
+  (SELECT MAX(i.created_at) FROM contact_interactions i WHERE i.contact_id = c.id) AS last_ingest,
+  (SELECT count(*) FROM contact_interactions i WHERE i.contact_id = c.id) AS ix_count,
+  (SELECT count(*) FROM contact_loops l WHERE l.contact_id = c.id AND l.status = 'open') AS open_loops,
   (SELECT group_concat(g.name, char(31)) FROM contact_group_members m JOIN contact_groups g ON g.id = m.group_id
     WHERE m.contact_id = c.id) AS group_names
   FROM contacts c ORDER BY c.display_name`;
 
+/** 最近一次往来的时间；没有往来记录时退回事件日期和档案更新日期。 */
 function lastTouched(row) {
+  const ix = str(row.last_ix);
+  if (ix) return ix;
   const a = str(row.last_event).slice(0, 10);
   const b = str(row.updated_at).slice(0, 10);
   return a > b ? a : b;
@@ -323,6 +409,13 @@ function listRow(r) {
     source: r.source,
     last: lastTouched(r),
     groups: r.group_names ? String(r.group_names).split('\u001f') : [],
+    latest: r.latest || '',
+    latestAt: r.latest_at || '',
+    lastIngest: r.last_ingest || '',
+    interactions: Number(r.ix_count) || 0,
+    openLoops: Number(r.open_loops) || 0,
+    // 有往来、有事件或写过像样的介绍，才算「整理过的人」；其余只有联系方式，名单里折叠。
+    rich: Number(r.ix_count) > 0 || Number(r.event_count) > 0 || Number(r.story_len) > 40,
   };
 }
 
@@ -346,7 +439,8 @@ async function requireContact(id) {
 async function getContact(id, opts) {
   const c = await requireContact(id);
   const eventLimit = (opts && opts.eventLimit) || 500;
-  const [identities, events, groups, relations] = await Promise.all([
+  const ixLimit = (opts && opts.interactionLimit) || 200;
+  const [identities, events, groups, relations, interactions, loops, merges] = await Promise.all([
     q('SELECT id, platform, value, label, note FROM contact_identities WHERE contact_id = ? ORDER BY created_at', [c.id]),
     q('SELECT id, date, text, source FROM contact_events WHERE contact_id = ? ORDER BY date DESC, created_at DESC LIMIT ?', [c.id, eventLimit]),
     q(
@@ -361,7 +455,19 @@ async function getContact(id, opts) {
        WHERE r.from_id = :id OR r.to_id = :id ORDER BY r.created_at`,
       { id: c.id },
     ),
+    q(
+      `SELECT id, occurred_at, channel, title, summary, quote, link, ref, created_at FROM contact_interactions
+       WHERE contact_id = ? ORDER BY occurred_at DESC LIMIT ?`,
+      [c.id, ixLimit],
+    ),
+    q(
+      `SELECT id, text, detail, status, since, source, created_at, updated_at FROM contact_loops
+       WHERE contact_id = ? ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END, updated_at DESC LIMIT 50`,
+      [c.id],
+    ),
+    q(`SELECT id, source_name, reason, at FROM contact_merges WHERE target_id = ? AND undone_at = '' ORDER BY at DESC LIMIT 20`, [c.id]),
   ]);
+  const [{ n: ixTotal }] = await q('SELECT count(*) AS n FROM contact_interactions WHERE contact_id = ?', [c.id]);
   return {
     id: c.id,
     kind: c.kind,
@@ -374,8 +480,26 @@ async function getContact(id, opts) {
     source: c.source,
     createdAt: c.created_at,
     updatedAt: c.updated_at,
+    facts: parseFacts(c.facts),
+    latest: c.latest || '',
+    latestAt: c.latest_at || '',
+    coveredFrom: c.covered_from || '',
     identities,
     events,
+    interactions: interactions.map((i) => ({
+      id: i.id,
+      at: i.occurred_at,
+      channel: i.channel,
+      title: i.title,
+      summary: i.summary,
+      quote: i.quote,
+      link: i.link,
+      ref: i.ref,
+      addedAt: i.created_at,
+    })),
+    interactionTotal: Number(ixTotal) || 0,
+    loops: loops.map((l) => ({ id: l.id, text: l.text, detail: l.detail, status: l.status, since: l.since, source: l.source, updatedAt: l.updated_at })),
+    merges: merges.map((m) => ({ id: m.id, sourceName: m.source_name, reason: m.reason, at: m.at })),
     groups,
     relations: relations.map((r) => ({
       id: r.id,
@@ -562,12 +686,17 @@ async function saveContact(input) {
     const identities = await prepareIdentities(id, input.identities);
     const status = input.status === 'pending' ? 'pending' : 'confirmed';
     const source = ['manual', 'agent', 'import'].includes(input.source) ? input.source : 'manual';
+    const latest = str(input.latest).slice(0, 120);
     statements.push({
-      sql: `INSERT INTO contacts (id, kind, display_name, aliases, summary, narrative, agent_notes, status, source, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [id, kind, name, JSON.stringify(aliases), str(input.summary), str(input.narrative), str(input.agentNotes), status, source, createdAt, createdAt],
+      sql: `INSERT INTO contacts (id, kind, display_name, aliases, summary, narrative, agent_notes, status, source, created_at, updated_at, facts, latest, latest_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        id, kind, name, JSON.stringify(aliases), str(input.summary), str(input.narrative), str(input.agentNotes), status, source, createdAt, createdAt,
+        JSON.stringify(normalizeFacts(input.facts)), latest, latest ? createdAt : '',
+      ],
     });
     for (const i of identities) statements.push(identityInsert(id, i, createdAt));
+    statements.push(...loopStatements(id, input, createdAt));
     for (const g of uniqueStrings(input.groups || [])) {
       const gid = await groupIdFor(g, statements, createdAt);
       statements.push({ sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) VALUES (?, ?)', params: [gid, id] });
@@ -589,6 +718,11 @@ async function saveContact(input) {
   if (input.narrative !== undefined) setField('narrative', str(input.narrative));
   if (input.agentNotes !== undefined) setField('agent_notes', str(input.agentNotes));
   if (input.status === 'pending' || input.status === 'confirmed') setField('status', input.status);
+  if (Array.isArray(input.facts)) setField('facts', JSON.stringify(normalizeFacts(input.facts)));
+  if (typeof input.latest === 'string') {
+    setField('latest', str(input.latest).slice(0, 120));
+    setField('latest_at', str(input.latest) ? createdAt : '');
+  }
   let aliases = parseAliases(c.aliases);
   if (Array.isArray(input.aliases)) aliases = uniqueStrings([...aliases, ...input.aliases]);
   if (Array.isArray(input.removeAliases)) {
@@ -607,8 +741,126 @@ async function saveContact(input) {
     const gid = await groupIdFor(g, statements, createdAt);
     statements.push({ sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) VALUES (?, ?)', params: [gid, c.id] });
   }
+  statements.push(...loopStatements(c.id, input, createdAt));
   await batch(statements);
   return { id: c.id, created: false };
+}
+
+/** 「还没完的事」：新增时同一句话已开着就不重复；关闭可带一句结果。 */
+function loopStatements(contactId, input, at) {
+  const out = [];
+  for (const l of Array.isArray(input.openLoops) ? input.openLoops.slice(0, 20) : []) {
+    const text = str(l && (typeof l === 'string' ? l : l.text)).slice(0, 200);
+    if (!text) continue;
+    const o = typeof l === 'object' && l ? l : {};
+    out.push({
+      sql: `INSERT INTO contact_loops (id, contact_id, text, detail, status, since, source, created_at, updated_at)
+            SELECT ?, ?, ?, ?, 'open', ?, ?, ?, ?
+            WHERE NOT EXISTS (SELECT 1 FROM contact_loops WHERE contact_id = ? AND status = 'open' AND text = ?)`,
+      params: [uuid(), contactId, text, str(o.detail).slice(0, 300), str(o.since).slice(0, 32), str(o.source).slice(0, 32), at, at, contactId, text],
+    });
+  }
+  for (const l of Array.isArray(input.closeLoops) ? input.closeLoops.slice(0, 50) : []) {
+    const id = typeof l === 'string' ? str(l) : str(l && l.id);
+    if (!id) continue;
+    const detail = typeof l === 'object' && l ? str(l.detail).slice(0, 300) : '';
+    out.push({
+      sql: `UPDATE contact_loops SET status = 'done', detail = CASE WHEN ? <> '' THEN ? ELSE detail END, updated_at = ? WHERE id = ? AND contact_id = ?`,
+      params: [detail, detail, at, id, contactId],
+    });
+  }
+  return out;
+}
+
+async function setLoopStatus(input) {
+  const status = input.status === 'open' ? 'open' : 'done';
+  await batch([{ sql: 'UPDATE contact_loops SET status = ?, updated_at = ? WHERE id = ?', params: [status, nowIso(), str(input.id)] }]);
+  return { id: str(input.id), status };
+}
+
+/* ───────────── 往来 ───────────── */
+
+const CHANNELS = new Set(['mail', 'im', 'calendar', 'cindy', 'github', 'call', 'other']);
+
+function safeLink(v) {
+  const s = str(v);
+  return /^https?:\/\/[^\s]+$/i.test(s) ? s.slice(0, 500) : '';
+}
+
+/** 往来归到人：contact_id → 身份（邮箱/平台账号）→ 唯一同名。找不到就交回调用方。 */
+async function resolveContact(it) {
+  const tries = [];
+  if (it.identity && str(it.identity.value)) tries.push([str(it.identity.platform) || 'email', str(it.identity.value)]);
+  if (str(it.email)) tries.push(['email', str(it.email)]);
+  for (const [platform, value] of tries) {
+    let p;
+    try {
+      p = normalizePlatform(platform);
+    } catch (_) {
+      continue;
+    }
+    const rows = await q('SELECT contact_id FROM contact_identities WHERE platform = ? AND normalized_value = ?', [p, normalizeIdentityValue(value, p)]);
+    if (rows.length) return rows[0].contact_id;
+  }
+  const name = str(it.name).toLowerCase();
+  if (name) {
+    const rows = await q(
+      `SELECT id FROM contacts WHERE lower(display_name) = :name OR instr(lower(aliases), :alias) > 0 LIMIT 2`,
+      { name, alias: JSON.stringify(name).toLowerCase() },
+    );
+    if (rows.length === 1) return rows[0].id;
+  }
+  return '';
+}
+
+/** 批量记往来；同一个人同一来源 id（ref）只记一次。单条失败不影响其它条。 */
+async function recordInteractions(items) {
+  const list = Array.isArray(items) ? items.slice(0, 200) : [];
+  if (!list.length) throw fail('INVALID_PARAMS', 'items is required');
+  const at = nowIso();
+  const statements = [];
+  const results = [];
+  const seen = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const it = list[i] || {};
+    try {
+      let contactId = str(it.contactId);
+      if (contactId) await requireContact(contactId);
+      else contactId = await resolveContact(it);
+      if (!contactId) {
+        results.push({ index: i, ok: false, errorCode: 'UNRESOLVED', message: 'No contact matches; find or save the person first, then pass contact_id.' });
+        continue;
+      }
+      const when = Date.parse(str(it.occurredAt));
+      if (Number.isNaN(when)) throw fail('INVALID_PARAMS', 'occurred_at must be an ISO 8601 time');
+      if (when > Date.now() + 2 * 86400000) throw fail('INVALID_PARAMS', 'occurred_at is in the future');
+      const channel = CHANNELS.has(str(it.channel)) ? str(it.channel) : 'other';
+      const occurred = new Date(when).toISOString();
+      const ref = (str(it.ref) || `${channel}:${occurred}:${str(it.title).slice(0, 60)}`).slice(0, 300);
+      const key = `${contactId}|${ref}`;
+      const dup = seen.has(key) || (await q('SELECT 1 FROM contact_interactions WHERE contact_id = ? AND ref = ?', [contactId, ref])).length > 0;
+      seen.add(key);
+      if (dup) {
+        results.push({ index: i, ok: true, contactId, duplicate: true });
+        continue;
+      }
+      statements.push({
+        sql: `INSERT OR IGNORE INTO contact_interactions (id, contact_id, occurred_at, channel, title, summary, quote, link, ref, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [uuid(), contactId, occurred, channel, str(it.title).slice(0, 200), str(it.summary).slice(0, 600), str(it.quote).slice(0, 400), safeLink(it.link), ref, at],
+      });
+      results.push({ index: i, ok: true, contactId, duplicate: false });
+    } catch (e) {
+      results.push({ index: i, ok: false, errorCode: e.code || 'CONTACTS_ERROR', message: e.message });
+    }
+  }
+  await batchChunks(statements);
+  return {
+    added: results.filter((r) => r.ok && !r.duplicate).length,
+    duplicates: results.filter((r) => r.duplicate).length,
+    failed: results.filter((r) => !r.ok).length,
+    results: results.filter((r) => !r.ok || r.duplicate),
+  };
 }
 
 async function logEvent(input) {
@@ -684,7 +936,10 @@ async function organize(input) {
   return { action, count: ids.length };
 }
 
-/** 合并：source 的身份、事件、分组、关系整体并入 target，别名取并集，叙事拼接，然后删除 source。单批原子。 */
+/**
+ * 合并：source 的身份、事件、往来、未完的事、分组、关系整体并入 target，别名取并集，叙事拼接，然后删除 source。
+ * 单批原子；同时留一份快照，用户可以在资料页「拆开」。
+ */
 async function mergeContacts(input) {
   const src = await requireContact(input.sourceId);
   const dst = await requireContact(input.targetId);
@@ -693,30 +948,118 @@ async function mergeContacts(input) {
     (a) => a.toLowerCase() !== dst.display_name.toLowerCase(),
   );
   const joinText = (a, b) => [str(a), str(b)].filter(Boolean).join('\n\n');
+  const ids = async (sql, params) => (await qAll(sql, params)).map((r) => r.id);
+  const snapshot = {
+    source: src,
+    target: {
+      aliases: parseAliases(dst.aliases), summary: dst.summary, narrative: dst.narrative, agent_notes: dst.agent_notes,
+      status: dst.status, facts: dst.facts, latest: dst.latest, latest_at: dst.latest_at, covered_from: dst.covered_from,
+    },
+    aliasesAfter: aliases,
+    identityIds: await ids('SELECT id FROM contact_identities WHERE contact_id = ? ORDER BY id', [src.id]),
+    eventIds: await ids('SELECT id FROM contact_events WHERE contact_id = ? ORDER BY id', [src.id]),
+    interactionIds: await ids(
+      'SELECT id FROM contact_interactions WHERE contact_id = ? AND ref NOT IN (SELECT ref FROM contact_interactions WHERE contact_id = ?) ORDER BY id',
+      [src.id, dst.id],
+    ),
+    loopIds: await ids('SELECT id FROM contact_loops WHERE contact_id = ? ORDER BY id', [src.id]),
+    groupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [src.id])).map((r) => r.group_id),
+    relations: (await q('SELECT * FROM contact_relations WHERE from_id = ? OR to_id = ? LIMIT 100', [src.id, src.id])),
+  };
+  const facts = normalizeFacts([...parseFacts(dst.facts), ...parseFacts(src.facts).filter((f) => !parseFacts(dst.facts).some((g) => g.label === f.label))]);
+  const covered = [str(dst.covered_from), str(src.covered_from)].filter(Boolean).sort()[0] || '';
   const at = nowIso();
+  const mergeId = uuid();
   await batch([
     { sql: 'UPDATE contact_identities SET contact_id = ? WHERE contact_id = ?', params: [dst.id, src.id] },
     { sql: 'UPDATE contact_events SET contact_id = ? WHERE contact_id = ?', params: [dst.id, src.id] },
+    { sql: 'UPDATE OR IGNORE contact_interactions SET contact_id = ? WHERE contact_id = ?', params: [dst.id, src.id] },
+    { sql: 'DELETE FROM contact_interactions WHERE contact_id = ?', params: [src.id] },
+    { sql: 'UPDATE contact_loops SET contact_id = ? WHERE contact_id = ?', params: [dst.id, src.id] },
     { sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) SELECT group_id, ? FROM contact_group_members WHERE contact_id = ?', params: [dst.id, src.id] },
     { sql: 'DELETE FROM contact_group_members WHERE contact_id = ?', params: [src.id] },
     { sql: 'UPDATE OR IGNORE contact_relations SET from_id = ? WHERE from_id = ? AND to_id <> ?', params: [dst.id, src.id, dst.id] },
     { sql: 'UPDATE OR IGNORE contact_relations SET to_id = ? WHERE to_id = ? AND from_id <> ?', params: [dst.id, src.id, dst.id] },
     { sql: 'DELETE FROM contact_relations WHERE from_id = ? OR to_id = ?', params: [src.id, src.id] },
     {
-      sql: `UPDATE contacts SET aliases = ?, summary = ?, narrative = ?, agent_notes = ?, status = ?, updated_at = ? WHERE id = ?`,
+      sql: `UPDATE contacts SET aliases = ?, summary = ?, narrative = ?, agent_notes = ?, status = ?, facts = ?, covered_from = ?, updated_at = ? WHERE id = ?`,
       params: [
         JSON.stringify(aliases),
         str(dst.summary) || str(src.summary),
         joinText(dst.narrative, src.narrative),
         joinText(dst.agent_notes, src.agent_notes),
         dst.status === 'confirmed' || src.status === 'confirmed' ? 'confirmed' : 'pending',
+        JSON.stringify(facts),
+        covered,
         at,
         dst.id,
       ],
     },
     { sql: 'DELETE FROM contacts WHERE id = ?', params: [src.id] },
+    {
+      sql: 'INSERT INTO contact_merges (id, target_id, source_id, source_name, reason, snapshot, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      params: [mergeId, dst.id, src.id, src.display_name, str(input.reason).slice(0, 200), JSON.stringify(snapshot), at],
+    },
   ]);
-  return { id: dst.id, mergedFrom: src.id };
+  return { id: dst.id, mergedFrom: src.id, mergeId };
+}
+
+/** 拆开一次合并：按快照把原档案和它带来的身份、事件、往来、未完的事、分组、关系还回去。 */
+async function undoMerge(mergeId) {
+  const rows = await q('SELECT * FROM contact_merges WHERE id = ?', [str(mergeId)]);
+  if (!rows.length) throw fail('NOT_FOUND', `merge not found: ${mergeId}`);
+  const m = rows[0];
+  if (m.undone_at) throw fail('ALREADY_UNDONE', 'This merge was already undone.');
+  const snap = JSON.parse(m.snapshot);
+  const src = snap.source;
+  if ((await q('SELECT 1 FROM contacts WHERE id = ?', [src.id])).length) throw fail('CONFLICT', 'The original contact already exists again.');
+  const dst = await requireContact(m.target_id);
+  const at = nowIso();
+  const list = (a) => JSON.stringify(Array.isArray(a) ? a : []);
+  const added = new Set((snap.aliasesAfter || []).map((a) => a.toLowerCase()));
+  for (const a of snap.target.aliases || []) added.delete(a.toLowerCase());
+  const keptAliases = parseAliases(dst.aliases).filter((a) => !added.has(a.toLowerCase()));
+  const untouched = dst.updated_at === m.at;
+  const t = snap.target;
+  const statements = [
+    {
+      sql: `INSERT INTO contacts (id, kind, display_name, aliases, summary, narrative, agent_notes, status, source, created_at, updated_at, facts, latest, latest_at, covered_from)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        src.id, src.kind, src.display_name, src.aliases || '[]', src.summary || '', src.narrative || '', src.agent_notes || '', src.status || 'confirmed',
+        src.source || 'manual', src.created_at || at, at, src.facts || '[]', src.latest || '', src.latest_at || '', src.covered_from || '',
+      ],
+    },
+    { sql: 'UPDATE contact_identities SET contact_id = ? WHERE contact_id = ? AND id IN (SELECT value FROM json_each(?))', params: [src.id, dst.id, list(snap.identityIds)] },
+    { sql: 'UPDATE contact_events SET contact_id = ? WHERE contact_id = ? AND id IN (SELECT value FROM json_each(?))', params: [src.id, dst.id, list(snap.eventIds)] },
+    { sql: 'UPDATE OR IGNORE contact_interactions SET contact_id = ? WHERE contact_id = ? AND id IN (SELECT value FROM json_each(?))', params: [src.id, dst.id, list(snap.interactionIds)] },
+    { sql: 'UPDATE contact_loops SET contact_id = ? WHERE contact_id = ? AND id IN (SELECT value FROM json_each(?))', params: [src.id, dst.id, list(snap.loopIds)] },
+    {
+      sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) SELECT value, ? FROM json_each(?) WHERE value IN (SELECT id FROM contact_groups)',
+      params: [src.id, list(snap.groupIds)],
+    },
+    untouched
+      ? {
+          sql: 'UPDATE contacts SET aliases = ?, summary = ?, narrative = ?, agent_notes = ?, status = ?, facts = ?, covered_from = ?, updated_at = ? WHERE id = ?',
+          params: [JSON.stringify(keptAliases), t.summary || '', t.narrative || '', t.agent_notes || '', t.status || 'confirmed', t.facts || '[]', t.covered_from || '', at, dst.id],
+        }
+      : { sql: 'UPDATE contacts SET aliases = ?, updated_at = ? WHERE id = ?', params: [JSON.stringify(keptAliases), at, dst.id] },
+  ];
+  for (const r of (snap.relations || []).slice(0, 80)) {
+    const other = r.from_id === src.id ? r.to_id : r.from_id;
+    statements.push({
+      sql: `INSERT OR IGNORE INTO contact_relations (id, from_id, to_id, relation, note, created_at)
+            SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM contacts WHERE id = ?)`,
+      params: [r.id, r.from_id, r.to_id, r.relation, r.note || '', r.created_at || at, other],
+    });
+    statements.push({
+      sql: 'UPDATE OR IGNORE contact_relations SET from_id = ?, to_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM contacts WHERE id = ?)',
+      params: [r.from_id, r.to_id, r.id, other],
+    });
+  }
+  statements.push({ sql: 'UPDATE contact_merges SET undone_at = ? WHERE id = ?', params: [at, m.id] });
+  await batch(statements);
+  return { restored: src.id, name: src.display_name, targetId: dst.id, textRestored: untouched };
 }
 
 async function deleteContact(id) {
@@ -830,29 +1173,72 @@ const PROFILES = {
       '重点记录需求、报价、合同、跟进约定和下次联系时间，事件里写清日期。',
   },
 };
-const DEFAULT_SETTINGS = { profile: 'colleagues', macAutoSync: true };
+const SOURCES = ['mail', 'calendar', 'im', 'cindy', 'github'];
+const DEFAULT_SETTINGS = {
+  profile: 'colleagues',
+  macAutoSync: true,
+  initialDays: 14,
+  backfillMonths: 3,
+  sources: { mail: true, calendar: true, im: true, cindy: true, github: false },
+};
 
 async function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...((await getMeta('settings')) || {}) };
+  const saved = (await getMeta('settings')) || {};
+  return { ...DEFAULT_SETTINGS, ...saved, sources: { ...DEFAULT_SETTINGS.sources, ...(saved.sources || {}) } };
 }
 
 async function setSettings(patch) {
   const next = await getSettings();
   if (patch.profile === 'colleagues' || patch.profile === 'clients') next.profile = patch.profile;
   if (typeof patch.macAutoSync === 'boolean') next.macAutoSync = patch.macAutoSync;
+  if ([7, 14, 30].includes(Number(patch.initialDays))) next.initialDays = Number(patch.initialDays);
+  if ([1, 3, 6, 12].includes(Number(patch.backfillMonths))) next.backfillMonths = Number(patch.backfillMonths);
+  if (patch.sources && typeof patch.sources === 'object') {
+    for (const k of SOURCES) if (typeof patch.sources[k] === 'boolean') next.sources[k] = patch.sources[k];
+  }
   await batch([setMetaStmt('settings', next)]);
   return next;
+}
+
+/** 每个来源「按时间段取新往来」的做法。只交给 AI 已经能用的工具，没有就跳过。 */
+const SOURCE_GUIDE = {
+  mail:
+    '邮件：用已安装的邮件插件（如 Gmail：先 gmail_accounts，再 gmail_run 的 messages search）。按时间段查，query 写 `after:<from 的 Unix 秒> before:<to 的 Unix 秒> -category:promotions -category:social`。真人来信再用 thread get 读整串，只取要点。ref 填邮件 message id。',
+  calendar:
+    '日历：用已安装的日历插件（如 google_calendar 的 list_events，time_min / time_max 用本时间段）。参会人和会议主题记成往来，ref 填 event id。50 人以上的大会只记组织者。',
+  im:
+    '即时消息：用已安装的飞书、Slack 等插件。先列出本时间段内活跃的会话（如飞书 im_list_chats，sort_type=ByActiveTimeDesc），再按 start_time / end_time 读这些会话里的消息，每个会话最多 50 条。ref 填消息 id；机器人消息不记。',
+  cindy:
+    'Cindy 对话：cindy_helper 的 list_sessions / get_chat_history（from / to 用本时间段，只看 user 和 assistant）。插件发起的任务里这组工具可能不可用，不可用就跳过。ref 填消息 id。',
+  github:
+    'GitHub：用已授权的 GitHub 工具或 gh CLI，查本时间段内与用户相关的 PR、review 和 issue 评论（作者、评审人、被 @ 的人）。ref 填 PR 或评论的 URL。',
+};
+
+const DAY = 86400000;
+const isoOf = (ms) => new Date(ms).toISOString();
+
+function addMonths(ms, n) {
+  const d = new Date(ms);
+  d.setUTCMonth(d.getUTCMonth() + n);
+  return d.getTime();
+}
+
+/** 把一段时间切成不超过 days 天的小段，新的在前。 */
+function splitWindow(from, to, days) {
+  const out = [];
+  for (let end = to; end > from; end -= days * DAY) out.push({ from: isoOf(Math.max(from, end - days * DAY)), to: isoOf(end) });
+  return out.slice(0, 60);
 }
 
 function automationPrompt(profile) {
   const p = PROFILES[profile] || PROFILES.colleagues;
   return [
-    '整理我的通讯录（cindy-contacts 插件），按插件手册 maintenance 一节执行：',
-    '1. 调用 ghost_call({ ghost_id: "cindy-contacts", tool: "maintenance", args: { action: "begin" } })，拿到检查点、单次上限和本档位要求。',
-    '2. 用 Cindy 历史工具（list_sessions、get_chat_history，只看 user 和 assistant）读取检查点之后我的对话；如果装了邮件或日历插件，也看看同一时间段的邮件往来和会议参与人。',
-    '3. 找出与我真实往来的人和组织的新信息。每个人先 find，再用 save、log_event、relate 更新；拿不准的写成 pending。不记营销邮件、通知机器人和一次性发件人，不删除也不合并。',
-    `4. 本次改动不超过单次上限（${p.maxChanges} 处），其余留到下次。`,
-    '5. 最后调用 maintenance，action 为 "end"，带上扫描的会话数、新增、更新、待确认数量和新的检查点。没有新信息也要调用 end。',
+    '整理我的通讯录（cindy-contacts 插件），做法见插件手册「自动维护」一节：',
+    '1. 调用 ghost_call({ ghost_id: "cindy-contacts", tool: "maintenance", args: { action: "begin" } })，按返回的时间段（segments）和来源说明（sources）逐段查找。',
+    '2. 每个来源只拉这段时间里的新内容；与我真实往来的人，用 record 记下每条往来（ref 填来源 id，重复的会自动跳过）。',
+    '3. 有新往来的人：先 get，再用 save 更新 summary、narrative、latest（一句话说这次的新动静）、facts，并用 open_loops / close_loops 维护还没完的事。值得记的真人没有档案就新建；明显是同一个人的两份档案直接 merge 并写 reason。',
+    `4. 本次最多改 ${p.maxChanges} 个人，其余留到下次。`,
+    '5. 最后调用 maintenance，action 为 "end"，带上 begin 返回的 run_id 和扫描、新增、更新的数量。',
   ].join('\n');
 }
 
@@ -873,41 +1259,121 @@ async function requestAutomation() {
   return requested;
 }
 
-async function maintenance(input) {
+/**
+ * 按时间段整理。三种范围共用一套做法，只是时间段不同：
+ * - recent：上次整理 → 现在（往前多看 1 小时防漏）；第一次是最近 initialDays 天。
+ * - backfill：所有人往前补 months 个月。
+ * - contact：只补一个人，往前补 months 个月，只按这个人的身份去查。
+ */
+async function maintenanceBegin(input) {
   const settings = await getSettings();
   const p = PROFILES[settings.profile] || PROFILES.colleagues;
   const meta = (await getMeta('maintenance')) || { runs: [] };
+  const coverage = await getMeta('coverage');
+  const scope = ['recent', 'backfill', 'contact'].includes(input.scope) ? input.scope : 'recent';
+  const months = Math.min(24, Math.max(1, Math.floor(Number(input.months) || settings.backfillMonths)));
+  const now = Date.now();
+  const initialFrom = now - settings.initialDays * DAY;
+  let from;
+  let to;
+  let contact = null;
+  if (scope === 'recent') {
+    to = now;
+    from = meta.checkpoint ? Date.parse(meta.checkpoint) - 3600000 : initialFrom;
+    if (!(from < to)) from = to - 3600000;
+  } else if (scope === 'backfill') {
+    to = coverage && coverage.from ? Date.parse(coverage.from) : initialFrom;
+    from = addMonths(to, -months);
+  } else {
+    const c = await requireContact(input.contactId);
+    to = c.covered_from ? Date.parse(c.covered_from) : coverage && coverage.from ? Date.parse(coverage.from) : initialFrom;
+    from = addMonths(to, -months);
+    const identities = await q("SELECT platform, value FROM contact_identities WHERE contact_id = ? AND platform <> 'apple-contacts' ORDER BY created_at", [c.id]);
+    contact = { id: c.id, name: c.display_name, aliases: parseAliases(c.aliases), identities };
+  }
+  const run = {
+    runId: uuid(),
+    scope,
+    from: isoOf(from),
+    to: isoOf(to),
+    contactId: contact ? contact.id : '',
+    firstRun: scope === 'recent' && !meta.checkpoint,
+    startedAt: nowIso(),
+  };
+  await batch([setMetaStmt(`run:${run.runId}`, run)]);
+  const sources = SOURCES.filter((k) => settings.sources[k]).map((k) => ({ source: k, how: SOURCE_GUIDE[k] }));
+  return {
+    run_id: run.runId,
+    scope,
+    from: run.from,
+    to: run.to,
+    first_run: run.firstRun,
+    segments: splitWindow(from, to, scope === 'recent' ? 7 : 14),
+    sources,
+    contact,
+    max_changes: scope === 'contact' ? 1 : p.maxChanges,
+    guidance:
+      (scope === 'contact'
+        ? `只查与「${contact.name}」有关的往来：用上面的身份（邮箱、平台账号）和名字去各来源搜索这段时间。`
+        : p.guidance) + ' 每条往来用 record 记下（ref 填来源 id）；有新往来的人再用 save 改写 summary、narrative、latest、facts 和还没完的事。',
+    stats: await stats(),
+    manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
+  };
+}
+
+async function maintenanceEnd(input) {
+  const meta = (await getMeta('maintenance')) || { runs: [] };
+  const now = nowIso();
+  const num = (v) => Math.max(0, Math.floor(Number(v) || 0));
+  const statements = [];
+  let run = null;
+  if (str(input.runId)) {
+    run = await getMeta(`run:${str(input.runId)}`);
+    if (!run) throw fail('NOT_FOUND', 'run_id not found or already ended; call begin again.');
+    statements.push({ sql: 'DELETE FROM plugin_meta WHERE key = ?', params: [`run:${run.runId}`] });
+  }
+  const record = {
+    at: now,
+    scope: run ? run.scope : 'recent',
+    from: run ? run.from : '',
+    to: run ? run.to : '',
+    scanned: num(input.scanned),
+    created: num(input.created),
+    updated: num(input.updated),
+    pending: num(input.pending),
+    note: str(input.note).slice(0, 300),
+  };
+  const next = { ...meta, runs: [record, ...(meta.runs || [])].slice(0, 10) };
+  let checkpoint = meta.checkpoint || '';
+  if (!run || run.scope === 'recent') {
+    checkpoint = run ? run.to : str(input.checkpoint) || now;
+    if (Number.isNaN(Date.parse(checkpoint)) || Date.parse(checkpoint) > Date.now() + 3600000) checkpoint = now;
+    next.checkpoint = checkpoint;
+    next.lastRunAt = now;
+    next.last = record;
+  }
+  statements.push(setMetaStmt('maintenance', next));
+  const coverage = (await getMeta('coverage')) || {};
+  if (run && run.scope === 'recent' && (run.firstRun || !coverage.from)) {
+    statements.push(setMetaStmt('coverage', { from: coverage.from && coverage.from < run.from ? coverage.from : run.from }));
+  } else if (run && run.scope === 'backfill') {
+    statements.push(setMetaStmt('coverage', { from: coverage.from && coverage.from < run.from ? coverage.from : run.from }));
+  } else if (run && run.scope === 'contact') {
+    statements.push({
+      sql: "UPDATE contacts SET covered_from = CASE WHEN covered_from <> '' AND covered_from < ? THEN covered_from ELSE ? END WHERE id = ?",
+      params: [run.from, run.from, run.contactId],
+    });
+  }
+  await batch(statements);
+  return { recorded: true, scope: record.scope, checkpoint };
+}
+
+async function maintenance(input) {
   if (input.action === 'begin') {
     maybeAutoSyncMac();
-    const firstRun = !meta.checkpoint;
-    return {
-      checkpoint: meta.checkpoint || new Date(Date.now() - 7 * 86400000).toISOString(),
-      firstRun,
-      now: nowIso(),
-      profile: settings.profile,
-      maxChanges: p.maxChanges,
-      guidance: p.guidance,
-      stats: await stats(),
-      manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
-    };
+    return maintenanceBegin(input);
   }
-  if (input.action === 'end') {
-    const now = nowIso();
-    let checkpoint = str(input.checkpoint) || now;
-    if (Number.isNaN(Date.parse(checkpoint)) || Date.parse(checkpoint) > Date.now() + 3600000) checkpoint = now;
-    const num = (v) => Math.max(0, Math.floor(Number(v) || 0));
-    const run = {
-      at: now,
-      scanned: num(input.scanned),
-      created: num(input.created),
-      updated: num(input.updated),
-      pending: num(input.pending),
-      note: str(input.note).slice(0, 300),
-    };
-    const next = { checkpoint, lastRunAt: now, last: run, runs: [run, ...(meta.runs || [])].slice(0, 10) };
-    await batch([setMetaStmt('maintenance', next)]);
-    return { recorded: true, checkpoint };
-  }
+  if (input.action === 'end') return maintenanceEnd(input);
   throw fail('INVALID_PARAMS', 'action must be begin or end');
 }
 
@@ -1177,7 +1643,7 @@ async function importSystem(opts) {
   }
 }
 
-/* ───────────── 问 AI（普通任务） ───────────── */
+/* ───────────── 问 AI ───────────── */
 
 async function tasksAvailable() {
   if (!cindy.tasks || typeof cindy.tasks.capabilities !== 'function') return false;
@@ -1190,27 +1656,212 @@ async function tasksAvailable() {
   }
 }
 
-async function askAI(input) {
+/** 给模型看的一份档案：介绍、要点、还没完的事和最近的往来。 */
+function dossierText(d) {
+  const lines = [`姓名：${d.name}${d.aliases.length ? `（也叫 ${d.aliases.join('、')}）` : ''}`];
+  if (d.summary) lines.push(`一句话：${d.summary}`);
+  if (d.narrative) lines.push(`介绍：${d.narrative.replace(/<!--[\s\S]*?-->/g, '').trim()}`);
+  for (const f of d.facts) lines.push(`${f.label}：${f.value}`);
+  const ids = d.identities.filter((i) => i.platform !== 'apple-contacts').map((i) => `${i.platform} ${i.value}`);
+  if (ids.length) lines.push(`联系方式：${ids.join('；')}`);
+  const open = d.loops.filter((l) => l.status === 'open');
+  if (open.length) lines.push('还没完的事：', ...open.map((l) => `- ${l.text}${l.detail ? `（${l.detail}）` : ''}`));
+  if (d.interactions.length) {
+    lines.push('往来（新的在前）：');
+    for (const i of d.interactions.slice(0, 60)) {
+      lines.push(`- ${i.at.slice(0, 16).replace('T', ' ')} [${i.channel}] ${i.title}${i.summary ? `：${i.summary}` : ''}${i.quote ? `「${i.quote}」` : ''}`);
+    }
+  }
+  if (d.events.length) lines.push('记下的事：', ...d.events.slice(0, 30).map((e) => `- ${e.date} ${e.text}`));
+  return lines.join('\n');
+}
+
+async function getQa(contactId) {
+  return (await getMeta(`qa:${contactId}`)) || [];
+}
+
+async function pushQa(contactId, entry) {
+  const list = (await getQa(contactId)).filter((x) => x.key !== entry.key);
+  list.push(entry);
+  await batch([setMetaStmt(`qa:${contactId}`, list.slice(-12))]);
+}
+
+/** 只问这个人的事：把档案交给 Cindy 的快速通道，几秒出答案，不开任务。 */
+async function quickAsk(d, text) {
+  const prompt = [
+    `你是用户的私人通讯录助手。下面是用户通讯录里「${d.name}」的档案和往来记录。`,
+    '只根据这些内容回答：第一句直接给结论，总共不超过 5 句；档案里没有的就说「档案里没有记录」，不要猜。用提问的语言回答。',
+    '',
+    dossierText(d).slice(0, 28000),
+    '',
+    `用户的问题：${text}`,
+  ].join('\n');
+  const r = await cindy.send({ type: 'cindy-request', kind: 'oneshot_text', prompt });
+  if (!r || r.ok === false) {
+    throw fail(r && r.errorCode === 'NO_CANDIDATE' ? 'NO_QUICK_MODEL' : 'ASK_FAILED', (r && r.message) || 'No answer');
+  }
+  return str(r.text);
+}
+
+const running = new Map();
+const TERMINAL = /complete|succeed|success|done|finish|fail|error|cancel|abort|stop|interrupt/i;
+
+function messageText(m) {
+  if (!m) return '';
+  if (typeof m.text === 'string') return m.text;
+  if (typeof m.content === 'string') return m.content;
+  const parts = Array.isArray(m.content) ? m.content : Array.isArray(m.parts) ? m.parts : [];
+  return parts.map((p) => (typeof p === 'string' ? p : p && typeof p.text === 'string' ? p.text : '')).join('');
+}
+
+async function lastReply(taskId, since) {
+  const page = await cindy.tasks.readMessages({ taskId, limit: 30 });
+  const msgs = (page && (page.messages || page.items)) || [];
+  let best = null;
+  for (const m of msgs) {
+    if (!/assistant/i.test(String(m.role || m.kind || ''))) continue;
+    const t = Date.parse(m.createdAt || m.created_at || m.at || '') || 0;
+    if (since && t && t < Date.parse(since)) continue;
+    if (!best || t >= best.t) best = { t, text: messageText(m) };
+  }
+  return best ? best.text.trim() : '';
+}
+
+/** 每个人一个固定任务（全局整理共用一个）；再问都发到同一个任务里。 */
+async function taskFor(key, title) {
+  const saved = await getMeta(`task:${key}`);
+  if (saved && saved.taskId) {
+    try {
+      const t = await cindy.tasks.get({ taskId: saved.taskId });
+      if (t && t.taskId !== undefined && t.revision !== undefined) return { taskId: t.taskId, revision: t.revision };
+      if (t && t.revision !== undefined) return { taskId: saved.taskId, revision: t.revision };
+    } catch (_) {
+      /* 任务被删了：新建一个 */
+    }
+  }
+  const t = await cindy.tasks.create({ requestKey: `${key}-${uuid()}`, title: title.slice(0, 100) });
+  await batch([setMetaStmt(`task:${key}`, { taskId: t.taskId, at: nowIso() })]);
+  return { taskId: t.taskId, revision: t.revision };
+}
+
+async function sendToTask(key, title, text, info) {
+  if (!(await tasksAvailable())) throw fail('UNSUPPORTED', '当前 Cindy 版本不支持由插件新建任务');
+  if (running.has(key) && running.get(key).status === 'running') throw fail('BUSY', '上一件事还在处理，等它完成再说。');
+  const t = await taskFor(key, title);
+  const sentAt = nowIso();
+  const run = await cindy.tasks.send({ taskId: t.taskId, expectedRevision: t.revision, requestKey: `${key}-${uuid()}`, text });
+  const entry = { key, taskId: t.taskId, runId: (run && (run.runId || run.id)) || '', status: 'running', sentAt, reply: '', ...info };
+  running.set(key, entry);
+  broadcast({ kind: 'event', name: 'task', data: entry });
+  if (entry.contactId && entry.question) {
+    await pushQa(entry.contactId, { key: `${key}@${sentAt}`, q: entry.question, a: '', at: sentAt, via: 'task', status: 'running', taskId: t.taskId });
+  }
+  watchRun(entry);
+  return entry;
+}
+
+/** 轮询任务进度，结束后把 AI 的最后一条回复取回来，画回页面。 */
+function watchRun(entry) {
+  let tries = 0;
+  const finish = async (status) => {
+    try {
+      entry.reply = (await lastReply(entry.taskId, entry.sentAt)).slice(0, 6000);
+    } catch (_) {
+      entry.reply = '';
+    }
+    entry.status = status;
+    if (entry.contactId && entry.question) {
+      await serial(() =>
+        pushQa(entry.contactId, { key: `${entry.key}@${entry.sentAt}`, q: entry.question, a: entry.reply, at: entry.sentAt, via: 'task', status, taskId: entry.taskId }),
+      ).catch(() => {});
+    }
+    broadcast({ kind: 'event', name: 'task', data: entry });
+    notifyChanged();
+  };
+  const tick = async () => {
+    tries += 1;
+    let status = '';
+    if (entry.runId) {
+      try {
+        const r = await cindy.tasks.getRun({ runId: entry.runId });
+        status = String((r && (r.status || r.state || (r.run && r.run.status))) || '');
+      } catch (_) {
+        status = '';
+      }
+    }
+    if (status && TERMINAL.test(status) && !/running|queued|pending|reconcil|progress/i.test(status)) {
+      return finish(/fail|error|cancel|abort|interrupt/i.test(status) ? 'failed' : 'done');
+    }
+    if (tries >= 360) return finish('unknown');
+    setTimeout(tick, tries < 20 ? 3000 : 10000);
+  };
+  setTimeout(tick, 3000);
+}
+
+const DRAFT_RE = /(写|起草|拟|回).{0,8}(邮件|信|email)|草稿|draft|e-?mail/i;
+const ACTION_RE = /回补|补全|往前补|去查|查一下|查查|搜一下|找一下|帮我(发|约|安排|问)|发给|提醒/;
+
+/**
+ * 人物页的提问：只问这个人的事就用快速通道当场回答；写邮件、去各渠道查、回补这类要动用别的插件的事，
+ * 发到这个人的固定任务里，结果读回页面。
+ */
+async function ask(input) {
   const text = str(input.text);
   if (!text) throw fail('INVALID_PARAMS', 'text is required');
-  if (!(await tasksAvailable())) throw fail('UNSUPPORTED', '当前 Cindy 版本不支持由插件新建任务');
-  let about = '';
-  if (str(input.contactId)) {
-    const c = await getContact(input.contactId, { eventLimit: 5 });
-    about = `\n\n当前在看的联系人：${c.name}（id: ${c.id}）。`;
+  const contactId = str(input.contactId);
+  if (!contactId) {
+    return sendToTask('general', '通讯录', `${text}\n\n请使用 ${CHANNEL} 插件的工具（ghost_call，ghost_id 为 ${CHANNEL}）查询和修改通讯录。`, { purpose: 'general' });
   }
-  const key = uuid();
-  const task = await cindy.tasks.create({ requestKey: `${key}-create`, title: `通讯录 · ${text}`.slice(0, 100) });
-  await cindy.tasks.send({
-    taskId: task.taskId,
-    expectedRevision: task.revision,
-    requestKey: `${key}-send`,
-    text:
-      `${text}${about}\n\n` +
-      '请使用 cindy-contacts 插件的工具（ghost_call，ghost_id 为 cindy-contacts）查询和修改通讯录；' +
-      '删除与合并前先向我确认。',
-  });
-  return { taskId: task.taskId };
+  const d = await getContact(contactId, { interactionLimit: 60, eventLimit: 30 });
+  const wantsDraft = DRAFT_RE.test(text);
+  const useTask = input.mode === 'task' || wantsDraft || ACTION_RE.test(text);
+  if (!useTask) {
+    try {
+      const answer = await quickAsk(d, text);
+      const entry = { key: `quick@${nowIso()}`, q: text, a: answer, at: nowIso(), via: 'quick', status: 'done' };
+      await pushQa(d.id, entry);
+      return { kind: 'answer', ...entry };
+    } catch (e) {
+      if (e.code !== 'NO_QUICK_MODEL') throw e;
+      // 没有可用的快速通道：改走任务。
+    }
+  }
+  const prompt = [
+    `关于通讯录里的「${d.name}」（${CHANNEL} 档案 id：${d.id}）：${text}`,
+    '',
+    `先用 ghost_call({ ghost_id: "${CHANNEL}", tool: "get", args: { id: "${d.id}" } }) 读这个人的档案和往来。`,
+    wantsDraft
+      ? '写邮件：用已安装的邮件插件只创建草稿，不要发送。回复已有往来时接在原邮件串里，并先确认这串往来在哪个邮箱账号里、用同一个账号。最终回复只写：草稿所在账号、收件人、主题和正文全文。'
+      : '需要时去邮件、飞书、日历里查；查到的新往来用 record 记进档案，必要时用 save 更新 summary、narrative、latest 和还没完的事。最终回复简短，第一句给结论。',
+  ].join('\n');
+  const entry = await sendToTask(`c:${d.id}`, `通讯录 · ${d.name}`, prompt, { purpose: wantsDraft ? 'draft' : 'ask', contactId: d.id, question: text });
+  return { ...entry, kind: 'task' };
+}
+
+/** 页面上的「整理最近 N 天 / 往前补 / 补这个人更早的往来」，都交给 AI 按时间段去做。 */
+async function tidy(input) {
+  const scope = ['recent', 'backfill', 'contact'].includes(input.scope) ? input.scope : 'recent';
+  const settings = await getSettings();
+  const months = Number(input.months) || settings.backfillMonths;
+  if (scope === 'contact') {
+    const c = await requireContact(input.contactId);
+    const text = [
+      `回补通讯录里「${c.display_name}」更早的往来。`,
+      `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "contact", contact_id: "${c.id}", months: ${months} } })。`,
+      '2. 按返回的时间段和来源说明，只用这个人的身份和名字去查；查到的往来用 record 记下（contact_id 用上面的 id）。',
+      '3. 用 save 重写这个人的 summary、narrative、facts、latest，并整理还没完的事。',
+      '4. 调用 maintenance，action 为 "end"，带上 run_id。最终回复一句话说补到了哪天、多了几条往来。',
+    ].join('\n');
+    return sendToTask(`c:${c.id}`, `通讯录 · ${c.display_name}`, text, { purpose: 'backfill', contactId: c.id, question: `往前补 ${months} 个月` });
+  }
+  const text = [
+    scope === 'recent' ? '整理我的通讯录：把最近的往来整理进去。' : `回补我的通讯录：往前补 ${months} 个月的往来。`,
+    `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "${scope}"${scope === 'backfill' ? `, months: ${months}` : ''} } })。`,
+    '2. 按返回的时间段（segments，新的在前）和来源说明逐段查找；与我真实往来的人，用 record 记下每条往来。',
+    '3. 有新往来的人：get 之后用 save 更新 summary、narrative、latest、facts 和还没完的事；值得记的真人没有档案就新建，明显重复的直接 merge 并写 reason。先写来往最多的人。',
+    '4. 最后调用 maintenance，action 为 "end"，带上 run_id 和数量。最终回复一句话说整理了几个人。',
+  ].join('\n');
+  return sendToTask('maintain', '通讯录 · 整理', text, { purpose: scope });
 }
 
 /* ───────────── 广播与主视图请求 ───────────── */
@@ -1245,7 +1896,22 @@ async function viewState() {
     settings: state.ready ? await getSettings() : null,
     maintenance: state.ready ? await getMeta('maintenance') : null,
     automationRequested: state.ready ? await getMeta('automation_requested') : null,
+    coverage: state.ready ? await getMeta('coverage') : null,
+    view: state.ready ? await getMeta('view') : null,
+    running: [...running.values()].filter((r) => r.status === 'running'),
   };
+}
+
+/** 记下用户这次打开的时间；「上次看过之后」以前一次打开为准（半小时内反复打开不算新的一次）。 */
+async function opened() {
+  const view = (await getMeta('view')) || {};
+  const now = Date.now();
+  if (!view.current || now - Date.parse(view.current) > 30 * 60000) {
+    const next = { prev: view.current || '', current: isoOf(now) };
+    await batch([setMetaStmt('view', next)]);
+    return next;
+  }
+  return view;
 }
 
 const VIEW_METHODS = {
@@ -1263,11 +1929,16 @@ const VIEW_METHODS = {
   duplicates: () => findDuplicates(),
   importSystem: (p) => importSystem(p),
   importLegacy: () => importLegacy({ force: true }),
-  ask: (p) => askAI(p),
+  ask: (p) => ask(p),
+  qa: (p) => getQa(str(p.contactId)),
+  tidy: (p) => tidy(p),
+  unmerge: (p) => undoMerge(p.id),
+  loop: (p) => setLoopStatus(p),
+  opened: () => opened(),
   settings: (p) => setSettings(p || {}),
   requestAutomation: () => requestAutomation(),
 };
-const MUTATING = new Set(['save', 'logEvent', 'deleteEvent', 'relate', 'organize', 'merge', 'delete', 'groups', 'importSystem', 'importLegacy']);
+const MUTATING = new Set(['save', 'logEvent', 'deleteEvent', 'relate', 'organize', 'merge', 'delete', 'groups', 'importSystem', 'importLegacy', 'unmerge', 'loop']);
 
 const answered = new Map();
 function startViewChannel() {
@@ -1342,13 +2013,33 @@ const TOOLS = {
       identities: arr(a.identities),
       removeIdentityIds: arr(a.remove_identity_ids),
       groups: arr(a.groups),
+      facts: a.facts === undefined ? undefined : arr(a.facts),
+      latest: a.latest,
+      openLoops: arr(a.open_loops),
+      closeLoops: arr(a.close_loops),
       source: 'agent',
       allowDuplicate: !!a.allow_duplicate,
     }),
+  record: (a) =>
+    recordInteractions(
+      (Array.isArray(a.items) ? a.items : []).map((x) => ({
+        contactId: x.contact_id,
+        identity: x.identity,
+        email: x.email,
+        name: x.name,
+        occurredAt: x.occurred_at,
+        channel: x.channel,
+        title: x.title,
+        summary: x.summary,
+        quote: x.quote,
+        link: x.link,
+        ref: x.ref,
+      })),
+    ),
   log_event: (a) => logEvent({ contactId: a.contact_id, date: a.date, text: a.text, source: a.source || 'agent' }),
   relate: (a) => relate({ fromId: a.from_id, toId: a.to_id, relation: a.relation, note: a.note, remove: !!a.remove }),
   organize: (a) => organize({ action: a.action, contactIds: arr(a.contact_ids), group: a.group }),
-  merge: (a) => mergeContacts({ sourceId: a.source_id, targetId: a.target_id }),
+  merge: (a) => mergeContacts({ sourceId: a.source_id, targetId: a.target_id, reason: a.reason }),
   delete: (a) => {
     if (a.confirm !== true) throw fail('CONFIRM_REQUIRED', '删除不可恢复：确认用户明确要求后，传 confirm:true 再调用');
     return deleteContact(a.id);
@@ -1370,14 +2061,29 @@ const TOOLS = {
         status: x.status,
         identities: arr(x.identities),
         groups: arr(x.groups),
+        facts: x.facts === undefined ? undefined : arr(x.facts),
+        latest: x.latest,
+        openLoops: arr(x.open_loops),
         source: 'agent',
         allowDuplicate: !!x.allow_duplicate,
       })),
     ),
   maintenance: (a) =>
-    maintenance({ action: a.action, checkpoint: a.checkpoint, scanned: a.scanned, created: a.created, updated: a.updated, pending: a.pending, note: a.note }),
+    maintenance({
+      action: a.action,
+      scope: a.scope,
+      contactId: a.contact_id,
+      months: a.months,
+      runId: a.run_id,
+      checkpoint: a.checkpoint,
+      scanned: a.scanned,
+      created: a.created,
+      updated: a.updated,
+      pending: a.pending,
+      note: a.note,
+    }),
 };
-const MUTATING_TOOLS = new Set(['save', 'save_many', 'log_event', 'relate', 'organize', 'merge', 'delete', 'groups', 'import_macos', 'maintenance']);
+const MUTATING_TOOLS = new Set(['save', 'save_many', 'record', 'log_event', 'relate', 'organize', 'merge', 'delete', 'groups', 'import_macos', 'maintenance']);
 
 let pendingImport = null;
 // 宿主保留的错误码不能由插件写入（与 Cindy 的 GHOST_HOST_ERROR_CODES 一致）。
