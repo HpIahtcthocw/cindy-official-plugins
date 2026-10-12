@@ -473,6 +473,8 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.ok(Date.parse(b1.segments[0].from) > Date.parse(b1.segments[1].from), 'newest first');
     assert.deepEqual(b1.sources.map((x) => x.source), ['mail', 'calendar', 'im', 'cindy']);
     assert.match(b1.first_step, /sources/);
+    assert.match(b1.channel_rule, /钥匙串/);
+    assert.match(b1.channel_rule, /不要尝试解密/);
     // 先报告来源能不能用，页面据此告诉用户哪些没连
     const rs = ok(
       await a.call('maintenance', {

@@ -1200,22 +1200,34 @@ async function setSettings(patch) {
   return next;
 }
 
-/** 每个来源「按时间段取新往来」的做法。只交给 AI 已经能用的工具，没有就跳过。 */
+/**
+ * 每个来源「按时间段取新往来」的做法。不限插件：这个任务里能用的办法都可以用，
+ * 按 CHANNEL_RULE 的顺序逐个试；本机加密的应用数据不去解。
+ */
+const CHANNEL_RULE =
+  '每个来源用这个任务里一切能用的办法读，按顺序试，前一个读全了就不用后一个：' +
+  '① 已安装的插件（ghost_info 查 tools）；② Cindy 自带工具；③ 本机命令行工具（gh、gog、lark-cli 等，先 which）；④ 本机能直接读的应用数据（只读，如 sqlite3 -readonly）。' +
+  '微信、Telegram、飞书桌面版等应用的本地库是加密的，不要尝试解密或读取进程内存。' +
+  '读不到时把原因写进 note：系统隐私保护拦住（authorization denied / Operation not permitted）写「需要给 Cindy 开完全磁盘访问」；' +
+  '命令行工具在沙盒里读不到钥匙串（gh auth status 显示 (default) 且说 token invalid，或 gog 报 keyring 错误）写「任务沙盒读不到钥匙串」，这不是登录失效，不要让用户重新登录。';
+
 const SOURCE_GUIDE = {
   mail:
-    '邮件：用已安装的邮件插件（如 Gmail：先 gmail_accounts，再 gmail_run 的 messages search）。按时间段查，query 写 `after:<from 的 Unix 秒> before:<to 的 Unix 秒> -category:promotions -category:social`。真人来信再用 thread get 读整串，只取要点。ref 填邮件 message id。',
+    '邮件：Gmail 插件（先 gmail_accounts，再 gmail_run 的 messages search）或 gog CLI（gog gmail search）。按时间段查，query 写 `after:<from 的 Unix 秒> before:<to 的 Unix 秒> -category:promotions -category:social`，真人来信再读整串，只取要点。' +
+    '其它邮箱用对应插件；Apple 邮件可只读 ~/Library/Mail/V*/MailData/Envelope Index（sqlite），需要完全磁盘访问。ref 填邮件 message id。',
   calendar:
-    '日历：用已安装的日历插件（如 google_calendar 的 list_events，time_min / time_max 用本时间段）。参会人和会议主题记成往来，ref 填 event id。50 人以上的大会只记组织者。',
+    '日历：日历插件（如 google_calendar 的 list_events）或 gog CLI（gog calendar events），time_min / time_max 用本时间段。参会人和会议主题记成往来，ref 填 event id。50 人以上的大会只记组织者。',
   im:
     '即时消息：群聊和单聊要分别找，单聊优先。' +
     '单聊（飞书）：im_list_chats 只列群，不含单聊；用 im_search_messages，query 传一个空格 " "、chat_type 传 "p2p_chat"，结果按时间倒序，翻页直到消息早于本时间段开始，收集出现过的单聊 chat_id 和对方。' +
     '群聊（飞书）：im_list_chats，sort_type=ByActiveTimeDesc，取本时间段内有活动的群。' +
     '然后用 im_read_messages（start_time / end_time 用本时间段，page_size 50）逐个会话读；has_more 为 true 就带 page_token 继续，单个会话最多读 200 条，读不完的那一段写进 coverage 的 gaps。' +
-    'Slack 等其它消息插件同理：私聊和群各自找全。ref 填消息 id；机器人消息不记。',
+    'iMessage / 短信：sqlite3 -readonly ~/Library/Messages/chat.db，message 表 date 是 2001-01-01 起的纳秒，handle.id 是对方手机号或邮箱，群聊看 chat_message_join 和 chat；需要完全磁盘访问。' +
+    'Slack 等其它消息工具同理：私聊和群各自找全。ref 填消息 id；机器人消息不记。',
   cindy:
-    'Cindy 对话：cindy_helper 的 list_sessions / get_chat_history（from / to 用本时间段，只看 user 和 assistant）。插件发起的任务里这组工具可能不可用，不可用就跳过。ref 填消息 id。',
+    'Cindy 对话：cindy_helper 的 get_chat_history（from / to 用本时间段，只看 user 和 assistant；list_sessions 按会话创建时间筛，开了很久的会话会漏，不要用它找）。插件发起的任务里这组工具可能不可用，不可用就跳过。ref 填消息 id。',
   github:
-    'GitHub：用已授权的 GitHub 工具或 gh CLI，查本时间段内与用户相关的 PR、review 和 issue 评论（作者、评审人、被 @ 的人）。ref 填 PR 或评论的 URL。',
+    'GitHub：已授权的 GitHub 插件或 gh CLI，查本时间段内与用户相关的 PR、review 和 issue 评论（作者、评审人、被 @ 的人）。ref 填 PR 或评论的 URL。',
 };
 
 const DAY = 86400000;
@@ -1342,8 +1354,9 @@ async function maintenanceBegin(input) {
       '收尾 end 必须带 coverage：每个来源写 complete（这段时间读全了）/ partial（读了一部分，gaps 写清哪个会话或哪类、哪段时间没读到、为什么）/ none（没读到）。' +
       '读完的来源才推进检查点；partial 的缺口和 none 的整段会留到下次先补。backlog 里是上次没读完的，先补，补完的 id 放进 backlog_done。',
     first_step:
-      '先逐个确认 sources 里的来源能不能用（用 ghost_list / ghost_info 看对应插件是否已安装、已连接账号；Cindy 对话看 cindy_helper 历史工具是否可用），' +
-      '再调用 maintenance，action 为 "sources"，sources_status 写每个来源的 status：ok / missing（没装）/ unauthorized（没连接或没授权）/ unavailable（这个任务里用不了）/ error，note 写一句原因。',
+      '先逐个确认 sources 里的来源能不能用、用哪个办法读（按 channel_rule 的顺序试：插件是否已安装并连接、命令行工具是否在、本机数据能否打开；Cindy 对话看 cindy_helper 历史工具是否可用），' +
+      '再调用 maintenance，action 为 "sources"，sources_status 写每个来源的 status：ok / missing（没装）/ unauthorized（没连接或没授权）/ unavailable（这个任务里用不了）/ error，note 写一句用的办法或读不到的原因。',
+    channel_rule: CHANNEL_RULE,
     manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
   };
 }
