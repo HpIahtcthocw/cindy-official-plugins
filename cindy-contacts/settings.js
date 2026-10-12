@@ -1,0 +1,186 @@
+'use strict';
+/**
+ * 插件详情页里的设置区。只放需要用户决定的几项：
+ * 每天自动整理（打开预填好的自动化页，频率和模型在那里选）、第一次读几天、读哪些来源、通讯录主要是同事还是客户。
+ * 和主视图一样经同源 BroadcastChannel 交给 main.js 读写。
+ */
+(() => {
+  const STRINGS = {
+    'zh-CN': {
+      loading: '正在读取设置…',
+      auto: '每天自动整理',
+      autoBtn: '打开自动化页设置', autoAgain: '重新打开自动化页',
+      autoHint: '会打开 Cindy 的自动化页，名称和要做的事已经填好；在那里选模型、确认频率后点保存。保存后每天整理一次，每次都会用到 AI 额度。',
+      autoOpened: '已打开自动化页：选好模型后点保存，自动整理就开始了。',
+      autoLast: (w) => `上次整理：${w}`, autoNever: '还没有整理过。',
+      autoStop: '要停用或改频率、换模型：在自动化页编辑或暂停「整理通讯录」。',
+      days: '第一次读最近', daysOpt: (d) => `${d} 天`,
+      daysHint: '只影响第一次整理。想要更早的，可以在人物页「往来」里往前补。',
+      sources: '读哪些来源',
+      src: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 等消息', cindy: 'Cindy 对话', github: 'GitHub' },
+      sourcesHint: '只用你已经装好并授权过的插件，没装的会自动跳过。',
+      profile: '通讯录主要是', colleagues: '同事和朋友', clients: '很多客户',
+      profileHint: { colleagues: '每天整理一次。', clients: '每 6 小时整理一次，客户按公司归类，记下需求、报价和跟进约定。改了之后要重新打开自动化页保存一次才会换频率。' },
+      tasksNote: '「现在整理一次」、往前补和写邮件草稿用下方「任务设置」的模型和动手权限；建议把动手权限设为「自动审查」，否则整理时每一步都要你确认。',
+      failed: '没有保存成功：', noSchedule: '当前 Cindy 版本还不支持由插件打开自动化页。',
+    },
+    en: {
+      loading: 'Loading settings…',
+      auto: 'Daily tidy-up',
+      autoBtn: 'Set up in Automations', autoAgain: 'Open Automations again',
+      autoHint: 'Opens Cindy’s Automations page with the name and instructions filled in. Pick a model, check the schedule and save. It then tidies up once a day; each run uses AI quota.',
+      autoOpened: 'Automations is open: pick a model and save to start.',
+      autoLast: (w) => `Last tidy-up: ${w}`, autoNever: 'Not tidied up yet.',
+      autoStop: 'To pause it or change the schedule or model, edit “整理通讯录” on the Automations page.',
+      days: 'First run reads', daysOpt: (d) => `${d} days`,
+      daysHint: 'Only affects the first tidy-up. Go further back from a person’s Exchanges tab.',
+      sources: 'Sources',
+      src: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack chats', cindy: 'Cindy chats', github: 'GitHub' },
+      sourcesHint: 'Only plugins you already installed and allowed; missing ones are skipped.',
+      profile: 'Contacts are mostly', colleagues: 'Colleagues and friends', clients: 'Many clients',
+      profileHint: { colleagues: 'Tidies up once a day.', clients: 'Tidies up every 6 hours, groups clients by company and notes needs, quotes and follow-ups. Save the automation again to change its schedule.' },
+      tasksNote: '“Tidy up now”, backfills and email drafts use the model and permission in Task settings below. Set the permission to Auto-review, or every step asks you to confirm.',
+      failed: 'Not saved: ', noSchedule: 'This Cindy version cannot open Automations from plugins yet.',
+    },
+  };
+  let T = STRINGS.en;
+  let LOCALE = 'en';
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+
+  /* 与 main.js 通信：同主视图，按 id 重发直到收到回执。 */
+  const channel = new BroadcastChannel('cindy-contacts');
+  const pending = new Map();
+  let lastWake = 0;
+  const wake = async () => {
+    if (Date.now() - lastWake < 20000) return;
+    lastWake = Date.now();
+    try {
+      await fetch('/wake');
+    } catch (_) {
+      /* 重发兜底 */
+    }
+  };
+  function rpc(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = uid();
+      const send = () => channel.postMessage({ kind: 'req', id, method, params: params || {} });
+      const timer = setInterval(() => {
+        wake();
+        send();
+      }, 800);
+      pending.set(id, { resolve, reject, timer });
+      wake().then(send);
+    });
+  }
+  channel.onmessage = (ev) => {
+    const m = ev.data;
+    if (!m || m.kind !== 'res' || !pending.has(m.id)) {
+      if (m && m.kind === 'event' && m.name === 'changed') load();
+      return;
+    }
+    const p = pending.get(m.id);
+    pending.delete(m.id);
+    clearInterval(p.timer);
+    if (m.ok) p.resolve(m.result);
+    else p.reject(Object.assign(new Error(m.error?.message || 'failed'), { code: m.error?.code }));
+  };
+
+  const S = { meta: null, opened: false, error: '' };
+
+  function when(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString(LOCALE, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function render() {
+    const m = S.meta;
+    if (!m || !m.settings) {
+      $('#root').innerHTML = `<p class="hint">${esc(T.loading)}</p>`;
+      return;
+    }
+    const st = m.settings;
+    const seg = (key, values, label) =>
+      `<div class="seg">${values.map((v) => `<button type="button" data-set="${key}" data-value="${esc(v)}" aria-pressed="${st[key] === v}">${esc(label(v))}</button>`).join('')}</div>`;
+    let h = '';
+    h += `<div class="item"><div class="label">${esc(T.auto)}</div><div class="body">`;
+    if (m.schedule) {
+      h += `<button class="pill" type="button" id="openAuto">${esc(m.automationRequested ? T.autoAgain : T.autoBtn)}</button>`;
+      h += `<p class="hint">${esc(S.opened ? T.autoOpened : T.autoHint)}</p>`;
+      const last = m.maintenance && m.maintenance.lastRunAt;
+      h += `<p class="status">${esc(last ? T.autoLast(when(last)) : T.autoNever)}</p>`;
+      if (m.automationRequested) h += `<p class="hint">${esc(T.autoStop)}</p>`;
+    } else {
+      h += `<p class="hint">${esc(T.noSchedule)}</p>`;
+    }
+    h += '</div></div>';
+    h += `<div class="item"><div class="label">${esc(T.days)}</div><div class="body">${seg('initialDays', [7, 14, 30], T.daysOpt)}<p class="hint">${esc(T.daysHint)}</p></div></div>`;
+    h += `<div class="item"><div class="label">${esc(T.sources)}</div><div class="body"><div class="checks">`;
+    for (const k of ['mail', 'calendar', 'im', 'cindy', 'github']) {
+      h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}</label>`;
+    }
+    h += `</div><p class="hint">${esc(T.sourcesHint)}</p></div></div>`;
+    h += `<div class="item"><div class="label">${esc(T.profile)}</div><div class="body">${seg('profile', ['colleagues', 'clients'], (v) => T[v])}<p class="hint">${esc(T.profileHint[st.profile] || '')}</p></div></div>`;
+    h += `<div class="item"><div class="label"></div><div class="body"><p class="hint">${esc(T.tasksNote)}</p>${S.error ? `<p class="err">${esc(S.error)}</p>` : ''}</div></div>`;
+    $('#root').innerHTML = h;
+  }
+
+  async function load() {
+    try {
+      S.meta = await rpc('state');
+      if (!S.meta.settings) setTimeout(load, 1000);
+    } catch (e) {
+      S.error = T.failed + e.message;
+    }
+    render();
+  }
+
+  async function save(patch) {
+    S.error = '';
+    try {
+      S.meta.settings = await rpc('settings', patch);
+    } catch (e) {
+      S.error = T.failed + e.message;
+    }
+    render();
+  }
+
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.id === 'openAuto') {
+      b.disabled = true;
+      try {
+        S.meta.automationRequested = await rpc('requestAutomation');
+        S.opened = true;
+        S.error = '';
+      } catch (err) {
+        S.error = T.failed + err.message;
+      }
+      return render();
+    }
+    if (b.dataset.set) {
+      const v = b.dataset.value;
+      return save({ [b.dataset.set]: /^\d+$/.test(v) ? Number(v) : v });
+    }
+  });
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset && t.dataset.source) save({ sources: { [t.dataset.source]: t.checked } });
+  });
+
+  (async () => {
+    try {
+      const ctx = await (await fetch('/app-context')).json();
+      LOCALE = (ctx && ctx.context && ctx.context.locale) || 'en';
+    } catch (_) {
+      LOCALE = 'en';
+    }
+    T = STRINGS[LOCALE] || STRINGS.en;
+    document.documentElement.lang = LOCALE;
+    render();
+    load();
+  })();
+})();

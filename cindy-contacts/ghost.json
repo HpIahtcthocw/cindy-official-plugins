@@ -22,6 +22,7 @@
     "icon": "message-circle",
     "html": "main-view.html"
   },
+  "settingsHtml": "settings.html",
   "library": true,
   "cindy": {
     "text": [

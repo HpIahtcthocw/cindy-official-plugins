@@ -15,7 +15,7 @@
       today: '今天', yesterday: '昨天', days: (n) => `${n} 天前`, weeks: (n) => `${n} 周前`, months: (n) => `${n} 个月前`, years: (n) => `${n} 年前`,
       noMatch: '没有找到这个人。', emptyScope: '这里还没有人。',
       edit: '编辑', more: '更多', back: '返回', save: '保存', cancel: '取消', create: '新建',
-      newContact: '新建联系人', importMac: '从 macOS 通讯录导入', findDups: '查找重复', retryLegacy: '重新导入旧版通讯录', autoSettings: '整理设置',
+      newContact: '新建联系人', importMac: '从 macOS 通讯录导入', findDups: '查找重复', retryLegacy: '重新导入旧版通讯录', autoSettings: '整理',
       tabOverview: '概览', tabHistory: '往来', tabInfo: '资料',
       since: '上次看过之后', sinceCount: (n) => `${n} 件事`,
       loops: '你们之间还没完的事', loopsNone: '没有还没完的事。', doneTag: '已完成', markDone: '标记为已完成', reopen: '重新打开',
@@ -52,9 +52,10 @@
       macOnly: '只有 Mac 可以从系统通讯录导入。', retry: '重试',
       dupsTitle: '可能重复的档案', dupsNone: '没有发现重复的档案。', mergeLeft: '并入左边', notSame: '不是同一人', merged: '已合并',
       failed: '没有成功：', libError: '通讯录资料库暂时打不开：',
-      footLast: (w) => `上次整理 ${w}`, footNever: '还没有整理过', footRunning: 'Cindy 正在整理…', footSettings: '设置',
-      autoTitle: '整理设置',
+      footLast: (w) => `上次整理 ${w}`, footNever: '还没有整理过', footRunning: 'Cindy 正在整理…', footSettings: '整理',
+      autoTitle: '整理',
       autoText: 'Cindy 按时间段整理：每次只读上次整理之后的新往来，给有变化的人改写档案。第一次只读最近一段，想要更早的可以往前补。每次整理都会用到 AI 额度。',
+      settingsWhere: '读哪些来源、第一次读几天、每天自动整理，在 Cindy 侧边栏「插件」→「通讯录」的详情页里设置；整理用的模型和动手权限也在那里的「任务设置」。',
       firstDays: '第一次读最近', daysOpt: (d) => `${d} 天`,
       sourcesLabel: '读哪些来源', src: { mail: '邮件', calendar: '日历', im: '飞书 / Slack 等消息', cindy: 'Cindy 对话', github: 'GitHub' },
       srcHint: '只用你已经装好、授权过的插件；没装的会自动跳过。',
@@ -77,7 +78,7 @@
       today: 'today', yesterday: 'yesterday', days: (n) => `${n}d ago`, weeks: (n) => `${n}w ago`, months: (n) => `${n}mo ago`, years: (n) => `${n}y ago`,
       noMatch: 'No one matches.', emptyScope: 'No one here yet.',
       edit: 'Edit', more: 'More', back: 'Back', save: 'Save', cancel: 'Cancel', create: 'Create',
-      newContact: 'New contact', importMac: 'Import from macOS Contacts', findDups: 'Find duplicates', retryLegacy: 'Re-import old contacts', autoSettings: 'Tidy-up settings',
+      newContact: 'New contact', importMac: 'Import from macOS Contacts', findDups: 'Find duplicates', retryLegacy: 'Re-import old contacts', autoSettings: 'Tidy up',
       tabOverview: 'Overview', tabHistory: 'Exchanges', tabInfo: 'Details',
       since: 'Since you last looked', sinceCount: (n) => `${n} ${n === 1 ? 'item' : 'items'}`,
       loops: 'Still open between you', loopsNone: 'Nothing open.', doneTag: 'Done', markDone: 'Mark done', reopen: 'Reopen',
@@ -114,8 +115,9 @@
       macOnly: 'Importing from system contacts works only on a Mac.', retry: 'Retry',
       dupsTitle: 'Possible duplicates', dupsNone: 'No duplicates found.', mergeLeft: 'Merge into left', notSame: 'Not the same', merged: 'Merged',
       failed: 'Did not work: ', libError: 'The contacts library cannot be opened right now: ',
-      footLast: (w) => `Last tidy ${w}`, footNever: 'Not tidied yet', footRunning: 'Cindy is tidying up…', footSettings: 'Settings',
-      autoTitle: 'Tidy-up settings',
+      footLast: (w) => `Last tidy ${w}`, footNever: 'Not tidied yet', footRunning: 'Cindy is tidying up…', footSettings: 'Tidy up',
+      autoTitle: 'Tidy up',
+      settingsWhere: 'Sources, how far the first run reads and the daily tidy-up are set on this plugin’s page under Plugins in the Cindy sidebar; the model and permission for tidy-ups are in its Task settings.',
       autoText: 'Cindy works in time windows: each run reads only what is new since the last one and rewrites the people who changed. The first run reads a short recent window; go further back whenever you like. Each run uses AI quota.',
       firstDays: 'First run reads the last', daysOpt: (d) => `${d} days`,
       sourcesLabel: 'Sources to read', src: { mail: 'Mail', calendar: 'Calendar', im: 'Feishu / Slack chats', cindy: 'Cindy chats', github: 'GitHub' },
@@ -612,36 +614,16 @@
     detailEl.innerHTML = h;
   }
 
+  /** 「整理」：只放马上要做的动作和最近几次的记录；来源、天数、每天自动整理在插件详情页的设置里。 */
   function renderAuto() {
-    const st = S.meta?.settings || { profile: 'colleagues', macAutoSync: true, initialDays: 14, backfillMonths: 3, sources: {} };
     const m = S.meta?.maintenance;
-    const seg = (key, values, label) =>
-      `<div class="seg">${values.map((v) => `<button type="button" data-set="${key}" data-value="${v}" aria-pressed="${st[key] === v}">${esc(label(v))}</button>`).join('')}</div>`;
-    const opt = (key, label, hint) => `<button class="opt" data-profile="${key}" aria-pressed="${st.profile === key}"><b>${esc(label)}</b><small>${esc(hint)}</small></button>`;
+    const months = S.meta?.settings?.backfillMonths || 3;
     let h = `<div class="tools"><button class="tbtn" data-action="closePanel">${esc(T.cancel)}</button></div><article class="page">`;
     h += `<h1 class="name" style="font-size:36px">${esc(T.autoTitle)}</h1><p class="who" style="margin-bottom:26px">${esc(T.autoText)}</p>`;
     if (S.meta?.tasks) {
-      h += `<div class="acts row-acts"><button class="pill pri" data-action="tidyRecent"${tidyRunning() ? ' disabled' : ''}>${esc(tidyRunning() ? T.footRunning : T.tidyNow)}</button><button class="pill" data-action="backfillAll"${tidyRunning() ? ' disabled' : ''}>${esc(T.backfillAll(st.backfillMonths))}</button></div>`;
+      h += `<div class="acts row-acts"><button class="pill pri" data-action="tidyRecent"${tidyRunning() ? ' disabled' : ''}>${esc(tidyRunning() ? T.footRunning : T.tidyNow)}</button><button class="pill" data-action="backfillAll"${tidyRunning() ? ' disabled' : ''}>${esc(T.backfillAll(months))}</button></div>`;
     }
-    h += `<div class="setrow"><span>${esc(T.firstDays)}</span>${seg('initialDays', [7, 14, 30], T.daysOpt)}</div>`;
-    h += `<div class="setrow"><span>${esc(T.backLabel)}</span>${seg('backfillMonths', [1, 3, 6, 12], T.monthsOpt)}</div>`;
-    h += `<div class="sech" style="margin-top:26px">${esc(T.sourcesLabel)}</div><div class="srcs">`;
-    for (const k of ['mail', 'calendar', 'im', 'cindy', 'github']) {
-      h += `<label class="src"><input type="checkbox" data-source="${k}"${st.sources?.[k] ? ' checked' : ''}><span>${esc(T.src[k])}</span></label>`;
-    }
-    h += `</div><p class="small muted">${esc(T.srcHint)}</p>`;
-    h += `<div class="sech" style="margin-top:26px">${esc(T.profileLabel)}</div><div class="opts">${opt('colleagues', T.profColleagues, T.profColleaguesHint)}${opt('clients', T.profClients, T.profClientsHint)}</div>`;
-    if (S.meta?.platform === 'darwin') {
-      h += `<label class="toggle"><span><b>${esc(T.macSync)}</b><small>${esc(T.macSyncHint)}</small></span><input type="checkbox" id="macSync"${st.macAutoSync ? ' checked' : ''}></label>`;
-    }
-    h += '<div class="sec">';
-    if (!S.meta?.schedule) h += `<p class="muted">${esc(T.noSchedule)}</p>`;
-    else {
-      h += `<div class="acts"><button class="pill" data-action="requestAutomation">${esc(S.meta.automationRequested ? T.automationAgain : T.openAutomation)}</button></div>`;
-      if (S.autoOpened) h += `<p class="small">${esc(T.automationOpened)}</p>`;
-      h += `<p class="small muted">${esc(T.stopHint)}</p>`;
-    }
-    h += '</div>';
+    h += `<p class="small muted">${esc(T.settingsWhere)}</p>`;
     if (m && m.runs && m.runs.length) {
       h += `<div class="sec"><div class="sech">${esc(T.runsTitle)}</div>`;
       for (const r of m.runs.slice(0, 6)) h += `<div class="runrow"><span class="d">${esc(fmtWhen(r.at))}</span><span>${esc(T.runLine(r))}${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}</span></div>`;
