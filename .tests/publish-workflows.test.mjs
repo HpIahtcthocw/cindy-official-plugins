@@ -478,6 +478,7 @@ test('contributor guidance never checks out PR code and refreshes when Verify co
   assert.doesNotMatch(guidanceWorkflow, /github\.event\.pull_request\.body/);
   assert.doesNotMatch(guidanceWorkflow, /id-token: write|secrets\./);
   assert.match(guidanceWorkflow, /contents: read/);
+  assert.match(guidanceWorkflow, /checks: read/);
   assert.match(guidanceWorkflow, /MUST NEVER check out/);
   for (const publisher of [cnWorkflow, globalWorkflow]) {
     assert.doesNotMatch(publisher, /pr-guidance|workflow_run:/);
@@ -569,6 +570,38 @@ test('contributor guidance matches pr-verify gating and recomputes DCO each run'
   });
   assert.equal(remediated.result.status, 0, remediated.result.stderr || remediated.result.stdout);
   assert.doesNotMatch(remediated.posted, /Commits without DCO sign-off/);
+
+  const wrongRemediation = runGuidance(t, {
+    'commits.json': [
+      {
+        sha: GUIDANCE_UNSIGNED,
+        parents: [{ sha: '0'.repeat(40) }],
+        author: { login: 'alice', type: 'User' },
+        commit: { message: 'feat: unsigned\n', author: { name: 'Alice', email: 'alice@example.test' } },
+      },
+      {
+        sha: GUIDANCE_REMEDIATE,
+        parents: [{ sha: GUIDANCE_UNSIGNED }],
+        author: { login: 'alice', type: 'User' },
+        commit: {
+          message:
+            `I, Alice <wrong@example.test>, hereby add my Signed-off-by to this commit: ${GUIDANCE_UNSIGNED}\n\n`
+            + 'Signed-off-by: Alice <alice@example.test>\n',
+          author: { name: 'Alice', email: 'alice@example.test' },
+        },
+      },
+    ],
+    'pull.json': {
+      draft: false,
+      body: '',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_REMEDIATE },
+    },
+  });
+  assert.equal(wrongRemediation.result.status, 0, wrongRemediation.result.stderr || wrongRemediation.result.stdout);
+  assert.match(wrongRemediation.posted, /Commits without DCO sign-off/);
+  assert.match(wrongRemediation.posted, new RegExp(GUIDANCE_UNSIGNED.slice(0, 7)));
 
   const waiting = runGuidance(t, {
     'runs.json': {

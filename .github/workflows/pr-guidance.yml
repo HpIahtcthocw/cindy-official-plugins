@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   pull-requests: write
   issues: write
   actions: read
@@ -117,8 +118,9 @@ jobs:
           fi
 
           # Recompute DCO from the current PR commits this run. Merge/bot
-          # commits are exempt; CONTRIBUTING remediation commits cover the
-          # listed 40-char SHAs without rewriting history.
+          # commits are exempt. A remediation commit only covers a SHA when
+          # the name+email on the CONTRIBUTING line match the original commit
+          # author (and, for "I, …", the remediating commit author).
           gh api "repos/${REPO}/pulls/${PR}/commits" --paginate > commits.json
           dco_conclusion="$(
             gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" > check-runs.json 2>/dev/null \
@@ -130,22 +132,46 @@ jobs:
             def is_bot:
               ((.author.login // "") | test("\\[bot\\]$"))
               or ((.author.type // "") == "Bot");
-            def has_signoff: .commit.message | test("(?m)^Signed-off-by: .+ <.+>$");
-            .[] | select((is_merge or is_bot or has_signoff) | not) | .sha
-          ' commits.json > unsigned-shas.txt || true
-          jq -r '
-            def has_signoff: .commit.message | test("(?m)^Signed-off-by: .+ <.+>$");
-            .[] | select(has_signoff) | .commit.message
-          ' commits.json \
-            | grep -E '^(I, .+ <.+>, hereby add my Signed-off-by to this commit: |On behalf of .+ <.+>, I, .+ <.+>, hereby add my Signed-off-by to this commit: )[0-9a-f]{40}$' \
-            | grep -oE '[0-9a-f]{40}$' | sort -u > remediated-shas.txt || true
+            def ident($c): "\($c.name) <\($c.email)>";
+            def author_ident: ident(.commit.author);
+            def committer_ident: ident(.commit.committer // {name: "", email: ""});
+            def signoff_idents:
+              [ .commit.message | scan("(?m)^Signed-off-by: (.+) <(.+)>$") | "\(.[0]) <\(.[1])>" ];
+            def has_matching_signoff:
+              author_ident as $a
+              | committer_ident as $c
+              | signoff_idents as $s
+              | (($s | index($a)) != null)
+                or (($s | index($c)) != null);
+            . as $all
+            | ($all | map({key: .sha, value: author_ident}) | from_entries) as $authors
+            | [
+                $all[]
+                | select(has_matching_signoff)
+                | . as $rem
+                | $rem | author_ident as $me
+                | (
+                    [
+                      ($rem.commit.message | scan("(?m)^I, (.+) <(.+)>, hereby add my Signed-off-by to this commit: ([0-9a-f]{40})$"))
+                      | select(("\(.[0]) <\(.[1])>" == $me) and (($authors[.[2]] // "") == $me))
+                      | .[2]
+                    ],
+                    [
+                      ($rem.commit.message | scan("(?m)^On behalf of (.+) <(.+)>, I, (.+) <(.+)>, hereby add my Signed-off-by to this commit: ([0-9a-f]{40})$"))
+                      | select(("\(.[2]) <\(.[3])>" == $me) and (($authors[.[4]] // "") == "\(.[0]) <\(.[1])>"))
+                      | .[4]
+                    ]
+                  )[]
+              ] as $remediated
+            | [
+                $all[]
+                | select((is_merge or is_bot or has_matching_signoff) | not)
+                | .sha
+              ] - $remediated
+            | .[]
+          ' commits.json > still-unsigned.txt
           unsigned=""
-          if [[ "${dco_conclusion}" != "success" && -s unsigned-shas.txt ]]; then
-            if [[ -s remediated-shas.txt ]]; then
-              comm -23 <(sort -u unsigned-shas.txt) remediated-shas.txt > still-unsigned.txt || true
-            else
-              cp unsigned-shas.txt still-unsigned.txt
-            fi
+          if [[ "${dco_conclusion}" != "success" && -s still-unsigned.txt ]]; then
             unsigned="$(awk '{ print substr($0, 1, 7) }' still-unsigned.txt | tr '\n' ' ')"
           fi
           if [[ -n "${unsigned// }" ]]; then
