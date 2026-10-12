@@ -74,7 +74,11 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
  const page=server.base+'/simulators/'+encodeURIComponent(udid);await probe(page);
  if(!server.clipboard)server.clipboard=await createClipboard(server.base,clipboardAction,{
   port:server.port,
-  status:async p=>{const state=controls?await controls.status():null;return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),settings:state?.settings,idleDeadline:state?.idleDeadline};},
+  status:async p=>{const state=controls?await controls.status():null;return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),devices:state?.devices,deviceJob:state?.deviceJob,currentApp:await controls?.currentApp?.(p.udid),settings:state?.settings,idleDeadline:state?.idleDeadline};},
+  catalog:()=>controls.request('viewer_catalog'),
+  create:async p=>{const created=await controls.request('create_device',{name:p.name,deviceType:p.deviceType,runtime:p.runtime});return {ok:true,created,devices:(await controls.status()).devices};},
+  rename:async p=>{await controls.request('rename_device',{udid:p.targetUdid,name:p.name});return {ok:true,devices:(await controls.status()).devices};},
+  switch:async p=>{const job=await controls.request('viewer_switch',{udid:p.udid,targetUdid:p.targetUdid,_locale:p.locale});server.clipboard.devices.add(job.targetUdid);return {ok:true,job};},
   restart:()=>controls?controls.exclusive(async()=>{await controls.assertEnabled();return restartNative(server);}):restartNative(server),
   release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};}):clipboardAction({udid:p.udid,action:'release'}),
   shutdown:p=>controls.request('settings_shutdown',{udid:p.udid}),

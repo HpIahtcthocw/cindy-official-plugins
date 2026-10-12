@@ -1,6 +1,6 @@
 {
   "name": "Baguette シミュレーター",
-  "description": "専用 iOS シミュレータを操作。設定画面で端末状態の確認、停止、実行許可の切替ができ、プレビュー拡大縮小にも対応。既定では15分間操作がなければデータを保持して停止。macOS 15以降、Apple Silicon、Xcode、iOS runtime が必要。",
+  "description": "独立 iOS シミュレータ。サイドバーでテスト端末の追加・名前変更・切り替え・表示倍率変更・終了が可能。実行スイッチと既定15分のアイドル終了でデータを保持します。macOS 15+、Apple Silicon、完全な Xcode と iOS runtime が必要です。",
   "whenToUse": "ユーザーが Baguette を明示的に選んだ場合のみ使用。最初に environment と devices を実行し、ログイン済み端末を再利用。Cindy 内蔵端末を引き継いだり自動で置き換えたりしないでください。キー固着は press(release-input)。heal は App を終了するためユーザーの了承が必要です。 実行許可はユーザーがプラグイン設定で管理する。AI が勝手に再許可しないこと。終了時は shutdown を使用。プレビューを閉じても端末は停止しない。",
   "tools": {
     "environment": {

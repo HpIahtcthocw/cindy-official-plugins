@@ -19,6 +19,10 @@ Open **Plugins → Baguette** to view actual private-device states, start or shu
 
 The viewer header includes **Shut down device** and **50%–200% view size**. App pinch gestures remain Option-drag or Ctrl-wheel, separate from view size. The idle setting defaults to 15 minutes, with 30 minutes, 1 hour and manual-only options. Device input and actual tool operations renew use; streamed frames, status polling and watching a picture do not. A device shutdown terminates its apps and connections. All private devices share this inactivity clock; changing the idle setting starts a new period.
 
+The sidebar preview also provides **Switch**, **Add device**, and **Edit name**. Adding selects a model and a compatible installed iOS runtime; the new device stays shut down until you switch to it. Renaming preserves apps and data. Changing model or runtime creates a separate device, keeping the original. Switching confirms the previous device is shut down before booting the target and shows progress in the same preview. Other running private devices must be stopped first.
+
+The plugin remembers the last app it successfully launched on each device in `runtime-settings.json.apps.json`. When switching from a running device, it can install that app's simulator bundle on the target and launch it; system apps are launched by bundle ID. App data, logins and credentials are never copied. Without an app record, the target opens its home screen. If the source is already off, the recorded app must already exist on the target. Incompatible apps or failed startup are reported with the actual device state; switching does not promise identical content or login state.
+
 Runtime preferences are stored beside the private device set in `runtime-settings.json`, shared by local users of that set. The worker attempts shutdown on normal exit, but forced termination can interrupt it. Use the settings run switch **before** disabling the plugin in Cindy, and verify the displayed device states. A closed/disconnected preview is never proof of shutdown.
 
 ## Security and limitations

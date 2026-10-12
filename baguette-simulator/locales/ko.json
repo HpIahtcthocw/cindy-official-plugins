@@ -1,6 +1,6 @@
 {
   "name": "Baguette 시뮬레이터",
-  "description": "전용 iOS 시뮬레이터를 조작합니다. 설정에서 기기 상태 확인, 종료, 실행 허용 전환이 가능하며 미리보기 배율을 조절할 수 있습니다. 기본값은 15분 미사용 후 데이터 유지 종료입니다. macOS 15+, Apple Silicon, Xcode 및 iOS runtime이 필요합니다.",
+  "description": "독립 iOS 시뮬레이터. 사이드바에서 테스트 기기 추가, 이름 변경, 전환, 확대 및 종료를 지원합니다. 실행 스위치와 기본 15분 유휴 종료로 데이터를 보존합니다. macOS 15+, Apple Silicon, 전체 Xcode 및 iOS runtime이 필요합니다.",
   "whenToUse": "사용자가 Baguette를 명시적으로 선택한 경우에만 사용하세요. 먼저 environment와 devices를 호출하고 로그인된 기기를 재사용하세요. Cindy 내장 기기를 인계받거나 자동 대체하지 마세요. 키 고착은 press(release-input)을 사용하세요. heal은 앱을 종료하므로 사용자 수락이 필요합니다. 실행 허용은 사용자가 플러그인 설정에서 관리하며 AI가 임의로 다시 켜면 안 됩니다. 사용 후 shutdown을 호출하세요. 미리보기 닫기는 기기 종료가 아닙니다.",
   "tools": {
     "environment": {

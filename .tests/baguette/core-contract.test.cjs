@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
 const dir=path.resolve('baguette-simulator/node');
 const udid='00000000-0000-4000-8000-000000000001';
-function core(output,failAt=Infinity,macOS="15.0"){
+function core(output,failAt=Infinity,macOS="15.0",catalog=[]){
  let polls=0,mutations=0;const commands=[],budgets=[];
  const context={module:{exports:{}},__dirname:dir,process:{platform:'darwin',arch:'arm64'},setTimeout:fn=>fn(),require(name){
   if(name==='./viewer.cjs')return {};
@@ -9,7 +9,7 @@ function core(output,failAt=Infinity,macOS="15.0"){
   if(name==='node:child_process')return {execFile(file,args,opts,cb){
    commands.push(file);budgets.push(opts.timeout);let data='',error=null;
    if(file==='/usr/bin/sw_vers')data=macOS;
-   else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted'}]}});
+   else if(args.includes('--json'))data=JSON.stringify(args.includes('runtimes')?{runtimes:catalog}:{devices:{runtime:[{udid,state:'Booted'}]}});
    else if(args[0]==='describe-ui')data=output;
    else if(args.includes('list')){polls++;if(polls===failAt)error=Error('simctl timeout');data=(polls===1?'100':'200')+' 0 com.apple.SpringBoard';}
    else mutations++;
@@ -60,4 +60,38 @@ test('boot and heal complete command budgets fit the Host bridge ceiling',async(
  const heal=core('');await heal.dispatch('heal',{udid});
  // The polling window permits up to 25s plus one last 5s command.
  assert.ok(heal.budgets.slice(0,-1).reduce((a,b)=>a+b,0)+30500<120000);
+});
+
+test('rename only accepts an owned device and a bounded non-option name',async()=>{
+ for(const name of ['', '  ', '-option', 'name\nline', 'a'.repeat(81)]){
+  const c=core('');await assert.rejects(c.dispatch('rename_device',{udid,name}),e=>e.code==='INVALID_ARGUMENT');assert.equal(c.mutations(),0);
+ }
+ const c=core('');await assert.rejects(c.dispatch('rename_device',{udid:'00000000-0000-4000-8000-000000000002',name:'Phone'}),e=>e.code==='DEVICE_NOT_OWNED');assert.equal(c.mutations(),0);
+ assert.equal((await c.dispatch('rename_device',{udid,name:'测试 Phone'})).execution,'executed');assert.equal(c.mutations(),1);
+});
+
+test('app reuse obtains only an owned app container, never a data container or runtime copy',async()=>{
+ const set=path.join(require('node:os').homedir(),'Library/Application Support/BaguetteCindy/devices');
+ for(const appPath of [path.join(set,udid,'data/Containers/Bundle/Application/test/App.app'),'/RuntimeRoot/Applications/Settings.app']){
+  const calls=[];
+  const context={module:{exports:{}},__dirname:dir,process:{platform:'darwin',arch:'arm64'},require(name){
+   if(name==='./viewer.cjs')return {};
+   if(name==='node:fs/promises')return {mkdir:async()=>{},realpath:async p=>p,stat:async()=>({isDirectory:()=>true})};
+   if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push(args);let data='';if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted'}]}});else if(args.includes('get_app_container'))data=appPath;queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
+   return require(name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const result=await context.module.exports.dispatch('app_bundle',{udid,bundleId:'test.example.app'});
+  assert.equal(result.appPath,appPath.startsWith(set)?appPath:null);
+  const request=calls.find(args=>args.includes('get_app_container'));assert.deepEqual(Array.from(request),['simctl','--set',set,'get_app_container',udid,'test.example.app','app']);
+ }
+});
+
+
+test('create rejects a runtime/model mismatch before mutation even when version ranges would allow it',async()=>{
+ const runtime='com.apple.CoreSimulator.SimRuntime.iOS-27-1',deviceType='com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro';
+ const catalog=[{identifier:runtime,isAvailable:true,supportedDeviceTypes:[{identifier:'com.apple.CoreSimulator.SimDeviceType.iPhone-Duo'}]}];
+ const mismatch=core('',Infinity,'27.0',catalog);await assert.rejects(mismatch.dispatch('create_device',{name:'Phone',runtime,deviceType}),e=>e.code==='DEVICE_RUNTIME_MISMATCH'&&e.execution==='not_executed');assert.equal(mismatch.mutations(),0);
+ const missing=core('');await assert.rejects(missing.dispatch('create_device',{name:'Phone',runtime,deviceType}),e=>e.code==='RUNTIME_UNAVAILABLE');assert.equal(missing.mutations(),0);
+ const supported=core('',Infinity,'27.0',[{identifier:runtime,isAvailable:true,supportedDeviceTypes:[{identifier:deviceType}]}]);assert.equal((await supported.dispatch('create_device',{name:'Phone',runtime,deviceType})).execution,'executed');assert.equal(supported.mutations(),1);
 });

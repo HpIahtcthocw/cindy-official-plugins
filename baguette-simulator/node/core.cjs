@@ -10,13 +10,18 @@ const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
 const DEVICE_SET = path.join(ROOT, 'devices');
 const children = new Set();
-const methods = new Set(['environment','devices','create_device','boot','shutdown','describe_ui','tap','swipe','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer']);
+const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','swipe','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer']);
 class Failure extends Error {
   constructor(code, message, execution = 'not_executed') { super(message); this.code=code; this.execution=execution; }
 }
 function string(value,name,max=256) {
   if(typeof value!=='string'||!value.length||value.length>max||value.includes('\0')) throw new Failure('INVALID_ARGUMENT',`Invalid ${name}`);
   return value;
+}
+function deviceName(value){
+  const name=string(value,'name',80).trim();
+  if(!name||name.startsWith('-')||/[\x00-\x1f\x7f]/.test(name))throw new Failure('INVALID_ARGUMENT','Use a device name of 1–80 characters without control characters or a leading dash.');
+  return name;
 }
 function number(value,name,min,max) {
   if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max) throw new Failure('INVALID_ARGUMENT',`${name} must be ${min}..${max}`);
@@ -39,7 +44,7 @@ async function jsonRun(file,args) { const {stdout}=await run(file,args); try{ret
 async function listDevices() {
   await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
   const data=await sim(['list','devices','--json'],{timeout:5000});
-  return Object.entries(JSON.parse(data.stdout).devices).flatMap(([runtime,devices])=>devices.map(d=>({name:d.name,udid:d.udid,state:d.state,isAvailable:d.isAvailable,runtime})));
+  return Object.entries(JSON.parse(data.stdout).devices).flatMap(([runtime,devices])=>devices.map(d=>({name:d.name,udid:d.udid,state:d.state,isAvailable:d.isAvailable,runtime,deviceType:d.deviceTypeIdentifier})));
 }
 async function target(p, booted=true) {
   const udid=string(p.udid,'udid',36);
@@ -106,18 +111,37 @@ async function dispatch(method,p={}) {
     const [version,xcode,runtimes,types]=await Promise.all([
       run(BINARY,['--version']),run('/usr/bin/xcodebuild',['-version']),
       jsonRun('/usr/bin/xcrun',['simctl','list','runtimes','--json']),jsonRun('/usr/bin/xcrun',['simctl','list','devicetypes','--json'])]);
-    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier})),note:'Baguette 0.2.0 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
+    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Baguette 0.2.0 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
   }
   if(method==='close_viewer') return {...await stopViewer(),execution:'executed',note:'Viewer server stopped; simulator and App remain running.'};
   if(method==='devices') return {deviceSet:DEVICE_SET,devices:await listDevices()};
   if(method==='create_device') {
-    const name=string(p.name,'name',80), runtime=string(p.runtime,'runtime'), deviceType=string(p.deviceType,'deviceType');
+    const name=deviceName(p.name), runtime=string(p.runtime,'runtime'), deviceType=string(p.deviceType,'deviceType');
     if(!/^com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+$/.test(runtime)||!/^com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+$/.test(deviceType)) throw new Failure('INVALID_ARGUMENT','Use runtime and deviceType identifiers from environment');
+    const installed=(await jsonRun('/usr/bin/xcrun',['simctl','list','runtimes','--json'])).runtimes.find(r=>r.identifier===runtime&&r.isAvailable);
+    if(!installed)throw new Failure('RUNTIME_UNAVAILABLE','Select an available installed iOS runtime.');
+    if(Array.isArray(installed.supportedDeviceTypes)&&!installed.supportedDeviceTypes.some(d=>d.identifier===deviceType))throw new Failure('DEVICE_RUNTIME_MISMATCH','This runtime does not support the selected model. Refresh the model and iOS options.');
     await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
     const result=await sim(['create',name,deviceType,runtime],{mutation:true});
     return {udid:result.stdout,name,runtime,deviceSet:DEVICE_SET,execution:'executed'};
   }
-  const device=await target(p,!['boot','shutdown'].includes(method));
+  const device=await target(p,!['boot','shutdown','rename_device'].includes(method));
+  if(method==='rename_device') {
+    const name=deviceName(p.name);
+    await sim(['rename',device.udid,name],{mutation:true});
+    return {udid:device.udid,name,execution:'executed'};
+  }
+  if(method==='app_bundle') {
+    const bundleId=string(p.bundleId,'bundleId');
+    if(!/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundleId))throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');
+    const value=(await sim(['get_app_container',device.udid,bundleId,'app'],{timeout:10000})).stdout;
+    const real=await fs.realpath(value),root=await fs.realpath(path.join(DEVICE_SET,device.udid,'data'));
+    if(!real.endsWith('.app')||!(await fs.stat(real)).isDirectory())throw new Failure('INVALID_APP_PATH','Only this private simulator application bundle may be reused.');
+    // System apps live in the runtime, outside the device data directory.
+    // Never copy any host/runtime path; launch its bundle ID on the target.
+    if(!real.startsWith(root+path.sep))return {bundleId,appPath:null};
+    return {bundleId,appPath:real};
+  }
   if(method==='open_viewer') return {udid:device.udid,...await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale),execution:'executed'};
   if(method==='boot') {
     // Upstream 0.1.98's automatic heal omits --set in its internal simctl calls.

@@ -64,3 +64,16 @@ test('WebSocket keepalive traffic does not renew idle; authenticated user activi
   assert.equal(touches,1);
  }finally{socket?.destroy();bridge.close();upstreamSocket?.destroy();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
 });
+
+test('create, rename and switch retain origin, capability and opened-device authentication',async()=>{
+ let mutations=0;const run=async()=>{mutations++;return {ok:true};};
+ const bridge=await createClipboard('http://127.0.0.1:1',async()=>{}, {port:1,create:run,rename:run,switch:run});bridge.devices.add(udid);
+ try{
+  const token=bridge.fragment.split('.')[1];
+  for(const action of ['create','rename','switch']){
+   const request=(origin,key,id)=>fetch(bridge.base+'/control-api',{method:'POST',headers:{Origin:origin,'X-Cindy-Clipboard':key},body:JSON.stringify({action,udid:id,targetUdid:'foreign',name:'Test'})});
+   assert.equal((await request('https://example.test',token,udid)).status,403);assert.equal((await request(bridge.base,'invalid',udid)).status,403);assert.equal((await request(bridge.base,token,'foreign')).status,400);
+  }
+  assert.equal(mutations,0);
+ }finally{bridge.close();}
+});

@@ -1,6 +1,6 @@
 {
   "name": "Baguette Simulator",
-  "description": "Private iOS simulators with user-operated device controls, a persistent run switch and viewer zoom. Defaults to shutdown after 15 idle minutes, preserving data. Requires macOS 15+, Apple Silicon, full Xcode and an iOS runtime.",
+  "description": "Private iOS simulators with sidebar device creation, renaming, switching, zoom and shutdown. Includes a persistent run switch and 15-minute idle shutdown that preserves data. Requires macOS 15+, Apple Silicon, full Xcode and an iOS runtime.",
   "whenToUse": "Only when explicitly requested. Run environment/devices; reuse private devices, never Cindy embedded ones. Reopen with open_viewer. Stuck keys: press(release-input); heal ends apps and needs consent. User controls the run switch; do not re-enable it. Finish with shutdown, not just close_viewer.",
   "tools": {
     "environment": {

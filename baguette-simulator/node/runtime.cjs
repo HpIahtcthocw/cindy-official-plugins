@@ -7,6 +7,8 @@ const {randomUUID} = require('node:crypto');
 function createRuntime({dispatch, settingsFile, now = Date.now}) {
   let config, busy = false, lastActivity = now(), lastStop = null, closing = false;
   let idleHandled = false;
+  const assertEnabled=async()=>{if(!(await load()).enabled||closing)throw failure('RUNTIME_DISABLED','Baguette is paused. Open plugin settings.');};
+  const manager=require('./device-manager.cjs').createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile:settingsFile+'.apps.json'});
   const failure = (code, message, execution = 'not_executed') => Object.assign(new Error(message), {code, execution});
   async function load() {
     if (config) return config;
@@ -33,7 +35,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
   async function status() {
     const settings = await load();
     return {...await dispatch('devices'), settings: {...settings}, lastStop,
-      idleDeadline: settings.idleMinutes ? lastActivity + settings.idleMinutes * 60000 : null};
+      deviceJob:manager.snapshot(),idleDeadline: settings.idleMinutes ? lastActivity + settings.idleMinutes * 60000 : null};
   }
   async function stopAll(reason) {
     const before = (await dispatch('devices')).devices;
@@ -66,6 +68,8 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
     // A settings refresh must not reject a user's stop/permission change.
     // Reading simulator state is safe while a command is in flight.
     if (method === 'settings_status') return status();
+    if (method === 'viewer_switch') return manager.start(params);
+    if (method === 'viewer_catalog') return dispatch('environment');
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
@@ -86,6 +90,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
       const readOnly = ['environment','devices'].includes(actual);
       if (!readOnly && !settings.enabled) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Enable simulator operation in Plugins → Baguette settings.');
       const result = await dispatch(actual, params);
+      if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
       if (!readOnly) touch();
       return result;
     });
@@ -101,8 +106,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
       return result;
     });
   }
-  return {request, status, checkIdle, touch, exclusive,
-    async assertEnabled() { if (!(await load()).enabled || closing) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Open plugin settings.'); },
+  return {request, status, checkIdle, touch, exclusive,currentApp:manager.currentApp,assertEnabled,
     async close() { closing = true; return stopAll('worker-exit'); }};
 }
 module.exports = {createRuntime};
