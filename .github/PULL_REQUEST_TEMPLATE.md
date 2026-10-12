@@ -7,6 +7,12 @@ Title format: <type>(<scope>): <short description>
   scope 一般写插件目录名，例如 fix(qq-mail): 校验移动结果
 -->
 
+<!--
+First-time contributor? A bot comment will list anything still missing. If only
+the device-verification step is red, your code passed — see CONTRIBUTING.
+首次贡献？机器人评论会列出仍缺的事项；若只有实机验证一步是红的，代码已通过，详见 CONTRIBUTING。
+-->
+
 ## What changed / 改了什么
 
 <!-- Plugin(s) touched, and what this PR does. / 涉及哪些插件，这个 PR 做了什么。 -->

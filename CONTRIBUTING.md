@@ -65,6 +65,20 @@ attestation still leaves the artifact available; fix earlier test/build failures
 first. Packages expire after 7 days, are unreviewed, and never go to Platform/OSS.
 Record source identity and package hash; green CI alone is not device verification.
 
+**How an external contributor's PR flows:**
+
+- **Verify pull request** runs on the plain `pull_request` event with read-only
+  permissions and no secrets, so it is safe to run automatically on forks. If your
+  GitHub account is brand new, GitHub may still ask a maintainer to click
+  "Approve and run" once; the PR shows it as awaiting approval — nothing for you to do.
+- The **PR contributor guidance** bot keeps one comment on your PR listing what is
+  still missing (device-verification checkbox, commits without DCO sign-off, CI
+  awaiting approval) and updates it on every push or description edit. It only reads
+  PR metadata and never executes code from the PR.
+- If only "Require Cindy device verification attestation" fails and every earlier
+  step is green, your code passed: follow the Job Summary steps, verify on a device,
+  and check the box. Editing the PR body re-runs the check.
+
 The `*.test.mjs` files under `.tests/` run on Node's built-in test runner:
 
 ```bash

@@ -1,0 +1,98 @@
+name: PR contributor guidance
+
+# Posts / updates ONE sticky bilingual comment telling contributors exactly what
+# is still missing (device verification checkbox, DCO sign-off, pending
+# maintainer approval of fork CI), instead of leaving a bare red X.
+#
+# SECURITY: pull_request_target runs in the base-repo context so it can comment
+# on fork PRs. It therefore MUST NEVER check out, build, install or execute PR
+# code. This job only reads PR metadata through the GitHub API and the event
+# payload; PR-controlled text (body, commit messages) is read as data by jq and
+# never interpolated into a shell command or `${{ }}` expression.
+# 安全约束：本工作流不 checkout、不执行任何 PR 代码，只读取 PR 元数据并评论。
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: pr-guidance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guidance:
+    name: Contributor checklist guidance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Build and post checklist comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          marker='<!-- cindy-pr-guidance -->'
+          body="$(jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}")"
+          author="$(jq -r '.pull_request.user.login' "${GITHUB_EVENT_PATH}")"
+          association="$(jq -r '.pull_request.author_association' "${GITHUB_EVENT_PATH}")"
+
+          # Changed plugin dirs (metadata only): top-level dirs that contain ghost.json on main.
+          gh api "repos/${REPO}/pulls/${PR}/files" --paginate --jq '.[].filename' > files.txt
+          plugins=""
+          while read -r d; do
+            if grep -qxF "${d}/ghost.json" files.txt \
+              || gh api "repos/${REPO}/contents/${d}/ghost.json?ref=main" --silent 2>/dev/null; then
+              plugins+="${d} "
+            fi
+          done < <(grep '/' files.txt | grep -v '^\.' | cut -d/ -f1 | sort -u)
+
+          todo=()
+          if [[ -n "${plugins}" ]] && ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' <<<"${body}"; then
+            todo+=("**Cindy device verification / Cindy 实机验证** is unchecked. Download the package from the *Verify pull request* run → Artifacts, install on a stable/Beta Cindy device, record version/channel/SHA-256 under *Verification*, then check the box. / 实机验证未勾选：从 *Verify pull request* 的 Artifacts 下载测试包，在正式稳定版/Beta 实机安装验证，在「验证」一节记录版本/渠道/SHA-256 后勾选。")
+          fi
+
+          unsigned="$(gh api "repos/${REPO}/pulls/${PR}/commits" --paginate \
+            --jq '.[] | select((.commit.message | test("(?m)^Signed-off-by: .+ <.+>$")) | not) | .sha[0:7]' | tr '\n' ' ')"
+          if [[ -n "${unsigned// }" ]]; then
+            todo+=("Commits without DCO sign-off: \`${unsigned% }\`. Use \`git commit -s\`, or push a remediation commit as described in CONTRIBUTING (DCO section). / 以下 commit 缺少 DCO 签名，用 \`git commit -s\` 或按 CONTRIBUTING 的 DCO 一节推一个补签 commit。")
+          fi
+
+          verify_status="$(gh api "repos/${REPO}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request" \
+            --jq '[.workflow_runs[] | select(.name == "Verify pull request")][0].conclusion // "none"' 2>/dev/null || echo none)"
+          if [[ "${verify_status}" == "action_required" ]]; then
+            todo+=("CI (*Verify pull request*) is waiting for a maintainer to approve workflows for this fork PR — nothing for you to fix; a maintainer has been notified. / CI 正在等待维护者批准 fork PR 的工作流运行，你无需操作。")
+          fi
+
+          {
+            echo "${marker}"
+            echo "### 🤖 Contributor checklist / 贡献检查清单"
+            echo
+            if [[ ${#todo[@]} -eq 0 ]]; then
+              echo "✅ No missing items detected by this bot. Remaining checks (version bump, tests, packaging) are reported by **Verify pull request**; maintainers will review. / 本机器人未发现缺失项；版本号、测试、打包由 **Verify pull request** 报告，维护者会继续 review。"
+            else
+              echo "Hi @${author}, the following items are still open / 以下事项尚待处理："
+              echo
+              for item in "${todo[@]}"; do echo "- [ ] ${item}"; done
+              echo
+              echo "Version bump (\`ghost.json\` \`version\` > main), tests and packaging are checked by **Verify pull request**; open its failed step for the exact message. / 版本号 bump、测试与打包由 **Verify pull request** 检查，失败时点开对应步骤查看具体原因。"
+            fi
+            echo
+            echo "<sub>Updated automatically for ${HEAD_SHA:0:7} (author association: ${association}). See CONTRIBUTING.md / CONTRIBUTING.zh-CN.md. 本评论自动更新。</sub>"
+          } > comment.md
+
+          existing="$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -n1)"
+          if [[ -n "${existing}" ]]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@comment.md --silent
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@comment.md --silent
+          fi

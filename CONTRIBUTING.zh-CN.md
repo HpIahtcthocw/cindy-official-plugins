@@ -50,6 +50,17 @@
 因此最后一项未通过仍可下载；更早的测试/打包失败则需先修复。包保留 7 天，未审核，
 不进入 Platform/OSS。记录具体构建来源和包哈希，不能只凭 CI 绿灯宣称已实机验证。
 
+**外部贡献者的 PR 会怎样流转：**
+
+- **Verify pull request** 以普通 `pull_request` 事件、只读权限运行，不接触任何密钥，
+  fork PR 也能安全自动跑。若你是首次在 GitHub 上贡献的新账号，GitHub 可能要求维护者
+  先点一次「Approve and run」，这期间 PR 上会显示等待批准，你无需操作。
+- **PR contributor guidance** 机器人会在 PR 下维护一条评论，列出仍缺的事项（实机验证
+  勾选、缺少 DCO 签名的 commit、CI 是否在等待批准），每次 push 或编辑描述后自动更新。
+  它只读取 PR 元数据，从不执行 PR 中的代码。
+- 只剩「Require Cindy device verification attestation」失败、前面步骤全绿时，代码已通过，
+  按 Job Summary 中的步骤完成实机验证并勾选即可；编辑 PR 描述会自动重跑检查。
+
 `.tests/` 下的 `*.test.mjs` 用 Node 内置 test runner 运行，例如：
 
 ```bash
