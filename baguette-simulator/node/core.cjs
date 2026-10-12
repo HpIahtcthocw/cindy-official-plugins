@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
-const {openViewer,stopViewer}=require('./viewer.cjs');
+const {openViewer,stopViewer,configureControls}=require('./viewer.cjs');
 const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
 const DEVICE_SET = path.join(ROOT, 'devices');
@@ -204,20 +204,25 @@ async function dispatch(method,p={}) {
 function reply(value){process.stdout.write(JSON.stringify(value)+'\n');}
 function shutdown(){ for(const child of children) child.kill('SIGKILL'); process.exit(0); }
 function startWorker() {
-  // Reject overlapping requests: do not execute a queued mutation after its caller times out.
-  let queue=Promise.resolve();let pending=0;
+  const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json')});
+  configureControls(runtime);
+  const timer=setInterval(()=>runtime.checkIdle().catch(error=>process.stderr.write('[baguette-idle] '+(error.code||'FAILED')+'\n')),15000);
+  timer.unref();
+  let stopping=false;
+  const stop=async()=>{
+    if(stopping)return;stopping=true;clearInterval(timer);
+    // Host may force termination before this completes. User-facing stop
+    // controls await and verify shutdown instead of relying on process exit.
+    try{await runtime.close();}catch{process.stderr.write('[baguette-exit] Device shutdown not confirmed\n');}
+    shutdown();
+  };
   const input=readline.createInterface({input:process.stdin});
-  input.on('line',line=>{
+  input.on('line',async line=>{
     let request;try{request=JSON.parse(line);}catch{return reply({jsonrpc:'2.0',id:null,error:{code:-32700,message:'Invalid JSON'}});}
     if(request.id===undefined)return;
-    if(pending>=1)return reply({jsonrpc:'2.0',id:request.id,result:{ok:false,errorCode:'BUSY',message:'Another simulator operation is running; retry after it finishes',execution:'not_executed'}});
-    pending++;
-    queue=queue.then(async()=>{
-      try {reply({jsonrpc:'2.0',id:request.id,result:{ok:true,...await dispatch(request.method,request.params)}});}
+      try {reply({jsonrpc:'2.0',id:request.id,result:{ok:true,...await runtime.request(request.method,request.params)}});}
       catch(e){reply({jsonrpc:'2.0',id:request.id,result:{ok:false,errorCode:e.code||'FAILED',message:e.message,execution:e.execution||'not_executed'}});}
-      finally{pending--;}
-    });
   });
-  input.on('close',shutdown);process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
+  input.on('close',stop);process.on('SIGTERM',stop);process.on('SIGINT',stop);
 }
 module.exports={dispatch,DEVICE_SET,BINARY,startWorker};

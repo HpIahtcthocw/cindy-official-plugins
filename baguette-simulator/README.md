@@ -13,6 +13,14 @@ Devices live under `~/Library/Application Support/BaguetteCindy/devices`, screen
 
 `heal` explicitly restarts SpringBoard and terminates running apps: require user acceptance of that effect. Try releasing stuck keys first. `shutdown` stops the selected simulator but retains its data. `close_viewer` stops streaming, not the simulator.
 
+## User controls
+
+Open **Plugins → Baguette** to view actual private-device states, start or shut down a device, open its viewer, or stop all Baguette devices. Turning off **Allow simulators to run** first persists the restriction, then shuts down devices and stops the viewer. Failed shutdown remains visible; tools cannot restart a device while the switch is off. Turning it back on never boots a device. Data and login storage are preserved.
+
+The viewer header includes **Shut down device** and **50%–200% view size**. App pinch gestures remain Option-drag or Ctrl-wheel, separate from view size. The idle setting defaults to 15 minutes, with 30 minutes, 1 hour and manual-only options. Device input and actual tool operations renew use; streamed frames, status polling and watching a picture do not. A device shutdown terminates its apps and connections. All private devices share this inactivity clock; changing the idle setting starts a new period.
+
+Runtime preferences are stored beside the private device set in `runtime-settings.json`, shared by local users of that set. The worker attempts shutdown on normal exit, but forced termination can interrupt it. Use the settings run switch **before** disabling the plugin in Cindy, and verify the displayed device states. A closed/disconnected preview is never proof of shutdown.
+
 ## Security and limitations
 
 The Node Worker runs with local user permissions. Executable paths and command shapes are fixed; there is no arbitrary shell tool. The controller listens only on 127.0.0.1; clipboard/control requests require a matching Origin, random capability and an opened private device. No account tokens are extracted or copied into Cindy storage. Screenshot analysis may send images to the configured model. Actions inside apps can have external side effects and remain subject to the task’s authorization.

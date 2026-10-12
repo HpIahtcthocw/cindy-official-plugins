@@ -1,0 +1,45 @@
+'use strict';
+const zh=document.documentElement.lang==='zh-CN';
+const T=zh?{connected:'设备运行中 · 画面已连接',off:'设备已关闭',service:'画面服务已停止',recovering:'正在恢复连接…',offline:'画面连接已断开，设备状态未知',retry:'请点击“恢复画面”。',disconnected:'请到「插件 → Baguette」查看设备状态或关闭设备。画面断开不代表设备已关闭。',failed:'未能确认操作结果，请到插件设置页核对设备状态。',released:'按键已释放。',stopping:'正在关闭设备…',stopped:'设备已关闭，App 和连接已停止；数据保留。',idle:'闲置后自动关闭：',minute:' 分钟。',manual:'自动关闭未开启，请用“关闭设备”结束使用。',soon:'设备即将因闲置关闭；操作画面可继续使用。'}:{connected:'Device running · Viewer connected',off:'Device shut down',service:'Viewer stopped',recovering:'Reconnecting…',offline:'Viewer disconnected · Device state unknown',retry:'Click Recover view to retry.',disconnected:'Open Plugins → Baguette to check or shut down the device. Losing the picture does not mean the device is off.',failed:'Operation not confirmed. Check device status in plugin settings.',released:'Keys released.',stopping:'Shutting down device…',stopped:'Device shut down. Apps and connections stopped; data kept.',idle:'Automatic idle shutdown: ',minute:' minutes.',manual:'Automatic shutdown is off. Use Shut down device when finished.',soon:'Idle shutdown is approaching. Interact with the screen to continue.'};
+const udid=new URLSearchParams(location.search).get('udid');
+const cap=new URLSearchParams(location.hash.slice(1)).get('cindyClipboard');
+const token=cap?.split('.')[1];
+const screen=document.getElementById('screen'),status=document.getElementById('status'),button=document.getElementById('recover'),notice=document.getElementById('notice'),shutdown=document.getElementById('shutdown'),release=document.getElementById('release'),zoom=document.getElementById('zoom');
+let generation=null,checking=false,recovering=false,stopping=false,stopped=false,lastTouch=0;
+function message(value){notice.textContent=value;notice.style.display=value?'block':'none';}
+function load(){screen.src='/simulators/'+encodeURIComponent(udid)+location.hash;}
+function applyZoom(){try{if(screen.contentDocument?.body)screen.contentDocument.body.style.zoom=zoom.value;}catch{}}
+async function api(action){const r=await fetch('/control-api',{method:'POST',headers:{'Content-Type':'application/json','X-Cindy-Clipboard':token},body:JSON.stringify({action,udid}),signal:AbortSignal.timeout(action==='shutdown'?90000:20000)});const p=await r.json();if(!r.ok||p.ok===false)throw Error(p.errorCode||'CONTROL_FAILED');return p;}
+function closed(){stopped=true;generation=null;screen.src='about:blank';status.textContent=T.off;button.disabled=release.disabled=shutdown.disabled=true;message(T.stopped);}
+async function check(){
+  if(checking||recovering||stopping)return;checking=true;
+  try{
+    const s=await api('status');if(recovering||stopping)return;
+    if(s.device?.state==='Shutdown'){if(!stopped)closed();return;}
+    stopped=false;button.disabled=release.disabled=shutdown.disabled=false;
+    status.textContent=s.ready?T.connected:s.parked?T.service:T.recovering;
+    const soon=s.idleDeadline&&s.idleDeadline-Date.now()<60000;
+    message(soon?T.soon:s.parked?T.retry:'');
+    document.getElementById('idle').textContent=s.settings?.idleMinutes?T.idle+s.settings.idleMinutes+T.minute:T.manual;
+    if(s.ready&&(generation===null||screen.contentDocument?.querySelector('[data-viewer-unavailable]'))){generation=s.generation;load();}
+  }catch{if(!stopped){status.textContent=T.offline;message(T.disconnected);}}
+  finally{checking=false;}
+}
+button.onclick=async()=>{
+  if(recovering||stopping||stopped)return;recovering=true;button.disabled=true;status.textContent=T.recovering;message('');screen.src='about:blank';
+  try{const s=await api('restart');generation=s.generation;load();status.textContent=T.connected;}
+  catch{message(T.retry);status.textContent=T.offline;}
+  finally{button.disabled=false;recovering=false;}
+};
+release.onclick=async()=>{release.disabled=true;screen.contentWindow?.postMessage({type:'cindy-release-input'},location.origin);try{await api('release');message(T.released);}catch{message(T.failed);}finally{release.disabled=stopped;}};
+shutdown.onclick=async()=>{
+  if(stopping||stopped)return;stopping=true;shutdown.disabled=button.disabled=release.disabled=true;
+  status.textContent=T.stopping;screen.src='about:blank';
+  try{const result=await api('shutdown');if(!result.devices?.some(d=>d.udid===udid&&d.state==='Shutdown'))throw Error('UNCONFIRMED');closed();}
+  catch{message(T.failed);status.textContent=T.offline;generation=null;}
+  finally{stopping=false;if(!stopped)shutdown.disabled=button.disabled=release.disabled=false;}
+};
+function activity(event){if(!event.isTrusted||stopped||stopping||Date.now()-lastTouch<10000)return;lastTouch=Date.now();api('activity').catch(()=>{});}
+screen.addEventListener('load',()=>{applyZoom();try{const doc=screen.contentDocument;for(const name of ['pointerdown','keydown','wheel'])doc?.addEventListener(name,activity,{passive:true,capture:true});}catch{}});
+zoom.onchange=()=>{applyZoom();};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});check();setInterval(check,3000);

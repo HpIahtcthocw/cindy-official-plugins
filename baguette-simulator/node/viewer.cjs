@@ -4,6 +4,8 @@ const net=require('node:net');
 const http=require('node:http');
 const {createClipboard}=require('./clipboard.cjs');
 let active=null;
+let controls=null;
+function configureControls(value){controls=value;}
 function freePort(){return new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(error=>error?reject(error):resolve(port));});});}
 function probe(url){return new Promise((resolve,reject)=>{const request=http.get(url,{timeout:1500},response=>{response.resume();response.on('end',()=>response.statusCode===200?resolve():reject(Error('Viewer HTTP '+response.statusCode)));});request.once('timeout',()=>request.destroy(Error('Viewer timed out')));request.once('error',reject);});}
 async function stopViewer(){
@@ -70,9 +72,19 @@ async function viewerStatus(server){
 async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale){
  const server=await startViewer(binary,deviceSet,children);
  const page=server.base+'/simulators/'+encodeURIComponent(udid);await probe(page);
- if(!server.clipboard)server.clipboard=await createClipboard(server.base,clipboardAction,{port:server.port,status:()=>viewerStatus(server),restart:()=>restartNative(server),release:p=>clipboardAction({udid:p.udid,action:'release'})});
+ if(!server.clipboard)server.clipboard=await createClipboard(server.base,clipboardAction,{
+  port:server.port,
+  status:async p=>{const state=controls?await controls.status():null;return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),settings:state?.settings,idleDeadline:state?.idleDeadline};},
+  restart:()=>controls?controls.exclusive(async()=>{await controls.assertEnabled();return restartNative(server);}):restartNative(server),
+  release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};}):clipboardAction({udid:p.udid,action:'release'}),
+  shutdown:p=>controls.request('settings_shutdown',{udid:p.udid}),
+  activity:async()=>{await controls?.assertEnabled();controls?.touch();return {ok:true};},
+  guard:()=>controls?.assertEnabled(),
+  run:fn=>controls?controls.exclusive(fn):fn(),
+  touch:()=>controls?.touch()
+ });
  server.clipboard.devices.add(udid);
  const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;
- return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready. Preview belongs to this session: call open_viewer when using another session. Native service crashes recover on the same URL, up to five restarts per minute. Simulator data is preserved. Idle worker timeout remains one hour.'};
+ return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Device idle shutdown follows plugin settings (15 minutes by default); status polling does not renew use. close_viewer only stops streaming. Use shutdown when finished.'};
 }
-module.exports={openViewer,stopViewer};
+module.exports={openViewer,stopViewer,configureControls};

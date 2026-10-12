@@ -18,3 +18,18 @@ test('viewer HTTP and WebSocket require authenticated capability session',async(
   assert.match(await ws(cookie),/101/);assert.equal(upgrades,1);
  } finally {bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
 });
+
+test('shutdown requires the viewer origin, capability and an opened device; failure is not a success response',async()=>{
+ let stops=0;
+ const bridge=await createClipboard('http://127.0.0.1:1',async()=>{}, {port:1,shutdown:async()=>{stops++;return {ok:false,errorCode:'STOP_INCOMPLETE',execution:'unknown'};}});
+ bridge.devices.add(udid);
+ const token=bridge.fragment.split('.')[1];
+ const request=(origin,key,device)=>fetch(bridge.base+'/control-api',{method:'POST',headers:{Origin:origin,'X-Cindy-Clipboard':key},body:JSON.stringify({action:'shutdown',udid:device})});
+ try {
+  assert.equal((await request('https://example.test',token,udid)).status,403);
+  assert.equal((await request(bridge.base,'wrong',udid)).status,403);
+  assert.equal((await request(bridge.base,token,'00000000-0000-4000-8000-000000000002')).status,400);
+  assert.equal(stops,0);
+  const result=await request(bridge.base,token,udid);assert.equal(result.status,409);assert.equal((await result.json()).execution,'unknown');assert.equal(stops,1);
+ }finally{bridge.close();}
+});
