@@ -134,7 +134,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
   }
   const schedules = [];
   const oneshots = [];
-  const tasks = { created: [], sent: [], access: [], reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
+  const tasks = { created: [], sent: [], access: [], tooHigh: new Set(), reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
   const cindy = {
     tasks: {
       capabilities: async () => ({ operations: ['create', 'get', 'send', 'getRun', 'readMessages'] }),
@@ -148,6 +148,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
         return { taskId, revision: tasks.sent.filter((x) => x.taskId === taskId).length + 1 };
       },
       send: async (req) => {
+        if (tasks.tooHigh.has(req.taskId)) throw Object.assign(new Error('Task permission exceeds plugin dispatch policy'), { code: 'PERMISSION_DENIED' });
         tasks.sent.push(structuredClone(req));
         return { runId: `run-${tasks.sent.length}` };
       },
@@ -650,9 +651,17 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.match(a.tasks.sent[1].text, /scope: "contact"/);
     assert.equal(a.tasks.access.length, 1, 'reused task is not asked again');
 
+    // 用户把任务切到完全访问后，插件不能再往里发：新开一个任务继续，并重新请求自动审查
+    a.tasks.tooHigh.add('task-1');
+    for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    const q4 = (await a.view('ask', { contactId: p.id, text: '帮我查一下她这周的会' })).result;
+    assert.equal(q4.kind, 'task');
+    assert.equal(q4.taskId, 'task-2');
+    assert.deepEqual(a.tasks.access.at(-1), { taskId: 'task-2', mode: 'auto' });
+
     // 没有快速通道时改走任务
     a.tasks.quick = { ok: false, errorCode: 'NO_CANDIDATE', message: 'none' };
-    for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 3; i++) await new Promise((r) => setTimeout(r, 20));
     const q3 = (await a.view('ask', { contactId: p.id, text: '她是谁' })).result;
     assert.equal(q3.kind, 'task');
 

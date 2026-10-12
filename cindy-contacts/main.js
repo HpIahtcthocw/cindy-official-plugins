@@ -1728,8 +1728,8 @@ async function lastReply(taskId, since) {
 }
 
 /** 每个人一个固定任务（全局整理共用一个）；再问都发到同一个任务里。 */
-async function taskFor(key, title) {
-  const saved = await getMeta(`task:${key}`);
+async function taskFor(key, title, fresh) {
+  const saved = fresh ? null : await getMeta(`task:${key}`);
   if (saved && saved.taskId) {
     try {
       const t = await cindy.tasks.get({ taskId: saved.taskId });
@@ -1757,8 +1757,9 @@ async function ensureAutoReview(key, record, view) {
   if (mode === 'auto' || record.autoAsked || typeof cindy.tasks.requestWriteAccess !== 'function') return view;
   try {
     await cindy.tasks.requestWriteAccess({ taskId: view.taskId, mode: 'auto' });
-  } catch (_) {
-    /* 用户拒绝或宿主不支持：照常以当前权限继续 */
+  } catch (e) {
+    // 任务正忙、宿主没准备好时还没问过用户，下次再问；其它情况（拒绝、不支持）不再打扰。
+    if (e && (e.code === 'TASK_BUSY' || e.code === 'HOST_NOT_READY')) return view;
   }
   await batch([setMetaStmt(`task:${key}`, { ...record, autoAsked: true })]);
   try {
@@ -1773,9 +1774,19 @@ async function ensureAutoReview(key, record, view) {
 async function sendToTask(key, title, text, info) {
   if (!(await tasksAvailable())) throw fail('UNSUPPORTED', '当前 Cindy 版本不支持由插件新建任务');
   if (running.has(key) && running.get(key).status === 'running') throw fail('BUSY', '上一件事还在处理，等它完成再说。');
-  const t = await taskFor(key, title);
+  let t = await taskFor(key, title);
   const sentAt = nowIso();
-  const run = await cindy.tasks.send({ taskId: t.taskId, expectedRevision: t.revision, requestKey: `${key}-${uuid()}`, text });
+  let run;
+  try {
+    run = await cindy.tasks.send({ taskId: t.taskId, expectedRevision: t.revision, requestKey: `${key}-${uuid()}`, text });
+  } catch (e) {
+    // 用户把这个任务改成了插件不能使用的权限（如完全访问），或任务配置刚变过：
+    // 旧任务留给用户，新开一个继续。
+    if (!e || !['PERMISSION_DENIED', 'REVISION_CONFLICT', 'TASK_NOT_FOUND', 'TASK_BUSY'].includes(e.code)) throw e;
+    if (e.code === 'TASK_BUSY' && !/Archived/i.test(String(e.message))) throw e;
+    t = await taskFor(key, title, true);
+    run = await cindy.tasks.send({ taskId: t.taskId, expectedRevision: t.revision, requestKey: `${key}-${uuid()}`, text });
+  }
   const entry = { key, taskId: t.taskId, runId: (run && (run.runId || run.id)) || '', status: 'running', sentAt, reply: '', ...info };
   running.set(key, entry);
   broadcast({ kind: 'event', name: 'task', data: entry });
