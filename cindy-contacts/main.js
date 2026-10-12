@@ -1733,15 +1733,41 @@ async function taskFor(key, title) {
   if (saved && saved.taskId) {
     try {
       const t = await cindy.tasks.get({ taskId: saved.taskId });
-      if (t && t.taskId !== undefined && t.revision !== undefined) return { taskId: t.taskId, revision: t.revision };
-      if (t && t.revision !== undefined) return { taskId: saved.taskId, revision: t.revision };
+      if (t && t.revision !== undefined) {
+        const view = { taskId: saved.taskId, revision: t.revision, permissionMode: t.permissionMode };
+        return ensureAutoReview(key, saved, view);
+      }
     } catch (_) {
       /* 任务被删了：新建一个 */
     }
   }
   const t = await cindy.tasks.create({ requestKey: `${key}-${uuid()}`, title: title.slice(0, 100) });
-  await batch([setMetaStmt(`task:${key}`, { taskId: t.taskId, at: nowIso() })]);
-  return { taskId: t.taskId, revision: t.revision };
+  const record = { taskId: t.taskId, at: nowIso() };
+  await batch([setMetaStmt(`task:${key}`, record)]);
+  return ensureAutoReview(key, record, { taskId: t.taskId, revision: t.revision, permissionMode: t.permissionMode });
+}
+
+/**
+ * 整理要连续调用邮件、飞书、日历和本插件的工具；任务停在「每步都问」时，每调一次都要用户点一下。
+ * 每个任务第一次使用时请宿主弹一次确认，把它切到「自动审查」（插件拿不到完全访问）。
+ * 用户拒绝后宿主不会再自动弹，这里也只问一次。
+ */
+async function ensureAutoReview(key, record, view) {
+  const mode = String(view.permissionMode || '');
+  if (mode === 'auto' || record.autoAsked || typeof cindy.tasks.requestWriteAccess !== 'function') return view;
+  try {
+    await cindy.tasks.requestWriteAccess({ taskId: view.taskId, mode: 'auto' });
+  } catch (_) {
+    /* 用户拒绝或宿主不支持：照常以当前权限继续 */
+  }
+  await batch([setMetaStmt(`task:${key}`, { ...record, autoAsked: true })]);
+  try {
+    const t = await cindy.tasks.get({ taskId: view.taskId });
+    if (t && t.revision !== undefined) return { ...view, revision: t.revision, permissionMode: t.permissionMode };
+  } catch (_) {
+    /* 用原来的 revision */
+  }
+  return view;
 }
 
 async function sendToTask(key, title, text, info) {

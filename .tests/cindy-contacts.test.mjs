@@ -134,7 +134,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
   }
   const schedules = [];
   const oneshots = [];
-  const tasks = { created: [], sent: [], reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
+  const tasks = { created: [], sent: [], access: [], reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
   const cindy = {
     tasks: {
       capabilities: async () => ({ operations: ['create', 'get', 'send', 'getRun', 'readMessages'] }),
@@ -150,6 +150,10 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
       send: async (req) => {
         tasks.sent.push(structuredClone(req));
         return { runId: `run-${tasks.sent.length}` };
+      },
+      requestWriteAccess: async (req) => {
+        tasks.access.push(structuredClone(req));
+        return { ok: true };
       },
       getRun: async () => ({ status: tasks.runStatus }),
       readMessages: async () => ({
@@ -629,6 +633,8 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.equal(q2.kind, 'task');
     assert.equal(a.tasks.created.length, 1);
     assert.match(a.tasks.sent[0].text, /只创建草稿/);
+    // 新任务先请宿主切到「自动审查」，只问一次
+    assert.deepEqual(a.tasks.access, [{ taskId: 'task-1', mode: 'auto' }]);
     // 结果读回页面：任务结束后广播回复，并记进这个人的问答
     for (let i = 0; i < 100 && !a.events.some((e) => e.name === 'task' && e.data.status === 'done'); i++) await new Promise((r) => setTimeout(r, 20));
     const done = a.events.find((e) => e.name === 'task' && e.data.status === 'done');
@@ -642,6 +648,7 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.equal(a.tasks.created.length, 1);
     assert.equal(a.tasks.sent.length, 2);
     assert.match(a.tasks.sent[1].text, /scope: "contact"/);
+    assert.equal(a.tasks.access.length, 1, 'reused task is not asked again');
 
     // 没有快速通道时改走任务
     a.tasks.quick = { ok: false, errorCode: 'NO_CANDIDATE', message: 'none' };
