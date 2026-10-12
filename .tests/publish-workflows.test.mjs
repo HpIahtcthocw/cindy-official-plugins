@@ -479,6 +479,7 @@ test('contributor guidance never checks out PR code and refreshes when Verify co
   assert.doesNotMatch(guidanceWorkflow, /id-token: write|secrets\./);
   assert.match(guidanceWorkflow, /contents: read/);
   assert.match(guidanceWorkflow, /checks: read/);
+  assert.match(guidanceWorkflow, /jq -s 'add \/\/ \[\]'/);
   assert.match(guidanceWorkflow, /MUST NEVER check out/);
   for (const publisher of [cnWorkflow, globalWorkflow]) {
     assert.doesNotMatch(publisher, /pr-guidance|workflow_run:/);
@@ -602,6 +603,34 @@ test('contributor guidance matches pr-verify gating and recomputes DCO each run'
   assert.equal(wrongRemediation.result.status, 0, wrongRemediation.result.stderr || wrongRemediation.result.stdout);
   assert.match(wrongRemediation.posted, /Commits without DCO sign-off/);
   assert.match(wrongRemediation.posted, new RegExp(GUIDANCE_UNSIGNED.slice(0, 7)));
+
+  const pagedRemediation = runGuidance(t, {
+    'commits.json': `${JSON.stringify([{
+      sha: GUIDANCE_UNSIGNED,
+      parents: [{ sha: '0'.repeat(40) }],
+      author: { login: 'alice', type: 'User' },
+      commit: { message: 'feat: unsigned\n', author: { name: 'Alice', email: 'alice@example.test' } },
+    }])}\n${JSON.stringify([{
+      sha: GUIDANCE_REMEDIATE,
+      parents: [{ sha: GUIDANCE_UNSIGNED }],
+      author: { login: 'alice', type: 'User' },
+      commit: {
+        message:
+          `I, Alice <alice@example.test>, hereby add my Signed-off-by to this commit: ${GUIDANCE_UNSIGNED}\n\n`
+          + 'Signed-off-by: Alice <alice@example.test>\n',
+        author: { name: 'Alice', email: 'alice@example.test' },
+      },
+    }])}\n`,
+    'pull.json': {
+      draft: false,
+      body: '',
+      user: { login: 'alice' },
+      author_association: 'FIRST_TIMER',
+      head: { sha: GUIDANCE_REMEDIATE },
+    },
+  });
+  assert.equal(pagedRemediation.result.status, 0, pagedRemediation.result.stderr || pagedRemediation.result.stdout);
+  assert.doesNotMatch(pagedRemediation.posted, /Commits without DCO sign-off/);
 
   const waiting = runGuidance(t, {
     'runs.json': {

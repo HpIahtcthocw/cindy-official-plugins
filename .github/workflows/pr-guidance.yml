@@ -121,7 +121,11 @@ jobs:
           # commits are exempt. A remediation commit only covers a SHA when
           # the name+email on the CONTRIBUTING line match the original commit
           # author (and, for "I, …", the remediating commit author).
-          gh api "repos/${REPO}/pulls/${PR}/commits" --paginate > commits.json
+          # --paginate prints one JSON array per page; slurp+add into a single
+          # list before matching so a remediation on a later page can cover an
+          # unsigned commit on an earlier page.
+          gh api "repos/${REPO}/pulls/${PR}/commits" --paginate > commits-pages.json
+          jq -s 'add // []' commits-pages.json > commits.json
           dco_conclusion="$(
             gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" > check-runs.json 2>/dev/null \
               && jq -r '[.check_runs[] | select((.app.slug // "") == "dco" or .name == "DCO")] | first | .conclusion // "none"' check-runs.json \
