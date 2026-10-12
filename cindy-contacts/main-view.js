@@ -439,7 +439,7 @@
       const items = ss.items.filter((i) => enabled[i.source] !== false);
       h += `<div class="srcs-status"><div class="sech">${esc(T.srcTitle)} · ${esc(fmtWhen(ss.at))}</div>`;
       for (const i of items) {
-        h += `<div class="srow${i.status === 'ok' ? ' ok' : ''}"><span>${esc(T.srcName[i.source] || i.source)}</span><span class="st">${esc(T.srcState[i.status] || i.status)}${i.note && i.status !== 'ok' ? ` · ${esc(i.note)}` : ''}</span></div>`;
+        h += `<div class="srow${i.status === 'ok' || i.status === 'unavailable' || i.status === 'skipped' ? ' ok' : ''}"><span>${esc(T.srcName[i.source] || i.source)}</span><span class="st">${esc(T.srcState[i.status] || i.status)}${i.note && i.status !== 'ok' ? ` · ${esc(i.note)}` : ''}</span></div>`;
       }
       if (items.some((i) => i.status === 'missing' || i.status === 'unauthorized')) h += `<p class="small muted">${esc(T.srcFix)}</p>`;
       h += '</div>';

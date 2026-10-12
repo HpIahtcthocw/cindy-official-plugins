@@ -122,7 +122,7 @@
     h += `<div class="item"><div class="label">${esc(T.sources)}</div><div class="body"><div class="checks">`;
     for (const k of ['mail', 'calendar', 'im', 'cindy', 'github']) {
       const seen = ((m.sourcesStatus && m.sourcesStatus.items) || []).find((x) => x.source === k);
-      h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}${seen && st.sources && st.sources[k] ? `<span class="st${seen.status === 'ok' ? '' : ' bad'}">${esc(T.state[seen.status] || seen.status)}</span>` : ''}</label>`;
+      h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}${seen && st.sources && st.sources[k] ? `<span class="st${['ok', 'unavailable', 'skipped'].includes(seen.status) ? '' : ' bad'}">${esc(T.state[seen.status] || seen.status)}</span>` : ''}</label>`;
     }
     h += `</div><p class="hint">${esc(T.sourcesHint)}</p></div></div>`;
     h += `<div class="item"><div class="label">${esc(T.profile)}</div><div class="body">${seg('profile', ['colleagues', 'clients'], (v) => T[v])}<p class="hint">${esc(T.profileHint[st.profile] || '')}</p></div></div>`;
