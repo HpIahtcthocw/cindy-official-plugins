@@ -6,11 +6,21 @@ const text = {
 let T=text.en,state=null,busy=false,reading=false,readFailed=false;
 const $=id=>document.getElementById(id), channel=new BroadcastChannel('baguette-settings'), pending=new Map();
 function message(value,error=false){$('message').textContent=value;$('message').classList.toggle('error',error);}
-function rpc(action,params={}){
+async function rpc(action,params={}){
+  // Logic pages start on demand; opening settings alone does not start one.
+  const wake=await fetch('/wake',{signal:AbortSignal.timeout(15000)});
+  if(!wake.ok)throw Error(T.timeout);
   const id=crypto.randomUUID();
-  return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error(T.timeout));},125000);pending.set(id,{resolve,timer});channel.postMessage({type:'request',id,action,...params});});
+  return new Promise((resolve,reject)=>{
+    const send=()=>channel.postMessage({type:'request',id,action,...params});
+    // Only read-only status may retry while the listener becomes ready.
+    // Never replay a device mutation after an uncertain response.
+    const retry=action==='status'?setInterval(send,500):null;
+    const timer=setTimeout(()=>{clearInterval(retry);pending.delete(id);reject(Error(T.timeout));},action==='status'?20000:125000);
+    pending.set(id,{resolve,timer,retry});send();
+  });
 }
-channel.onmessage=({data:m})=>{if(m?.type!=='response')return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);clearTimeout(p.timer);p.resolve(m.result);};
+channel.onmessage=({data:m})=>{if(m?.type!=='response')return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);clearTimeout(p.timer);clearInterval(p.retry);p.resolve(m.result);};
 function errorText(r){return ({BUSY:T.busy,RUNTIME_DISABLED:T.disabled,STOP_INCOMPLETE:T.partial,PREVIEW_FAILED:T.previewFailed,PREVIEW_NEEDS_SESSION:T.previewNeedsSession})[r?.errorCode]||T.failed;}
 function render(){
   if(!state)return;

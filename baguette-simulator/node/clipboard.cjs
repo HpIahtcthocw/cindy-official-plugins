@@ -57,7 +57,7 @@ async function createClipboard(origin,perform,control){
    finally{busy=false;}
   }catch{if(!res.headersSent)reply(400,{error:'Invalid request',execution:'not_executed'});}
  });
- if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized,control.touch);
+ if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized);
  server.requestTimeout=10000;server.headersTimeout=10000;
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
  return {devices,base:`http://127.0.0.1:${server.address().port}`,fragment:`cindyClipboard=${server.address().port}.${token}`,close(){for(const socket of sockets)socket.destroy();server.close();server.closeAllConnections();}};

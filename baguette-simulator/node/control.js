@@ -8,7 +8,13 @@ const screen=document.getElementById('screen'),status=document.getElementById('s
 let generation=null,checking=false,recovering=false,stopping=false,stopped=false,lastTouch=0;
 function message(value){notice.textContent=value;notice.style.display=value?'block':'none';}
 function load(){screen.src='/simulators/'+encodeURIComponent(udid)+location.hash;}
-function applyZoom(){try{if(screen.contentDocument?.body)screen.contentDocument.body.style.zoom=zoom.value;}catch{}}
+function applyZoom(){
+  const viewport=document.getElementById('viewport'),stage=document.getElementById('stage');
+  const {width,height}=viewport.getBoundingClientRect(),scale=Number(zoom.value);
+  screen.style.width=width+'px';screen.style.height=height+'px';
+  screen.style.transform='scale('+scale+')';
+  stage.style.width=width*scale+'px';stage.style.height=height*scale+'px';
+}
 async function api(action){const r=await fetch('/control-api',{method:'POST',headers:{'Content-Type':'application/json','X-Cindy-Clipboard':token},body:JSON.stringify({action,udid}),signal:AbortSignal.timeout(action==='shutdown'?90000:20000)});const p=await r.json();if(!r.ok||p.ok===false)throw Error(p.errorCode||'CONTROL_FAILED');return p;}
 function closed(){stopped=true;generation=null;screen.src='about:blank';status.textContent=T.off;button.disabled=release.disabled=shutdown.disabled=true;message(T.stopped);}
 async function check(){
@@ -42,4 +48,5 @@ shutdown.onclick=async()=>{
 function activity(event){if(!event.isTrusted||stopped||stopping||Date.now()-lastTouch<10000)return;lastTouch=Date.now();api('activity').catch(()=>{});}
 screen.addEventListener('load',()=>{applyZoom();try{const doc=screen.contentDocument;for(const name of ['pointerdown','keydown','wheel'])doc?.addEventListener(name,activity,{passive:true,capture:true});}catch{}});
 zoom.onchange=()=>{applyZoom();};
+new ResizeObserver(applyZoom).observe(document.getElementById('viewport'));applyZoom();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)check();});check();setInterval(check,3000);

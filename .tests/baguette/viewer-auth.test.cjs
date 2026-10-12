@@ -33,3 +33,34 @@ test('shutdown requires the viewer origin, capability and an opened device; fail
   const result=await request(bridge.base,token,udid);assert.equal(result.status,409);assert.equal((await result.json()).execution,'unknown');assert.equal(stops,1);
  }finally{bridge.close();}
 });
+
+test('WebSocket keepalive traffic does not renew idle; authenticated user activity does',async()=>{
+ let touches=0,received,upstreamSocket;
+ const forwarded=new Promise(resolve=>received=resolve);
+ const upstream=http.createServer();
+ upstream.on('upgrade',(req,socket)=>{
+  upstreamSocket=socket;
+  socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+  socket.once('data',data=>received(data));
+ });
+ await new Promise(r=>upstream.listen(0,'127.0.0.1',r));
+ const bridge=await createClipboard('http://127.0.0.1:'+upstream.address().port,async()=>{}, {
+  port:upstream.address().port,status:async()=>({ready:true}),touch:()=>touches++,activity:async()=>{touches++;return {ok:true};}
+ });
+ bridge.devices.add(udid);
+ let socket;
+ try{
+  const headers={Origin:bridge.base,'X-Cindy-Clipboard':bridge.fragment.split('.')[1]};
+  const auth=await fetch(bridge.base+'/control-api',{method:'POST',headers,body:JSON.stringify({action:'status',udid})});
+  const cookie=auth.headers.get('set-cookie').split(';')[0],url=new URL(bridge.base);
+  socket=net.connect(Number(url.port),'127.0.0.1');
+  await new Promise((resolve,reject)=>{
+   socket.on('error',reject);socket.once('data',()=>resolve());
+   socket.on('connect',()=>socket.write(`GET /stream HTTP/1.1\r\nHost: ${url.host}\r\nOrigin: ${bridge.base}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nCookie: ${cookie}\r\n\r\n`));
+  });
+  const pong=Buffer.from([0x8a,0x80,1,2,3,4]);socket.write(pong);
+  assert.deepEqual(await forwarded,pong);assert.equal(touches,0);
+  assert.equal((await fetch(bridge.base+'/control-api',{method:'POST',headers,body:JSON.stringify({action:'activity',udid})})).status,200);
+  assert.equal(touches,1);
+ }finally{socket?.destroy();bridge.close();upstreamSocket?.destroy();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
+});

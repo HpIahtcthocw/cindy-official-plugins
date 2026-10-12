@@ -2,18 +2,21 @@
   "date": "2026-10-12",
   "pluginVersion": "0.1.21",
   "baguette": "0.2.0",
-  "status": "local-controls-verified-installation-pending",
+  "status": "installed-beta-controls-and-idle-verified",
   "passed": [
-    "Private-device status read on the local Mac with the existing device kept shut down",
-    "Settings page run switch persistence, disabled boot rejection and re-enable without boot through the real core dispatcher and isolated preference file",
-    "Headless browser checks of settings at 520px and 340px with no horizontal overflow",
-    "Authenticated controller zoom and shutdown final state using a simulated device backend",
-    "Targeted lifecycle and viewer authentication regressions"
+    "Packaged candidate installed and exercised on a real Apple Silicon Mac running Cindy 0.1.104 Beta; all 123 tracked plugin files match the installed package",
+    "Actual Cindy settings page boots the existing private Duo; switching operation off shuts it down and persists the disabled setting",
+    "Installed Agent boot is rejected with RUNTIME_DISABLED after the user switch is off; enabling the switch leaves the device shut down",
+    "Cold settings page wakes the logic page without a preceding Agent tool call; delayed listener startup is covered by read-only status retries",
+    "Dark-theme settings contrast checked in actual Cindy; isolated browser layout at 340px and 520px and setting persistence passed",
+    "Actual Duo viewer at 150 percent accepts a pointer click on General and opens the corresponding Settings screen; top shutdown controls stay visible",
+    "Viewer shutdown button reports confirmed Shutdown, ends the live stream, and preserves the existing simulator data",
+    "Transport keepalive was observed to renew idle every 30 seconds and fixed; trusted pointer input renews the timer while socket traffic does not",
+    "39 targeted tests and 23 repository contract/localization/provisioning/publish tests passed",
+    "Real uninterrupted 15-minute idle trial with a live video viewer and repeated status polling: deadline stayed constant, last-minute warning appeared, device became Shutdown and simulator, viewer and hinge-monitor processes exited without a shutdown command"
   ],
   "notVerified": [
-    "Installing this package in stable/Beta Cindy and exercising the settings bridge",
-    "Booted-device shutdown and idle-stop integration; the user-stopped Duo was not restarted",
-    "Actual simulator touch coordinates after viewer zoom"
+    "Exhaustive optional viewer features and Xcode 26 integration"
   ],
   "previousReleaseVerification": {
     "date": "2026-09-26",
@@ -79,5 +82,21 @@
     },
     "xcode": "27.1 beta (27A9269)",
     "runtime": "iOS 27.1 (24A94401)"
+  },
+  "cindy": {
+    "version": "0.1.104",
+    "channel": "Beta"
+  },
+  "xcode": "27.1 beta (27A9269)",
+  "runtime": "iOS 27.1 (24A94401)",
+  "idleTrial": {
+    "lastInputUtc": "2026-10-12T14:12:45.313Z",
+    "deadlineUtc": "2026-10-12T14:27:45.313Z",
+    "observedShutdownUtc": "2026-10-12T14:28:09.045Z",
+    "observationIntervalSeconds": 30,
+    "videoAndStatusPollingKeptActive": true,
+    "deadlineStable": true,
+    "finalState": "Shutdown",
+    "deviceDataPreserved": true
   }
 }
