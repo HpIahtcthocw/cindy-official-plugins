@@ -506,6 +506,37 @@ test('contributor guidance matches pr-verify gating and recomputes DCO each run'
   assert.equal(licenseChecked.result.status, 0, licenseChecked.result.stderr);
   assert.match(licenseChecked.posted, /No missing items detected by this bot/);
 
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    const maintainer = runGuidance(t, {
+      'files.json': [{ status: 'modified', filename: 'LICENSE' }],
+      'pull.json': {
+        draft: false,
+        body: '',
+        user: { login: 'someone' },
+        author_association: association,
+        head: { sha: GUIDANCE_HEAD },
+      },
+    });
+    assert.equal(maintainer.result.status, 0, maintainer.result.stderr || maintainer.result.stdout);
+    assert.doesNotMatch(maintainer.posted, /Cindy 实机验证\*\* is unchecked/);
+    assert.match(maintainer.posted, /No missing items detected by this bot/);
+  }
+
+  for (const login of ['zqchris', 'ZqChris']) {
+    const byLogin = runGuidance(t, {
+      'files.json': [{ status: 'modified', filename: 'LICENSE' }],
+      'pull.json': {
+        draft: false,
+        body: '',
+        user: { login },
+        author_association: 'CONTRIBUTOR',
+        head: { sha: GUIDANCE_HEAD },
+      },
+    });
+    assert.equal(byLogin.result.status, 0, byLogin.result.stderr || byLogin.result.stdout);
+    assert.doesNotMatch(byLogin.posted, /Cindy 实机验证\*\* is unchecked/);
+  }
+
   const docsOnly = runGuidance(t, {
     'files.json': [{ status: 'modified', filename: 'README.md' }],
   });

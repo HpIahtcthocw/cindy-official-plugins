@@ -113,7 +113,15 @@ jobs:
           fi
 
           todo=()
-          if [[ "${needs_attestation}" == "true" ]] && ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' <<<"${body}"; then
+          # Match pr-verify: maintainers skip the device-verification checkbox.
+          maintainer=false
+          case "${association}" in
+            OWNER|MEMBER|COLLABORATOR) maintainer=true ;;
+          esac
+          if [[ "${author,,}" == "zqchris" ]]; then
+            maintainer=true
+          fi
+          if [[ "${needs_attestation}" == "true" && "${maintainer}" != "true" ]] && ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' <<<"${body}"; then
             todo+=("**Cindy device verification / Cindy 实机验证** is unchecked. Download the package from the *Verify pull request* run → Artifacts, install on a stable/Beta Cindy device, record version/channel/SHA-256 under *Verification*, then check the box. / 实机验证未勾选：从 *Verify pull request* 的 Artifacts 下载测试包，在正式稳定版/Beta 实机安装验证，在「验证」一节记录版本/渠道/SHA-256 后勾选。")
           fi
 
