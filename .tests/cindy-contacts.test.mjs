@@ -116,7 +116,7 @@ function makeWorker(env) {
   };
 }
 
-function boot({ libDir, legacyDb = '', systemFixture = '' }) {
+function boot({ libDir, legacyDb = '', systemFixture = '', locale = '' }) {
   const library = makeLibrary(libDir);
   const worker = makeWorker({
     CINDY_CONTACTS_LEGACY_DB_FOR_TEST: legacyDb,
@@ -136,6 +136,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '' }) {
   const oneshots = [];
   const tasks = { created: [], sent: [], access: [], tooHigh: new Set(), reply: '已经记下了。', runStatus: 'completed', quick: { ok: true, text: '她在推进 Pi 清单。' } };
   const cindy = {
+    ...(locale ? { request: async (req) => (req.kind === 'app-context' ? { ok: true, context: { locale } } : { ok: false }) } : {}),
     tasks: {
       capabilities: async () => ({ operations: ['create', 'get', 'send', 'getRun', 'readMessages'] }),
       create: async (req) => {
@@ -460,7 +461,7 @@ test('主视图请求通道：列表、详情与修改后的变更通知', async
 
 test('按时间段整理：第一次只看最近两周；之后从上次整理接着往后；回补所有人或一个人都往前推进覆盖范围', async () => {
   const dir = tmp();
-  const a = boot({ libDir: dir });
+  const a = boot({ libDir: dir, locale: 'zh-CN' });
   try {
     const DAY = 86400000;
     const b1 = ok(await a.call('maintenance', { action: 'begin' }));
@@ -580,6 +581,11 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.equal(a.schedules[0].intervalMs, 6 * 3600 * 1000);
     assert.match(a.schedules[0].prompt, /run_id/);
     assert.ok(a.schedules[0].prompt.length <= 2000);
+    // 宿主是中文时，自动化和整理任务用中文名
+    assert.equal(a.schedules[0].name, '整理通讯录');
+    await a.view('tidy', { scope: 'recent' });
+    assert.equal(a.tasks.created.at(-1).title, '通讯录 · 整理');
+    assert.match(a.tasks.sent.at(-1).text, /path: "tidy"/);
   } finally {
     a.close();
   }
