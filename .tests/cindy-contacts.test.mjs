@@ -939,6 +939,14 @@ test('包含命中不冒充精确命中；合并链上的快照随最终档案�
     const bing = ok(await a.call('save', { name: '链丙', identities: [{ platform: 'email', value: 'chain-c@example.test' }] }));
     ok(await a.call('merge', { target_id: yi.id, source_id: jia.id, reason: '测试' }));
     ok(await a.call('merge', { target_id: bing.id, source_id: yi.id, reason: '测试' }));
+    // 先拆外层（乙←丙），再拆里层（甲←乙）：甲的联系方式要回到甲
+    const merges = await sql('SELECT id, source_id FROM contact_merges');
+    ok(await a.view('unmerge', { id: merges.find((x) => x.source_id === yi.id).id }));
+    ok(await a.view('unmerge', { id: merges.find((x) => x.source_id === jia.id).id }));
+    assert.ok(ok(await a.call('get', { id: jia.id })).identities.some((i) => i.value === 'chain-a@example.test'));
+    // 再合并一次链，删除最终档案时整条链的快照都清掉
+    ok(await a.call('merge', { target_id: yi.id, source_id: jia.id, reason: '测试' }));
+    ok(await a.call('merge', { target_id: bing.id, source_id: yi.id, reason: '测试' }));
     ok(await a.call('delete', { id: bing.id, confirm: true }));
     assert.equal((await sql('SELECT count(*) AS n FROM contact_merges'))[0].n, 0);
   } finally {

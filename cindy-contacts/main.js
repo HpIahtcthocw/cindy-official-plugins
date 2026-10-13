@@ -967,6 +967,8 @@ async function mergeContacts(input) {
     ),
     loopIds: await ids('SELECT id FROM contact_loops WHERE contact_id = ? ORDER BY id', [src.id]),
     groupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [src.id])).map((r) => r.group_id),
+    // 并入者名下的旧合并记录会改挂到目标；记下来，拆开这次合并时挂回去
+    repointedMergeIds: await ids('SELECT id FROM contact_merges WHERE target_id = ? ORDER BY id', [src.id]),
     // 目标原有的分组：拆开时撤回只因这次合并加进来的分组
     targetGroupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [dst.id])).map((r) => r.group_id),
     // 两边都有的同一来源往来，合并时会去掉来源这条；存下全文，拆开时还回去
@@ -1096,6 +1098,11 @@ async function undoMerge(mergeId) {
       params: [r.from_id, r.to_id, r.id, other],
     });
   }
+  // 合并时改挂到目标的旧合并记录挂回原档案，之后还能接着拆开里层的合并
+  statements.push({
+    sql: 'UPDATE contact_merges SET target_id = ? WHERE target_id = ? AND id IN (SELECT value FROM json_each(?))',
+    params: [src.id, dst.id, list(snap.repointedMergeIds)],
+  });
   statements.push({ sql: 'UPDATE contact_merges SET undone_at = ? WHERE id = ?', params: [at, m.id] });
   await batch(statements);
   return { restored: src.id, name: src.display_name, targetId: dst.id, textRestored: untouched };
