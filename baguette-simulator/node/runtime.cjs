@@ -33,8 +33,15 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
   }
   function touch() { lastActivity = now(); idleHandled = false; }
   async function status() {
-    const settings = await load();
-    return {...await dispatch('devices'), settings: {...settings}, lastStop,
+    let settings, settingsError;
+    try { settings = await load(); }
+    catch (error) {
+      if (error.code !== 'SETTINGS_UNREADABLE') throw error;
+      // Read/stop controls survive damaged settings; this is not a saved default.
+      settings = {enabled:false, idleMinutes:null};
+      settingsError = {code:error.code, message:error.message};
+    }
+    return {...await dispatch('devices'), settings: {...settings}, settingsError, lastStop,
       deviceJob:manager.snapshot(),idleDeadline: settings.idleMinutes ? lastActivity + settings.idleMinutes * 60000 : null};
   }
   async function stopAll(reason) {
@@ -46,11 +53,11 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
       catch (error) { outcomes.push({udid:device.udid, errorCode:error.code || 'STOP_FAILED', execution:error.execution || 'unknown'}); }
     }
     await dispatch('close_viewer');
-    const after = (await dispatch('devices')).devices;
+    const result = await status(), after = result.devices;
     const remaining = after.filter(d => d.state !== 'Shutdown').map(d => d.udid);
     lastStop = {reason, at:now(), remaining};
-    if (remaining.length) return {ok:false, errorCode:'STOP_INCOMPLETE', execution:'unknown', devices:after, remaining, outcomes, settings:{...await load()}};
-    return {ok:true, execution:'executed', devices:after, settings:{...await load()}, lastStop};
+    if (remaining.length) return {...result, ok:false, errorCode:'STOP_INCOMPLETE', execution:'unknown', remaining, outcomes, lastStop};
+    return {...result, ok:true, execution:'executed', lastStop};
   }
   async function stopOne(udid) {
     await dispatch('shutdown', {udid});
@@ -74,6 +81,9 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
       if (method === 'close_viewer') return dispatch(method, params);
+      if (method === 'settings_shutdown') return stopOne(params.udid);
+      if (method === 'settings_stop_all') return stopAll('manual');
+      if (['environment','devices'].includes(method)) return dispatch(method, params);
       const settings = await load();
       if (method === 'settings_save') {
         if (typeof params.enabled !== 'boolean' || ![0,15,30,60].includes(params.idleMinutes)) throw failure('INVALID_ARGUMENT', 'Invalid runtime settings. Refresh this page.');
@@ -84,14 +94,14 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
         touch();
         return {...await status(), ok:true, execution:'executed'};
       }
-      if (method === 'settings_shutdown') return stopOne(params.udid);
-      if (method === 'settings_stop_all') return stopAll('manual');
       const actual = {settings_boot:'boot', settings_viewer:'open_viewer'}[method] || method;
-      const readOnly = ['environment','devices'].includes(actual);
-      if (!readOnly && !settings.enabled) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Enable simulator operation in Plugins → Baguette settings.');
+      if (!settings.enabled) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Enable simulator operation in Plugins → Baguette settings.');
+      // A command can mutate a device and then fail (e.g. bootstatus timeout).
+      // Re-arm cleanup before dispatch, even when no success result follows.
+      touch();
       const result = await dispatch(actual, params);
       if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
-      if (!readOnly) touch();
+      touch();
       return result;
     });
   }
