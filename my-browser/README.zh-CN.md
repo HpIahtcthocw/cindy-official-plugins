@@ -61,7 +61,7 @@ Safari 继续使用商店或已签名、公证的应用；该发布渠道尚未�
 
 ## 构建与验证
 
-设置页 ZIP（`package-my-browser-zip.py`）保留开发用 `key`，仅用于本地安装，不要上传商店。Chrome 商店上传请用 `node scripts/build-my-browser.mjs /绝对路径/新的输出目录 chrome`，生成的 ZIP 不含 `key`。已发布的 Chrome 扩展 ID 与商店链接已经写入 `distribution.json`；后续更新保持二者不变，本地开发公钥也保持不变。
+正式设置流程不会打开 ZIP。贡献者专用的 `package-my-browser-zip.py` 只能生成带本地 `key` 的开发归档，不要把它作为用户安装入口或上传商店。Chrome 商店发布请用 `node scripts/build-my-browser.mjs /绝对路径/新的输出目录 chrome`，生成的上传 ZIP 不含 `key`。已发布的 Chrome 扩展 ID 与商店链接已经写入 `distribution.json`；后续更新保持二者不变，本地开发公钥也保持不变。
 
 连接进程只使用 Node 内置模块。PDF.js 5.7.284（兼容构建）和 Tesseract.js 6.0.1／core 6.0.0／十种语言数据均从官方 npm 下载并校验完整性，许可证随包；不安装运行时依赖、不从 CDN 加载代码或 OCR 模型。`node/worker.cjs` 无条件启动，因为 Cindy 通过 require 加载入口。运行时子进程仅用于固定浏览器／应用启动器和 Safari 签名检查。
 

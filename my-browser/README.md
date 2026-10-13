@@ -61,7 +61,7 @@ Installation cards appear only for connected browsers or installed browsers with
 
 ## Build and verification
 
-The settings-page ZIP (`package-my-browser-zip.py`) retains the development `key` for local installation; do not upload it to a store. For Chrome Web Store, use `node scripts/build-my-browser.mjs /absolute/new-output-directory chrome`: its ZIP omits `key`. The published Chrome extension ID and store URL are already recorded in `distribution.json`; keep them unchanged for future releases and keep the local development key unchanged.
+The official settings flow does not open a ZIP. The contributor-only `package-my-browser-zip.py` helper can create a development archive with the local `key`; do not present or upload that archive as a user installation. For Chrome Web Store releases, use `node scripts/build-my-browser.mjs /absolute/new-output-directory chrome`: its upload ZIP omits `key`. The published Chrome extension ID and store URL are already recorded in `distribution.json`; keep them unchanged for future releases and keep the local development key unchanged.
 
 The bridge uses first-party JS and Node built-ins. PDF.js and Tesseract are bundled, integrity-verified browser components; no runtime dependency installation or CDN code/model loading. `node/worker.cjs` activates unconditionally because Cindy requires the entry rather than running it as `require.main`. Runtime subprocesses are restricted to fixed browser/app launchers and Safari signature checks.
 

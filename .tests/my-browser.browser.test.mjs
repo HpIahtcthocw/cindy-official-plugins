@@ -32,7 +32,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   const bridge=createBridge({ports:[18819],extensionId});t.after(()=>bridge.close());
   await bridge.request('status'); // Fail before launching Chrome if the isolated test port is occupied.
   const installCalls=[];
-  const installation=require('../my-browser/node/installation.cjs').createInstallation({platform:'darwin',exists:p=>p.includes('Chrome') || p.includes('Safari') || p.endsWith('.zip'),run:async(...args)=>installCalls.push(args)});
+  const installation=require('../my-browser/node/installation.cjs').createInstallation({platform:'darwin',exists:p=>p.includes('Chrome') || p.includes('Safari'),run:async(...args)=>installCalls.push(args)});
   let cfg={policy:{read:{block:[]},interact:{allow:[],block:[]}}};const faults={read:false,save:false,wake:false};
   const server=http.createServer(async(req,res)=>{
     try{
@@ -432,9 +432,9 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   await fetch('http://127.0.0.1:'+(await bridge.request('status')).port+'/health',{headers:{'X-My-Browser-Extension':candidate.extensionId,'X-My-Browser-Origin':candidate.origin,'X-My-Browser-Client':candidate.id,'X-My-Browser-Version':status.version,'X-My-Browser-Family':'safari'}});
   await logic.evaluate(()=>window.confirmAllowed=false);await settings.locator('#refresh').click();await settings.getByRole('button',{name:'确认连接',exact:true}).click();await settings.getByText('No browser was authorized.',{exact:true}).waitFor();assert.equal(cfg.pairedClients,undefined);
   await logic.evaluate(()=>window.confirmAllowed=true);await settings.getByRole('button',{name:'确认连接',exact:true}).click();await settings.waitForFunction(()=>!document.querySelector('#profiles button'));assert.equal(cfg.pairedClients[0].id,candidate.id);assert.ok(cfg.policy.read.block.includes('new-block.test'));
-  await settings.locator('.browser-card').filter({has:settings.getByText('Chrome',{exact:true})}).getByRole('button',{name:'打开 ZIP 安装'}).click();
-  await settings.getByText('请把选中的 ZIP 拖入扩展管理页，本页会自动检查连接。',{exact:true}).waitFor();
-  assert.equal(installCalls.length,2);assert.ok(installCalls[1][1][1].endsWith('my-browser-chromium.zip'));
+  await settings.locator('.browser-card').filter({has:settings.getByText('Chrome',{exact:true})}).getByRole('button',{name:'安装浏览器扩展'}).click();
+  await settings.getByText('请在浏览器完成确认，本页会自动检查连接。',{exact:true}).waitFor();
+  assert.equal(installCalls.length,1);assert.equal(installCalls[0][1][2],'https://chromewebstore.google.com/detail/cindy/dmbhhhdijpeaibfeocdcjhfefkgpkeef');
   await logic.evaluate(()=>window.confirmAllowed=false);
   await settings.locator('#all-sites').check();await settings.locator('#save').click();await settings.locator('#hint.error').waitFor();
   assert.equal(cfg.policy.interact.allow.includes('*'),false);

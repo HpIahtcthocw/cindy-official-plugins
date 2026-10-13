@@ -65,6 +65,8 @@ test('bridge learning access requires the paired extension challenge key and sta
 });
 
 test('installation copy matches the directory-only developer fallback',()=>{
-  assert.match(settings,/storeNote:'The store is the normal installation path\. Directory loading is the only developer fallback included in this package; ZIP archives are contributor-only\.'/);
-  assert.doesNotMatch(settings,/storeNote:'[^']*ZIP and directory loading/);
+  assert.match(settings,/storeNote:'The store is the normal installation path\. Directory loading is the only developer fallback included in this package; contributor build archives are not an installation route\.'/);
+  assert.match(settings,/storeNote:'商店是普通安装路径；正式包只在「开发者安装（备用）」中提供目录加载，贡献者构建的归档不用于安装。'/);
+  assert.doesNotMatch(settings,/zip(Open|Note|Step|Opened)/);
+  assert.doesNotMatch(settings,/ZIP/);
 });
