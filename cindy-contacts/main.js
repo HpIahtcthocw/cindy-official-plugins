@@ -1864,7 +1864,8 @@ function taskNames() {
     localePromise = (async () => {
       try {
         if (typeof cindy.request !== 'function') return 'en';
-        const r = await cindy.request({ kind: 'app-context' });
+        // 宿主不回应时不能卡住发任务：3 秒取不到就按英文。
+        const r = await Promise.race([cindy.request({ kind: 'app-context' }), new Promise((resolve) => setTimeout(() => resolve(null), 3000))]);
         const l = r && r.ok && r.context && r.context.locale;
         return TASK_NAMES[l] ? l : 'en';
       } catch (_) {
