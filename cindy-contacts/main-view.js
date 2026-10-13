@@ -198,13 +198,22 @@
     if (opaque) return i.label || PLATFORM_NAME[i.platform] || i.platform;
     return i.value;
   }
+  /** 反复去掉 <!-- … --> 标记直到不再变化。 */
+  function stripMarkers(text) {
+    let s = String(text || '');
+    for (let prev = ''; prev !== s; ) {
+      prev = s;
+      s = s.replace(/<!--[\s\S]*?-->/g, '');
+    }
+    return s;
+  }
   /** 旧数据里的说明文字：去掉导入标记注释，**粗体** 渲染成粗体，其余一律转义。 */
   function richText(text) {
-    const clean = String(text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    const clean = stripMarkers(text).trim();
     return esc(clean).replace(/\*\*([^*\n]+?)\*\*/g, '<b>$1</b>');
   }
   const paragraphs = (text) =>
-    String(text || '').replace(/<!--[\s\S]*?-->/g, '').split(/\n{2,}|\r\n\r\n/).map((p) => p.trim()).filter(Boolean);
+    stripMarkers(text).split(/\n{2,}|\r\n\r\n/).map((p) => p.trim()).filter(Boolean);
   const PLATFORMS = ['email', 'phone', 'feishu', 'wechat', 'slack', 'telegram', 'github', 'x', 'other'];
 
   function uid() {
@@ -755,6 +764,8 @@
     }
     try {
       const [d, qa] = await Promise.all([rpc('get', { id }), rpc('qa', { contactId: id }).catch(() => [])]);
+      // 读的时候用户已经切到别人：丢掉这份，免得旧详情盖住新选择
+      if (S.selId !== id) return;
       S.detail = d;
       S.qa = qa || [];
     } catch (e) {
@@ -1212,8 +1223,10 @@
       return renderView();
     }
     if (a === 'doDelete') {
+      // 删的是确认框里显示的那个人，不是此刻 selId 指向的人
       const name = S.detail?.name;
-      const id = S.selId;
+      const id = S.detail?.id;
+      if (!id) return;
       S.confirmDelete = false;
       S.selId = null;
       return mutate(() => rpc('delete', { id }), T.deleted(name));

@@ -554,7 +554,7 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     const b3 = ok(await a.call('maintenance', { action: 'begin', scope: 'backfill' }));
     assert.equal(b3.to, b1.from);
     assert.ok(Date.parse(b3.from) < Date.parse(b3.to) - 80 * DAY);
-    ok(await a.call('maintenance', { action: 'end', run_id: b3.run_id }));
+    ok(await a.call('maintenance', { action: 'end', run_id: b3.run_id, coverage: b3.sources.map((x) => ({ source: x.source, coverage: 'complete' })) }));
     assert.equal((await a.view('state')).result.coverage.from, b3.from);
     // 回补不移动「上次整理到」的检查点
     assert.equal((await a.view('state')).result.maintenance.checkpoint, b2b.to);
@@ -565,7 +565,7 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.equal(b4.contact.name, '林知夏');
     assert.equal(b4.contact.identities[0].value, 'zhixia@example.test');
     assert.equal(b4.to, b3.from);
-    ok(await a.call('maintenance', { action: 'end', run_id: b4.run_id }));
+    ok(await a.call('maintenance', { action: 'end', run_id: b4.run_id, coverage: b4.sources.map((x) => ({ source: x.source, coverage: 'complete' })) }));
     assert.equal(ok(await a.call('get', { id: p.id })).coveredFrom, b4.from);
 
     // 设置：初始天数与来源开关
@@ -883,6 +883,43 @@ test('数据完整性：同卡重复值不阻塞导入；没写缺口的 partial
     assert.equal((await sql('SELECT count(*) AS n FROM contact_interactions WHERE contact_id = ?', [p.id]))[0].n, 0);
     assert.equal((await sql('SELECT count(*) AS n FROM contact_merges WHERE target_id = ? OR source_id = ?', [p.id, p.id]))[0].n, 0);
     assert.equal((await sql('SELECT count(*) AS n FROM plugin_meta WHERE key = ?', [`qa:${p.id}`]))[0].n, 0);
+  } finally {
+    a.close();
+  }
+});
+
+test('改写法不丢联系方式；回补没读到的部分记成待补；拆开合并时还回被去重的往来并撤回多出的分组', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  try {
+    // 只改大小写：页面同时提交删除旧身份和新增新写法
+    const p = ok(await a.call('save', { name: '改写法', identities: [{ platform: 'email', value: 'case@example.test' }] }));
+    const old = ok(await a.call('get', { id: p.id })).identities.find((i) => i.platform === 'email');
+    ok(await a.view('save', { id: p.id, identities: [{ platform: 'email', value: 'Case@Example.test' }], removeIdentityIds: [old.id] }));
+    const after = ok(await a.call('get', { id: p.id })).identities.filter((i) => i.platform === 'email');
+    assert.deepEqual(after.map((i) => i.value), ['Case@Example.test']);
+
+    // 回补：邮件读全、聊天没读到 → 聊天这段记成待补，下一轮 recent 先补
+    ok(await a.call('maintenance', { action: 'end', run_id: ok(await a.call('maintenance', { action: 'begin' })).run_id, coverage: ['mail', 'calendar', 'im', 'cindy'].map((s) => ({ source: s, coverage: 'complete' })) }));
+    const bf = ok(await a.call('maintenance', { action: 'begin', scope: 'backfill', months: 1 }));
+    assert.equal((await a.call('maintenance', { action: 'end', run_id: bf.run_id })).errorCode, 'COVERAGE_REQUIRED');
+    ok(await a.call('maintenance', { action: 'end', run_id: bf.run_id, coverage: bf.sources.map((s) => ({ source: s.source, coverage: s.source === 'im' ? 'none' : 'complete', note: '这个任务里读不到' })) }));
+    const next = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.ok(next.backlog.some((g) => g.source === 'im' && g.from === bf.from && g.to === bf.to));
+
+    // 合并再拆开：同一来源的往来还给原档案；只因合并加入的分组撤回
+    const x = ok(await a.call('save', { name: '甲', identities: [{ platform: 'email', value: 'jia@example.test' }], groups: ['客户'] }));
+    const y = ok(await a.call('save', { name: '乙', identities: [{ platform: 'email', value: 'yi@example.test' }] }));
+    ok(await a.call('record', { items: [
+      { contact_id: x.id, occurred_at: '2026-10-11T15:29:00Z', channel: 'calendar', title: '同一次会议', ref: 'ev-1' },
+      { contact_id: y.id, occurred_at: '2026-10-11T15:29:00Z', channel: 'calendar', title: '同一次会议', ref: 'ev-1' },
+    ] }));
+    const mg = ok(await a.call('merge', { target_id: y.id, source_id: x.id, reason: '测试' }));
+    ok(await a.view('unmerge', { id: mg.mergeId }));
+    const back = ok(await a.call('get', { id: x.id }));
+    assert.ok(back.interactions.some((i) => i.ref === 'ev-1'), 'source keeps its copy of the shared exchange');
+    assert.deepEqual(back.groups.map((g) => g.name), ['客户']);
+    assert.deepEqual(ok(await a.call('get', { id: y.id })).groups, [], 'target loses the group it only got from the merge');
   } finally {
     a.close();
   }

@@ -634,7 +634,7 @@ async function groupIdFor(name, statements, createdAt) {
 }
 
 /** 规范化并检查身份冲突；返回待插入的身份。 */
-async function prepareIdentities(contactId, list) {
+async function prepareIdentities(contactId, list, removing = new Set()) {
   const out = [];
   for (const raw of list || []) {
     if (!raw || !str(raw.value)) continue;
@@ -642,8 +642,9 @@ async function prepareIdentities(contactId, list) {
     const normalized = normalizeIdentityValue(raw.value, platform);
     if (!normalized) continue;
     if (out.some((o) => o.platform === platform && o.normalized === normalized)) continue;
-    const owner = await q('SELECT contact_id FROM contact_identities WHERE platform = ? AND normalized_value = ?', [platform, normalized]);
-    if (owner.length) {
+    const owner = await q('SELECT id, contact_id FROM contact_identities WHERE platform = ? AND normalized_value = ?', [platform, normalized]);
+    // 本次同时要删掉的本人旧身份（只改了大小写或格式）：先删后加，按新写法重新插入。
+    if (owner.length && !(owner[0].contact_id === contactId && removing.has(owner[0].id))) {
       if (owner[0].contact_id === contactId) continue;
       throw fail('IDENTITY_CONFLICT', `${platform}:${str(raw.value)} already belongs to another contact`, {
         conflictContactId: owner[0].contact_id,
@@ -733,10 +734,11 @@ async function saveContact(input) {
   setField('updated_at', createdAt);
   params.push(c.id);
   statements.push({ sql: `UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`, params });
-  for (const i of await prepareIdentities(c.id, input.identities)) statements.push(identityInsert(c.id, i, createdAt));
-  for (const rid of input.removeIdentityIds || []) {
-    statements.push({ sql: 'DELETE FROM contact_identities WHERE id = ? AND contact_id = ?', params: [str(rid), c.id] });
+  const removing = new Set((input.removeIdentityIds || []).map((rid) => str(rid)).filter(Boolean));
+  for (const rid of removing) {
+    statements.push({ sql: 'DELETE FROM contact_identities WHERE id = ? AND contact_id = ?', params: [rid, c.id] });
   }
+  for (const i of await prepareIdentities(c.id, input.identities, removing)) statements.push(identityInsert(c.id, i, createdAt));
   for (const g of uniqueStrings(input.groups || [])) {
     const gid = await groupIdFor(g, statements, createdAt);
     statements.push({ sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) VALUES (?, ?)', params: [gid, c.id] });
@@ -964,6 +966,13 @@ async function mergeContacts(input) {
     ),
     loopIds: await ids('SELECT id FROM contact_loops WHERE contact_id = ? ORDER BY id', [src.id]),
     groupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [src.id])).map((r) => r.group_id),
+    // 目标原有的分组：拆开时撤回只因这次合并加进来的分组
+    targetGroupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [dst.id])).map((r) => r.group_id),
+    // 两边都有的同一来源往来，合并时会去掉来源这条；存下全文，拆开时还回去
+    droppedInteractions: await q(
+      'SELECT * FROM contact_interactions WHERE contact_id = ? AND ref IN (SELECT ref FROM contact_interactions WHERE contact_id = ?) LIMIT 200',
+      [src.id, dst.id],
+    ),
     relations: (await q('SELECT * FROM contact_relations WHERE from_id = ? OR to_id = ? LIMIT 100', [src.id, src.id])),
   };
   const facts = normalizeFacts([...parseFacts(dst.facts), ...parseFacts(src.facts).filter((f) => !parseFacts(dst.facts).some((g) => g.label === f.label))]);
@@ -1038,6 +1047,12 @@ async function undoMerge(mergeId) {
       sql: 'INSERT OR IGNORE INTO contact_group_members (group_id, contact_id) SELECT value, ? FROM json_each(?) WHERE value IN (SELECT id FROM contact_groups)',
       params: [src.id, list(snap.groupIds)],
     },
+    ...(Array.isArray(snap.targetGroupIds)
+      ? [{
+          sql: 'DELETE FROM contact_group_members WHERE contact_id = ? AND group_id IN (SELECT value FROM json_each(?)) AND group_id NOT IN (SELECT value FROM json_each(?))',
+          params: [dst.id, list(snap.groupIds), list(snap.targetGroupIds)],
+        }]
+      : []),
     untouched
       ? {
           sql: 'UPDATE contacts SET aliases = ?, summary = ?, narrative = ?, agent_notes = ?, status = ?, facts = ?, covered_from = ?, updated_at = ? WHERE id = ?',
@@ -1045,6 +1060,13 @@ async function undoMerge(mergeId) {
         }
       : { sql: 'UPDATE contacts SET aliases = ?, updated_at = ? WHERE id = ?', params: [JSON.stringify(keptAliases), at, dst.id] },
   ];
+  for (const r of Array.isArray(snap.droppedInteractions) ? snap.droppedInteractions : []) {
+    statements.push({
+      sql: `INSERT OR IGNORE INTO contact_interactions (id, contact_id, occurred_at, channel, title, summary, quote, link, ref, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [r.id, src.id, r.occurred_at, r.channel, r.title || '', r.summary || '', r.quote || '', r.link || '', r.ref, r.created_at || at],
+    });
+  }
   for (const r of (snap.relations || []).slice(0, 80)) {
     const other = r.from_id === src.id ? r.to_id : r.from_id;
     statements.push({
@@ -1330,6 +1352,7 @@ async function maintenanceBegin(input) {
     from: isoOf(from),
     to: isoOf(to),
     contactId: contact ? contact.id : '',
+    contactName: contact ? contact.name : '',
     firstRun: scope === 'recent' && !meta.checkpoint,
     sources: enabled,
     startedAt: nowIso(),
@@ -1341,7 +1364,7 @@ async function maintenanceBegin(input) {
       .filter((g) => !known.some((b) => b.source === g.source && b.where === g.where && b.from === g.from))
       .map((g) => ({ id: uuid(), ...g, addedAt: nowIso() }));
     if (added.length) {
-      meta.backlog = [...known, ...added].slice(-50);
+      meta.backlog = [...known, ...added].slice(-200);
       metaWrites.push(setMetaStmt('maintenance', meta));
     }
   }
@@ -1426,12 +1449,25 @@ async function maintenanceEnd(input) {
   const next = { ...meta, runs: [record, ...(meta.runs || [])].slice(0, 10) };
   let checkpoint = meta.checkpoint || '';
   const covs = normalizeCoverage(input.coverage);
-  if (run && run.scope === 'recent' && Array.isArray(run.sources)) {
-    // 只有读全或读了大部分的来源才推进；缺口留到下次先补，没读到的来源保持原位。
+  if (run && Array.isArray(run.sources)) {
     const missing = run.sources.filter((k) => !covs.some((c) => c.source === k));
     if (missing.length) {
       throw fail('COVERAGE_REQUIRED', `end 需要 coverage：给 ${missing.join('、')} 各写 complete / partial / none（partial 带 gaps）。`);
     }
+  }
+  if (run && run.scope !== 'recent' && Array.isArray(run.sources)) {
+    // 回补：没读到的整段和读了一部分的缺口记成待补，下一轮先补，不会因覆盖日期前移被跳过。
+    const where = run.scope === 'contact' ? `只补「${run.contactName || run.contactId}」` : '整个来源';
+    const gaps = [];
+    for (const c of covs) {
+      if (!run.sources.includes(c.source)) continue;
+      if (c.coverage === 'none') gaps.push({ source: c.source, where, from: run.from, to: run.to, reason: c.note || '回补时没读到' });
+      for (const g of c.gaps) gaps.push({ source: c.source, ...g, where: g.where || where });
+    }
+    if (gaps.length) next.backlog = [...(meta.backlog || []), ...gaps.map((g) => ({ id: uuid(), ...g, addedAt: now }))].slice(-200);
+  }
+  if (run && run.scope === 'recent' && Array.isArray(run.sources)) {
+    // 只有读全或读了一部分（缺口记成待补）的来源才推进；没读到的来源保持原位。
     const sources = { ...(meta.sources || {}) };
     let backlog = (meta.backlog || []).filter((g) => !(Array.isArray(input.backlogDone) && input.backlogDone.includes(g.id)));
     for (const c of covs) {
@@ -1440,8 +1476,8 @@ async function maintenanceEnd(input) {
       else sources[c.source] = { ...(sources[c.source] || {}), coverage: 'none', at: now };
       for (const g of c.gaps) backlog.push({ id: uuid(), source: c.source, ...g, addedAt: now });
     }
-    // 30 天前的缺口交给回补，不再无限累积。
-    backlog = backlog.filter((g) => Date.now() - Date.parse(g.addedAt || now) < 30 * DAY).slice(-50);
+    // 缺口补完前一直留着（检查点已越过它们）；只设上限防止无限增长。
+    backlog = backlog.slice(-200);
     next.sources = sources;
     next.backlog = backlog;
     const cps = run.sources.map((k) => (sources[k] && sources[k].checkpoint) || '').filter(Boolean).sort();
@@ -1807,11 +1843,21 @@ async function tasksAvailable() {
   }
 }
 
+/** 去掉导入时留下的 <!-- … --> 标记；反复到不再变化，嵌套或拼接出的标记也去干净。 */
+function stripMarkers(text) {
+  let s = String(text || '');
+  for (let prev = ''; prev !== s; ) {
+    prev = s;
+    s = s.replace(/<!--[\s\S]*?-->/g, '');
+  }
+  return s;
+}
+
 /** 给模型看的一份档案：介绍、要点、还没完的事和最近的往来。 */
 function dossierText(d) {
   const lines = [`姓名：${d.name}${d.aliases.length ? `（也叫 ${d.aliases.join('、')}）` : ''}`];
   if (d.summary) lines.push(`一句话：${d.summary}`);
-  if (d.narrative) lines.push(`介绍：${d.narrative.replace(/<!--[\s\S]*?-->/g, '').trim()}`);
+  if (d.narrative) lines.push(`介绍：${stripMarkers(d.narrative).trim()}`);
   for (const f of d.facts) lines.push(`${f.label}：${f.value}`);
   const ids = d.identities.filter((i) => i.platform !== 'apple-contacts').map((i) => `${i.platform} ${i.value}`);
   if (ids.length) lines.push(`联系方式：${ids.join('；')}`);
@@ -2087,7 +2133,7 @@ async function tidy(input) {
       `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "contact", contact_id: "${c.id}", months: ${months} } })。`,
       '2. 按返回的时间段和来源说明，只用这个人的身份和名字去查；查到的往来用 record 记下（contact_id 用上面的 id）。',
       '3. 用 save 重写这个人的 summary、narrative、facts、latest，并整理还没完的事。',
-      '4. 调用 maintenance，action 为 "end"，带上 run_id。最终回复一句话说补到了哪天、多了几条往来。',
+      '4. 调用 maintenance，action 为 "end"，带上 run_id 和 coverage（每个来源读全了没有、哪里没读完）。最终回复一句话说补到了哪天、多了几条往来。',
     ].join('\n');
     return sendToTask(`c:${c.id}`, `${(await taskNames()).app} · ${c.display_name}`, text, { purpose: 'backfill', contactId: c.id, question: `往前补 ${months} 个月` });
   }
