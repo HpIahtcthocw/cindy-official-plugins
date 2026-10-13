@@ -20,6 +20,7 @@
       src: { mail: '邮件', calendar: '日历', im: '消息（飞书、iMessage 等）', cindy: 'Cindy 对话（只有每天自动整理能读）', github: 'GitHub' },
       state: { ok: '能读', missing: '没装插件', unauthorized: '没连接账号', unavailable: '这次用不了', error: '出错了', skipped: '跳过' },
       sourcesHint: '用已装的插件、本机命令行工具和能直接读的数据；都读不到的会跳过，并写明原因。',
+      mac: 'macOS 通讯录', macSync: '每天和 macOS 通讯录对一次账（不用 AI）', macSyncHint: '只在你导入过一次后生效；只读，不改 Mac 通讯录。',
       profile: '通讯录主要是', colleagues: '同事和朋友', clients: '很多客户',
       profileHint: { colleagues: '每天整理一次。', clients: '每 6 小时整理一次，客户按公司归类，记下需求、报价和跟进约定。改了之后要重新打开自动化页保存一次才会换频率。' },
       tasksNote: '「现在整理一次」、往前补和写邮件草稿用下方「任务设置」的模型和动手权限；建议把动手权限设为「自动审查」，否则整理时每一步都要你确认。',
@@ -32,13 +33,14 @@
       autoHint: 'Opens Cindy’s Automations page with the name and instructions filled in. Pick a model, check the schedule and save. It then tidies up once a day; each run uses AI quota.',
       autoOpened: 'Automations is open: pick a model and save to start.',
       autoLast: (w) => `Last tidy-up: ${w}`, autoNever: 'Not tidied up yet.',
-      autoStop: 'To pause it or change the schedule or model, edit “整理通讯录” on the Automations page.',
+      autoStop: 'To pause it or change the schedule or model, edit “Tidy up contacts” on the Automations page.',
       days: 'First run reads', daysOpt: (d) => `${d} days`,
       daysHint: 'Only affects the first tidy-up. Go further back from a person’s Exchanges tab.',
       sources: 'Sources',
       src: { mail: 'Mail', calendar: 'Calendar', im: 'Chats (Feishu, iMessage, etc.)', cindy: 'Cindy chats (daily tidy-up only)', github: 'GitHub' },
       state: { ok: 'readable', missing: 'not installed', unauthorized: 'not connected', unavailable: 'not available', error: 'error', skipped: 'skipped' },
       sourcesHint: 'Uses installed plugins, command-line tools and data this Mac can read; sources it cannot read are skipped with the reason shown.',
+      mac: 'macOS Contacts', macSync: 'Reconcile with macOS Contacts daily (no AI)', macSyncHint: 'Starts after your first import; read-only, never changes Mac Contacts.',
       profile: 'Contacts are mostly', colleagues: 'Colleagues and friends', clients: 'Many clients',
       profileHint: { colleagues: 'Tidies up once a day.', clients: 'Tidies up every 6 hours, groups clients by company and notes needs, quotes and follow-ups. Save the automation again to change its schedule.' },
       tasksNote: '“Tidy up now”, backfills and email drafts use the model and permission in Task settings below. Set the permission to Auto-review, or every step asks you to confirm.',
@@ -125,6 +127,7 @@
       h += `<label><input type="checkbox" id="src-${k}" data-source="${k}"${st.sources && st.sources[k] ? ' checked' : ''}>${esc(T.src[k])}${seen && st.sources && st.sources[k] ? `<span class="st${['ok', 'unavailable', 'skipped'].includes(seen.status) ? '' : ' bad'}">${esc(T.state[seen.status] || seen.status)}</span>` : ''}</label>`;
     }
     h += `</div><p class="hint">${esc(T.sourcesHint)}</p></div></div>`;
+    h += `<div class="item"><div class="label">${esc(T.mac)}</div><div class="body"><div class="checks"><label><input type="checkbox" id="macAutoSync"${st.macAutoSync ? ' checked' : ''}>${esc(T.macSync)}</label></div><p class="hint">${esc(T.macSyncHint)}</p></div></div>`;
     h += `<div class="item"><div class="label">${esc(T.profile)}</div><div class="body">${seg('profile', ['colleagues', 'clients'], (v) => T[v])}<p class="hint">${esc(T.profileHint[st.profile] || '')}</p></div></div>`;
     h += `<div class="item"><div class="label"></div><div class="body"><p class="hint">${esc(T.tasksNote)}</p>${S.error ? `<p class="err">${esc(S.error)}</p>` : ''}</div></div>`;
     $('#root').innerHTML = h;
@@ -172,6 +175,7 @@
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset && t.dataset.source) save({ sources: { [t.dataset.source]: t.checked } });
+    if (t.id === 'macAutoSync') save({ macAutoSync: t.checked });
   });
 
   (async () => {

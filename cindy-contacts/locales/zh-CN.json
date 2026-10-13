@@ -194,7 +194,7 @@
       }
     },
     "find_duplicates": {
-      "description": "全库扫描名字相似的疑似重复档案对。用户要求整理或怀疑有重复时用；每一对先 get 双方确认，再问用户是否 merge。"
+      "description": "全库扫描名字相似的疑似重复档案对。每一对先 get 双方：有把握是同一个人（同一个邮箱、手机号或平台账号，或同名且公司、上下文一致）就直接 merge 并写 reason；拿不准的留着，用户在场时再问。"
     },
     "import_macos": {
       "description": "从 macOS 系统通讯录只读导入，不修改系统通讯录。默认 dry_run 只返回将新建/补全/跳过的数量；用户同意后再传 dry_run:false 执行。邮箱、电话或系统锚点相同的名片并入已有档案，名字相似的新档案进入待确认。首次运行会弹出系统授权；被拒时返回 PERMISSION_DENIED。仅 Mac 可用。导入过一次后，若设置里开着「每天与 macOS 通讯录对账」，整理开始时每天最多自动只读对账一次（只新建和补全，不删除）。",
@@ -211,7 +211,7 @@
       "description": "通讯录概览：人数、组织数、待确认数、分组数。"
     },
     "save_many": {
-      "description": "批量新建或更新档案，单次最多 100 条，规则与 save 相同。用于导入客户名单、表格、名片等大量联系人；逐条返回结果，某条失败（如 DUPLICATE_SUSPECT、IDENTITY_CONFLICT）不影响其它条，失败的按 save 的处理方式逐个解决。",
+      "description": "批量新建或更新档案，单次最多 100 条，规则与 save 相同。用于导入客户名单、表格、名片等大量联系人；逐条返回结果，某条失败（如 DUPLICATE_SUSPECT、IDENTITY_CONFLICT）不影响其它条，失败的按 save 的处理方式逐个解决。支持 save 的新建与追加字段；结束待办（close_loops）、删除别名或联系方式请逐条用 save。",
       "parameters": {
         "/properties/items": {
           "description": "每条字段与 save 相同"

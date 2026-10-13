@@ -22,7 +22,7 @@
       cv: '履历与关系', related: '常一起', inGroups: '分组',
       thin: 'Cindy 还没读到和 TA 的往来。', thinAct: '去邮件和飞书里找找',
       contactLine: (n) => `往来 ${n} 次`, lastLine: (d) => `上次 ${d}`,
-      filterAll: (n) => `全部 ${n}`, ch: { mail: '邮件', im: '消息', calendar: '日程', cindy: 'Cindy 对话', github: 'GitHub', call: '通话', other: '其它' },
+      filterAll: (n) => `全部 ${n}`, shownRecent: (n) => `这里只显示最近 ${n} 条往来。`, ch: { mail: '邮件', im: '消息', calendar: '日程', cindy: 'Cindy 对话', github: 'GitHub', call: '通话', other: '其它' },
       open: '打开原文', coveredTo: (d) => `已补到 ${d}`, coveredNone: '还没有往前补过', backfillBtn: (m) => `再往前补 ${m} 个月`, backfilling: 'Cindy 正在往前补…',
       noHistory: '还没有记下往来。',
       ids: '联系方式', merges: 'Cindy 自动合并的档案', split: '拆开', splitDone: (n) => `已拆开，「${n}」恢复成单独的档案`,
@@ -101,7 +101,7 @@
       cv: 'Timeline & people', related: 'Works with', inGroups: 'Groups',
       thin: 'Cindy has not found any exchanges with them yet.', thinAct: 'Look in mail and chats',
       contactLine: (n) => `${n} exchanges`, lastLine: (d) => `last ${d}`,
-      filterAll: (n) => `All ${n}`, ch: { mail: 'Mail', im: 'Chat', calendar: 'Calendar', cindy: 'Cindy', github: 'GitHub', call: 'Call', other: 'Other' },
+      filterAll: (n) => `All ${n}`, shownRecent: (n) => `Showing the latest ${n} exchanges.`, ch: { mail: 'Mail', im: 'Chat', calendar: 'Calendar', cindy: 'Cindy', github: 'GitHub', call: 'Call', other: 'Other' },
       open: 'Open', coveredTo: (d) => `Covered back to ${d}`, coveredNone: 'Not backfilled yet', backfillBtn: (m) => `Go back ${m} more months`, backfilling: 'Cindy is going further back…',
       noHistory: 'No exchanges recorded yet.',
       ids: 'Contact details', merges: 'Merged by Cindy', split: 'Split', splitDone: (n) => `Split: “${n}” is a separate entry again`,
@@ -530,6 +530,7 @@
       h += `<div class="filt"><button data-filter="all" aria-pressed="${S.filter === 'all'}">${esc(T.filterAll(d.interactionTotal))}</button>`;
       for (const k of kinds) h += `<button data-filter="${esc(k)}" aria-pressed="${S.filter === k}">${esc(T.ch[k] || k)} ${all.filter((i) => i.channel === k).length}</button>`;
       h += '</div>';
+      if (d.interactionTotal > all.length) h += `<p class="muted small">${esc(T.shownRecent(all.length))}</p>`;
     } else {
       h += `<p class="muted">${esc(T.noHistory)}</p>`;
     }
@@ -980,7 +981,9 @@
       const keptIds = new Set(v.rows.filter((x) => x.id).map((x) => x.id));
       const changedIds = v.rows.filter((x) => x.id && d.identities.some((i) => i.id === x.id && (i.value !== x.value || i.platform !== x.platform)));
       const removeIdentityIds = d.identities.filter((i) => i.platform !== 'apple-contacts' && (!keptIds.has(i.id) || changedIds.some((c) => c.id === i.id))).map((i) => i.id);
-      const identities = v.rows.filter((x) => x.value && (!x.id || changedIds.some((c) => c.id === x.id))).map((x) => ({ platform: x.platform, value: x.value }));
+      const identities = v.rows
+        .filter((x) => x.value && (!x.id || changedIds.some((c) => c.id === x.id)))
+        .map((x) => ({ platform: x.platform, value: x.value, label: (x.id && d.identities.find((i) => i.id === x.id)?.label) || '' }));
       const oldGroups = d.groups.map((g) => g.name);
       await rpc('save', {
         id: d.id, name: v.name, kind: v.kind, summary: v.summary, narrative: v.narrative, agentNotes: v.agentNotes,

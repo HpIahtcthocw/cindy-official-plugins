@@ -924,3 +924,24 @@ test('改写法不丢联系方式；回补没读到的部分记成待补；拆�
     a.close();
   }
 });
+
+test('包含命中不冒充精确命中；合并链上的快照随最终档案一起删除', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  const sql = async (s, p = []) => (await a.library({ op: 'db.exec', dbPath: 'contacts.sqlite', sql: s, params: p })).rows;
+  try {
+    ok(await a.call('save', { name: 'Joann', identities: [{ platform: 'email', value: 'joann@example.test' }] }));
+    const r = ok(await a.call('find', { query: 'ann@example.test' }));
+    assert.equal(r.results[0].matchType, 'text');
+
+    const jia = ok(await a.call('save', { name: '链甲', identities: [{ platform: 'email', value: 'chain-a@example.test' }] }));
+    const yi = ok(await a.call('save', { name: '链乙', identities: [{ platform: 'email', value: 'chain-b@example.test' }] }));
+    const bing = ok(await a.call('save', { name: '链丙', identities: [{ platform: 'email', value: 'chain-c@example.test' }] }));
+    ok(await a.call('merge', { target_id: yi.id, source_id: jia.id, reason: '测试' }));
+    ok(await a.call('merge', { target_id: bing.id, source_id: yi.id, reason: '测试' }));
+    ok(await a.call('delete', { id: bing.id, confirm: true }));
+    assert.equal((await sql('SELECT count(*) AS n FROM contact_merges'))[0].n, 0);
+  } finally {
+    a.close();
+  }
+});

@@ -564,7 +564,8 @@ async function findContacts(query, limit) {
     );
     const order = { name: 0, identity: 1, summary: 2, story: 3, event: 4 };
     rows.sort((a, b) => order[a.field] - order[b.field]);
-    for (const r of rows) add(r.id, r.field === 'name' || r.field === 'identity' ? r.field : 'text');
+    // 这里都是「包含」命中（如查 ann@ 命中 joann@），只按字段排序，类型一律 text，不冒充精确命中
+    for (const r of rows) add(r.id, 'text');
   }
   const ids = [...hits.keys()].slice(0, max);
   const out = [];
@@ -1005,6 +1006,8 @@ async function mergeContacts(input) {
       ],
     },
     { sql: 'DELETE FROM contacts WHERE id = ?', params: [src.id] },
+    // 甲并入乙、乙再并入丙：甲的合并记录改挂到丙，删丙时快照一起清掉
+    { sql: 'UPDATE contact_merges SET target_id = ? WHERE target_id = ?', params: [dst.id, src.id] },
     {
       sql: 'INSERT INTO contact_merges (id, target_id, source_id, source_name, reason, snapshot, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       params: [mergeId, dst.id, src.id, src.display_name, str(input.reason).slice(0, 200), JSON.stringify(snapshot), at],
@@ -1445,6 +1448,7 @@ async function maintenanceEnd(input) {
     updated: num(input.updated),
     pending: num(input.pending),
     note: str(input.note).slice(0, 300),
+    contactId: run ? run.contactId || '' : '',
   };
   const next = { ...meta, runs: [record, ...(meta.runs || [])].slice(0, 10) };
   let checkpoint = meta.checkpoint || '';
@@ -1676,7 +1680,10 @@ async function importLegacy(opts) {
   try {
     probe = await nodeCall('legacy/probe', {}, { timeoutMs: 60000 });
   } catch (e) {
-    return { status: 'error', code: e.code, message: e.message };
+    // 写进状态：页面重新读取时能看到失败原因和「重试」
+    const failed = { status: 'error', code: e.code, message: e.message, at: nowIso() };
+    state.legacy = failed;
+    return failed;
   }
   if (!probe.found) {
     const none = { status: 'none', at: nowIso() };
@@ -1931,22 +1938,17 @@ const TASK_NAMES = {
   ja: { app: '連絡先', tidy: '整理', schedule: '連絡先を整理' },
   ko: { app: '연락처', tidy: '정리', schedule: '연락처 정리' },
 };
-let localePromise = null;
-function taskNames() {
-  if (!localePromise) {
-    localePromise = (async () => {
-      try {
-        if (typeof cindy.request !== 'function') return 'en';
-        // 宿主不回应时不能卡住发任务：3 秒取不到就按英文。
-        const r = await Promise.race([cindy.request({ kind: 'app-context' }), new Promise((resolve) => setTimeout(() => resolve(null), 3000))]);
-        const l = r && r.ok && r.context && r.context.locale;
-        return TASK_NAMES[l] ? l : 'en';
-      } catch (_) {
-        return 'en';
-      }
-    })();
+async function taskNames() {
+  // 不缓存：用户在 Cindy 里切换语言后，下一个任务就用新语言命名。
+  try {
+    if (typeof cindy.request !== 'function') return TASK_NAMES.en;
+    // 宿主不回应时不能卡住发任务：3 秒取不到就按英文。
+    const r = await Promise.race([cindy.request({ kind: 'app-context' }), new Promise((resolve) => setTimeout(() => resolve(null), 3000))]);
+    const l = r && r.ok && r.context && r.context.locale;
+    return TASK_NAMES[l] || TASK_NAMES.en;
+  } catch (_) {
+    return TASK_NAMES.en;
   }
-  return localePromise.then((l) => TASK_NAMES[l]);
 }
 
 /** 每个人一个固定任务（全局整理共用一个）；再问都发到同一个任务里。 */
@@ -2040,7 +2042,10 @@ function watchRun(entry) {
     if (entry.key === 'maintain' || entry.purpose === 'backfill') {
       await serial(async () => {
         const m = (await getMeta('maintenance')) || {};
-        const ended = (m.runs || []).some((r) => r.at >= entry.sentAt);
+        // 只认同一范围（单人回补还要是同一个人）的收尾，别的整理恰好结束不算
+        const ended = (m.runs || []).some(
+          (r) => r.at >= entry.sentAt && (entry.contactId ? r.scope === 'contact' && r.contactId === entry.contactId : r.scope === entry.purpose),
+        );
         await batch([
           setMetaStmt('last_tidy', {
             at: nowIso(),
@@ -2081,7 +2086,8 @@ function watchRun(entry) {
 }
 
 const DRAFT_RE = /(写|起草|拟|回).{0,8}(邮件|信|email)|草稿|draft|e-?mail/i;
-const ACTION_RE = /回补|补全|往前补|去查|查一下|查查|搜一下|找一下|帮我(发|约|安排|问)|发给|提醒/;
+const ACTION_RE =
+  /回补|补全|往前补|去查|查一下|查查|搜一下|找一下|帮我(发|约|安排|问)|发给|提醒|\b(check|look ?up|search|find|backfill|schedule|remind|send|book|arrange)\b|調べ|探し|確認して|予定|送って|リマインド|찾아|확인해|검색|일정|보내|알려/i;
 
 /**
  * 人物页的提问：只问这个人的事就用快速通道当场回答；写邮件、去各渠道查、回补这类要动用别的插件的事，

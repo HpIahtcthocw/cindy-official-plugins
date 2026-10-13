@@ -207,9 +207,9 @@ function systemRead() {
         if (err) {
           const msg = String(err.message || err);
           if (msg.includes('-1743') || /not authori[sz]ed/i.test(msg)) {
-            reject(Object.assign(new Error('not authorized'), { code: 'PERMISSION_DENIED' }));
+            reject(Object.assign(new Error('Cindy 没有读取「通讯录」的权限：到「系统设置 → 隐私与安全性 → 自动化」里允许 Cindy 控制「通讯录」，然后重试。'), { code: 'PERMISSION_DENIED' }));
           } else if (err.killed) {
-            reject(Object.assign(new Error('timed out'), { code: 'TIMEOUT' }));
+            reject(Object.assign(new Error('读取 macOS 通讯录超时：可能是系统授权弹窗还没点，或通讯录很大。点掉授权弹窗后重试；仍超时就先打开「通讯录」App 再试。'), { code: 'TIMEOUT' }));
           } else {
             reject(Object.assign(new Error(msg.slice(0, 300)), { code: 'INTERNAL' }));
           }

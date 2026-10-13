@@ -194,7 +194,7 @@
       }
     },
     "find_duplicates": {
-      "description": "Scan for pairs of entries with similar names. Use when the user asks to tidy up or suspects duplicates; get both sides of each pair, then ask the user before merging."
+      "description": "Scan for pairs of entries with similar names. Get both sides of each pair: if you are sure they are the same person (same email, phone or platform account, or same name with matching company and context), merge with a reason; leave uncertain pairs, and ask the user when they are present."
     },
     "import_macos": {
       "description": "Import read-only from macOS Contacts; system contacts are never changed. By default dry_run only returns how many entries would be created, completed or skipped; pass dry_run:false after the user agrees. Cards with the same email, phone or system anchor join existing entries; new entries with similar names go to the to-confirm queue. The first run asks for macOS permission and returns PERMISSION_DENIED if refused. Mac only. After the first import, if daily reconciliation is on in settings, a read-only reconciliation runs at most once a day when a tidy-up starts (creates and fills in, never deletes).",
@@ -211,7 +211,7 @@
       "description": "Contacts overview: people, organizations, to confirm, groups."
     },
     "save_many": {
-      "description": "Create or update up to 100 entries at once, with the same rules as save. Use it to import client lists, spreadsheets or business cards. Returns a result per item; a failed item (e.g. DUPLICATE_SUSPECT, IDENTITY_CONFLICT) does not affect the others, so resolve failures one by one as with save.",
+      "description": "Create or update up to 100 entries at once, with the same rules as save. Use it to import client lists, spreadsheets or business cards. Returns a result per item; a failed item (e.g. DUPLICATE_SUSPECT, IDENTITY_CONFLICT) does not affect the others, so resolve failures one by one as with save. Supports the create and add fields of save; to close open items or remove aliases or contact details, use save for each entry.",
       "parameters": {
         "/properties/items": {
           "description": "Each item has the same fields as save"
