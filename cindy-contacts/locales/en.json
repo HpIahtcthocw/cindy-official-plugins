@@ -175,7 +175,7 @@
       }
     },
     "delete": {
-      "description": "Delete an entry with its identities, events and memberships. This cannot be undone. Call with confirm:true only when the user explicitly asks to delete.",
+      "description": "Delete an entry with its identities, events, memberships, exchanges, open items, Q&A history and merge snapshots. This cannot be undone. Call with confirm:true only when the user explicitly asks to delete.",
       "parameters": {
         "/properties/confirm": {
           "description": "Pass true when the user explicitly asked to delete"
@@ -197,7 +197,7 @@
       "description": "Scan for pairs of entries with similar names. Use when the user asks to tidy up or suspects duplicates; get both sides of each pair, then ask the user before merging."
     },
     "import_macos": {
-      "description": "Import read-only from macOS Contacts; system contacts are never changed. By default dry_run only returns how many entries would be created, completed or skipped; pass dry_run:false after the user agrees. Cards with the same email, phone or system anchor join existing entries; new entries with similar names go to the to-confirm queue. The first run asks for macOS permission and returns PERMISSION_DENIED if refused. Mac only.",
+      "description": "Import read-only from macOS Contacts; system contacts are never changed. By default dry_run only returns how many entries would be created, completed or skipped; pass dry_run:false after the user agrees. Cards with the same email, phone or system anchor join existing entries; new entries with similar names go to the to-confirm queue. The first run asks for macOS permission and returns PERMISSION_DENIED if refused. Mac only. After the first import, if daily reconciliation is on in settings, a read-only reconciliation runs at most once a day when a tidy-up starts (creates and fills in, never deletes).",
       "parameters": {
         "/properties/dry_run": {
           "description": "Default true, preview only"
@@ -222,7 +222,7 @@
       }
     },
     "maintenance": {
-      "description": "Start, check sources for and finish a time-window tidy-up. begin returns run_id, the window, each source’s own from/to and how to query it (for chats, find group chats and direct messages separately), the backlog left unread last time, first_step and coverage_rule; scope is recent, backfill or contact. Report which sources work with action \"sources\"; after reading and recording, call end with run_id and each source’s coverage (complete / partial / none, partial with gaps). Only fully read sources move their checkpoint forward.",
+      "description": "Start, check sources for and finish a time-window tidy-up. begin returns run_id, the window, each source’s own from/to and how to query it (for chats, find group chats and direct messages separately), the backlog left unread last time, first_step and coverage_rule; scope is recent, backfill or contact. Report which sources work with action \"sources\"; after reading and recording, call end with run_id and each source’s coverage (complete / partial / none, partial with gaps). Only sources read fully, or partly with gaps listed, move their checkpoint forward; gaps are read first next time.",
       "parameters": {
         "/properties/checkpoint": {
           "description": "Legacy: without run_id, the time processed up to (ISO 8601)"

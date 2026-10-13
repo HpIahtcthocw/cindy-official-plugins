@@ -834,3 +834,56 @@ test('几千人的规模：批量写入、列表与查重都在可接受时间�
     a.close();
   }
 });
+
+test('数据完整性：同卡重复值不阻塞导入；没写缺口的 partial 不推进；久未读的整段记成待补；删除不留副本', async () => {
+  const dir = tmp();
+  const fixture = path.join(dir, 'system.json');
+  fs.writeFileSync(fixture, JSON.stringify([
+    { name: '重复邮箱', org: '', title: '', id: 'AB-9', isCompany: false, emails: [{ v: 'dup@example.test', l: 'work' }, { v: 'DUP@example.test', l: 'home' }], phones: [] },
+  ]));
+  const a = boot({ libDir: dir, systemFixture: fixture });
+  const sql = async (s, p = []) => (await a.library({ op: 'db.exec', dbPath: 'contacts.sqlite', sql: s, params: p })).rows;
+  try {
+    // 同一张名片写了两遍同一个邮箱：只建一条身份，整批不失败
+    const r = ok(await a.call('import_macos', { dry_run: false }));
+    assert.equal(r.created, 1);
+    assert.equal((await sql("SELECT count(*) AS n FROM contact_identities WHERE platform = 'email'"))[0].n, 1);
+
+    // 旧做法不带 run_id 也不带时间：不再把检查点推到现在
+    const b0 = ok(await a.call('maintenance', { action: 'begin' }));
+    ok(await a.call('maintenance', { action: 'end' }));
+    const b1 = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.ok(Date.parse(b1.from) < Date.now() - 2 * 86400000, 'still starts from the first-run window');
+    ok(await a.call('maintenance', { action: 'end', run_id: b0.run_id, coverage: b0.sources.map((s) => ({ source: s.source, coverage: 'complete' })) }));
+
+    // 说 partial 却没写缺口：按没读到处理，这个来源的检查点不动
+    const b2 = ok(await a.call('maintenance', { action: 'begin' }));
+    const imFrom = b2.sources.find((s) => s.source === 'im').from;
+    ok(await a.call('maintenance', { action: 'end', run_id: b2.run_id, coverage: b2.sources.map((s) => ({ source: s.source, coverage: s.source === 'im' ? 'partial' : 'complete' })) }));
+    const b3 = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.equal(b3.sources.find((s) => s.source === 'im').from, imFrom);
+    ok(await a.call('maintenance', { action: 'end', run_id: b3.run_id, coverage: b3.sources.map((s) => ({ source: s.source, coverage: 'complete' })) }));
+
+    // 40 天没读：这一轮只读最近 30 天，更早的整段记成待补
+    const old = new Date(Date.now() - 40 * 86400000).toISOString();
+    ok(await a.call('maintenance', { action: 'end', checkpoint: old }));
+    await a.library({ op: 'db.exec', dbPath: 'contacts.sqlite', sql: "UPDATE plugin_meta SET value = json_remove(value, '$.sources') WHERE key = 'maintenance'", params: [] });
+    const b4 = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.ok(b4.backlog.some((g) => g.source === 'mail' && g.reason.includes('30 天')));
+    const again = ok(await a.call('maintenance', { action: 'begin' }));
+    assert.equal(again.backlog.filter((g) => g.source === 'mail').length, 1, 'same gap is recorded once');
+
+    // 删除：往来、待办、问答和合并快照都不留
+    const p = ok(await a.call('save', { name: '要删的人', identities: [{ platform: 'email', value: 'gone@example.test' }] }));
+    const q = ok(await a.call('save', { name: '被并入的人', identities: [{ platform: 'email', value: 'merged@example.test' }], allow_duplicate: true }));
+    ok(await a.call('record', { items: [{ contact_id: p.id, occurred_at: '2026-10-11T15:29:00Z', channel: 'mail', title: 'x', ref: 'gm-del' }] }));
+    ok(await a.call('merge', { target_id: p.id, source_id: q.id, reason: '同一个人' }));
+    await a.library({ op: 'db.exec', dbPath: 'contacts.sqlite', sql: 'INSERT OR REPLACE INTO plugin_meta (key, value) VALUES (?, ?)', params: [`qa:${p.id}`, '[]'] });
+    ok(await a.call('delete', { id: p.id, confirm: true }));
+    assert.equal((await sql('SELECT count(*) AS n FROM contact_interactions WHERE contact_id = ?', [p.id]))[0].n, 0);
+    assert.equal((await sql('SELECT count(*) AS n FROM contact_merges WHERE target_id = ? OR source_id = ?', [p.id, p.id]))[0].n, 0);
+    assert.equal((await sql('SELECT count(*) AS n FROM plugin_meta WHERE key = ?', [`qa:${p.id}`]))[0].n, 0);
+  } finally {
+    a.close();
+  }
+});

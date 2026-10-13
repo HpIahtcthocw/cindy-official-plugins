@@ -1069,6 +1069,11 @@ async function deleteContact(id) {
     { sql: 'DELETE FROM contact_events WHERE contact_id = ?', params: [c.id] },
     { sql: 'DELETE FROM contact_group_members WHERE contact_id = ?', params: [c.id] },
     { sql: 'DELETE FROM contact_relations WHERE from_id = ? OR to_id = ?', params: [c.id, c.id] },
+    { sql: 'DELETE FROM contact_interactions WHERE contact_id = ?', params: [c.id] },
+    { sql: 'DELETE FROM contact_loops WHERE contact_id = ?', params: [c.id] },
+    // 合并快照里存着被并入的人的完整档案；目标被删就一起删，不留可恢复的副本。
+    { sql: 'DELETE FROM contact_merges WHERE target_id = ? OR source_id = ?', params: [c.id, c.id] },
+    { sql: 'DELETE FROM plugin_meta WHERE key IN (?, ?)', params: [`qa:${c.id}`, `task:c:${c.id}`] },
     { sql: 'DELETE FROM contacts WHERE id = ?', params: [c.id] },
   ]);
   return { deleted: c.id, name: c.display_name };
@@ -1296,11 +1301,14 @@ async function maintenanceBegin(input) {
   const enabled = SOURCES.filter((k) => settings.sources[k]);
   // 每个来源各自从上次读完的地方接着读（往前多看 1 小时防漏）；最多往前 30 天，更早的交给回补。
   const sourceFrom = {};
+  const skipped = [];
   if (scope === 'recent') {
     to = now;
     for (const k of enabled) {
       const cp = (meta.sources && meta.sources[k] && meta.sources[k].checkpoint) || meta.checkpoint || '';
       let f = cp ? Date.parse(cp) - 3600000 : initialFrom;
+      // 超过 30 天没读的部分不塞进这一轮，记成待补，下一轮先补，不会被跳过。
+      if (f < now - 30 * DAY) skipped.push({ source: k, where: '整个来源', from: isoOf(f), to: isoOf(now - 30 * DAY), reason: '超过 30 天没读到' });
       f = Math.max(f, now - 30 * DAY);
       if (!(f < to)) f = to - 3600000;
       sourceFrom[k] = f;
@@ -1326,7 +1334,18 @@ async function maintenanceBegin(input) {
     sources: enabled,
     startedAt: nowIso(),
   };
-  await batch([setMetaStmt(`run:${run.runId}`, run)]);
+  const metaWrites = [setMetaStmt(`run:${run.runId}`, run)];
+  if (skipped.length) {
+    const known = meta.backlog || [];
+    const added = skipped
+      .filter((g) => !known.some((b) => b.source === g.source && b.where === g.where && b.from === g.from))
+      .map((g) => ({ id: uuid(), ...g, addedAt: nowIso() }));
+    if (added.length) {
+      meta.backlog = [...known, ...added].slice(-50);
+      metaWrites.push(setMetaStmt('maintenance', meta));
+    }
+  }
+  await batch(metaWrites);
   const sources = enabled.map((k) => ({
     source: k,
     from: isoOf(sourceFrom[k] !== undefined ? sourceFrom[k] : from),
@@ -1366,7 +1385,7 @@ function normalizeCoverage(list) {
   for (const c of Array.isArray(list) ? list.slice(0, 10) : []) {
     const source = str(c && c.source);
     if (!SOURCES.includes(source) || out.some((x) => x.source === source)) continue;
-    const coverage = ['complete', 'partial', 'none'].includes(str(c.coverage)) ? str(c.coverage) : 'none';
+    let coverage = ['complete', 'partial', 'none'].includes(str(c.coverage)) ? str(c.coverage) : 'none';
     const gaps = [];
     for (const g of Array.isArray(c.gaps) ? c.gaps.slice(0, 20) : []) {
       const where = str(g && g.where).slice(0, 120);
@@ -1375,6 +1394,8 @@ function normalizeCoverage(list) {
       if (!where && !from) continue;
       gaps.push({ where, from: Number.isNaN(Date.parse(from)) ? '' : from, to: Number.isNaN(Date.parse(to)) ? '' : to, reason: str(g && g.reason).slice(0, 160) });
     }
+    // 说读了一部分却没写缺口在哪：推进检查点会把没读的部分永久跳过，按没读到处理。
+    if (coverage === 'partial' && !gaps.length) coverage = 'none';
     out.push({ source, coverage, gaps, note: str(c.note).slice(0, 160) });
   }
   return out;
@@ -1424,12 +1445,13 @@ async function maintenanceEnd(input) {
     next.sources = sources;
     next.backlog = backlog;
     const cps = run.sources.map((k) => (sources[k] && sources[k].checkpoint) || '').filter(Boolean).sort();
-    checkpoint = cps.length === run.sources.length ? cps[0] : meta.checkpoint || run.from;
+    checkpoint = cps.length && cps.length === run.sources.length ? cps[0] : meta.checkpoint || run.from;
     next.checkpoint = checkpoint;
     next.lastRunAt = now;
     next.last = { ...record, coverage: covs.map((c) => ({ source: c.source, coverage: c.coverage, gaps: c.gaps.length })) };
-  } else if (!run || run.scope === 'recent') {
-    checkpoint = run ? run.to : str(input.checkpoint) || now;
+  } else if (run ? run.scope === 'recent' : str(input.checkpoint)) {
+    // 不带 run_id 的旧做法只按调用方明确给的时间推进，不再默认推到现在。
+    checkpoint = run ? run.to : str(input.checkpoint);
     if (Number.isNaN(Date.parse(checkpoint)) || Date.parse(checkpoint) > Date.now() + 3600000) checkpoint = now;
     next.checkpoint = checkpoint;
     next.lastRunAt = now;
@@ -1437,7 +1459,11 @@ async function maintenanceEnd(input) {
   }
   statements.push(setMetaStmt('maintenance', next));
   const coverage = (await getMeta('coverage')) || {};
-  if (run && run.scope === 'recent' && (run.firstRun || !coverage.from)) {
+  // 回补报了 coverage 却一个来源都没读到时，不算补过这段。
+  const readSome = !covs.length || covs.some((c) => c.coverage !== 'none');
+  if (run && run.scope !== 'recent' && !readSome) {
+    // 不推进 coverage / covered_from
+  } else if (run && run.scope === 'recent' && (run.firstRun || !coverage.from)) {
     statements.push(setMetaStmt('coverage', { from: coverage.from && coverage.from < run.from ? coverage.from : run.from }));
   } else if (run && run.scope === 'backfill') {
     statements.push(setMetaStmt('coverage', { from: coverage.from && coverage.from < run.from ? coverage.from : run.from }));
@@ -1698,7 +1724,8 @@ async function importSystem(opts) {
         .concat(rec.emails.map((e) => ({ platform: 'email', value: e.value, label: e.label })))
         .concat(rec.phones.map((p) => ({ platform: 'phone', value: p.value, label: p.label })))
         .map((i) => ({ ...i, normalized: normalizeIdentityValue(i.value, i.platform) }))
-        .filter((i) => i.normalized);
+        // 同一张名片里同一个邮箱/电话写了两遍（大小写、格式不同）只算一次，否则撞唯一约束让整批失败
+        .filter((i, k, all) => i.normalized && all.findIndex((x) => x.platform === i.platform && x.normalized === i.normalized) === k);
       let match = null;
       for (const i of ids) {
         const owner = owners.get(`${i.platform}:${i.normalized}`);

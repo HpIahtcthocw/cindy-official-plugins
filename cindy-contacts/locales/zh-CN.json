@@ -175,7 +175,7 @@
       }
     },
     "delete": {
-      "description": "删除一份档案及其身份、事件、分组关系，不可恢复。仅在用户明确要求删除时，传 confirm:true 调用。",
+      "description": "删除一份档案及其身份、事件、分组关系、往来、还没完的事、问答记录和合并快照，不可恢复。仅在用户明确要求删除时，传 confirm:true 调用。",
       "parameters": {
         "/properties/confirm": {
           "description": "用户明确要求删除时传 true"
@@ -197,7 +197,7 @@
       "description": "全库扫描名字相似的疑似重复档案对。用户要求整理或怀疑有重复时用；每一对先 get 双方确认，再问用户是否 merge。"
     },
     "import_macos": {
-      "description": "从 macOS 系统通讯录只读导入，不修改系统通讯录。默认 dry_run 只返回将新建/补全/跳过的数量；用户同意后再传 dry_run:false 执行。邮箱、电话或系统锚点相同的名片并入已有档案，名字相似的新档案进入待确认。首次运行会弹出系统授权；被拒时返回 PERMISSION_DENIED。仅 Mac 可用。",
+      "description": "从 macOS 系统通讯录只读导入，不修改系统通讯录。默认 dry_run 只返回将新建/补全/跳过的数量；用户同意后再传 dry_run:false 执行。邮箱、电话或系统锚点相同的名片并入已有档案，名字相似的新档案进入待确认。首次运行会弹出系统授权；被拒时返回 PERMISSION_DENIED。仅 Mac 可用。导入过一次后，若设置里开着「每天与 macOS 通讯录对账」，整理开始时每天最多自动只读对账一次（只新建和补全，不删除）。",
       "parameters": {
         "/properties/dry_run": {
           "description": "默认 true，只预览"
@@ -222,7 +222,7 @@
       }
     },
     "maintenance": {
-      "description": "按时间段整理通讯录的开始、来源检查与收尾。begin 返回 run_id、时间段、每个来源各自的 from/to 与按时间查询的做法（消息类要群聊和单聊分别找）、上次没读完的 backlog、first_step 与 coverage_rule；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。先按 first_step 用 action \"sources\" 报告来源能不能用；查完、记完后调用 end，带 run_id 和每个来源的 coverage（complete / partial / none，partial 带 gaps），读全的来源才推进检查点。",
+      "description": "按时间段整理通讯录的开始、来源检查与收尾。begin 返回 run_id、时间段、每个来源各自的 from/to 与按时间查询的做法（消息类要群聊和单聊分别找）、上次没读完的 backlog、first_step 与 coverage_rule；scope 为 recent（上次整理到现在，第一次是最近两周）、backfill（所有人往前补）或 contact（只补一个人）。先按 first_step 用 action \"sources\" 报告来源能不能用；查完、记完后调用 end，带 run_id 和每个来源的 coverage（complete / partial / none，partial 带 gaps），读全或部分读到（partial 必须写 gaps）的来源才推进检查点，缺口留到下次先补。",
       "parameters": {
         "/properties/checkpoint": {
           "description": "旧做法：不传 run_id 时，本次已处理到的时间（ISO 8601）"
