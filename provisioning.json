@@ -50,6 +50,9 @@
         "emails": []
       }
     },
+    "tongcheng-chengxin": {
+      "audience": { "emails": [] }
+    },
     "taptap-cli": {
       "audience": {
         "emails": []
@@ -76,6 +79,11 @@
         "emails": []
       },
       "tier": "builtin"
+    },
+    "outlook-mail": {
+      "audience": {
+        "emails": []
+      }
     },
     "opendesign-trial": {
       "audience": {
