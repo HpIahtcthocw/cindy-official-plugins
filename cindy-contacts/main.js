@@ -1249,7 +1249,7 @@ function splitWindow(from, to, days) {
 function automationPrompt(profile) {
   const p = PROFILES[profile] || PROFILES.colleagues;
   return [
-    '整理我的通讯录（cindy-contacts 插件），做法见插件手册「自动维护」一节：',
+    '整理我的通讯录（cindy-contacts 插件）。先读整理手册：ghost_manual({ ghost_id: "cindy-contacts", path: "tidy" })，照它做。',
     '1. 调用 ghost_call({ ghost_id: "cindy-contacts", tool: "maintenance", args: { action: "begin" } })，先按 first_step 检查并报告来源，再按时间段（segments）和来源说明（sources）逐段查找。',
     '2. 每个来源只拉这段时间里的新内容；与我真实往来的人，用 record 记下每条往来（ref 填来源 id，重复的会自动跳过）。',
     '3. 有新往来的人：先 get，再用 save 更新 summary、narrative、latest（一句话说这次的新动静）、facts，并用 open_loops / close_loops 维护还没完的事。值得记的真人没有档案就新建；明显是同一个人的两份档案直接 merge 并写 reason。',
@@ -1265,7 +1265,7 @@ async function requestAutomation() {
     throw fail('UNSUPPORTED', '当前 Cindy 版本不支持由插件请求新建自动化');
   }
   const r = await cindy.agent.requestSchedule({
-    name: '整理通讯录',
+    name: (await taskNames()).schedule,
     prompt: automationPrompt(settings.profile),
     intervalMs: p.intervalHours * 3600 * 1000,
   });
@@ -1357,7 +1357,7 @@ async function maintenanceBegin(input) {
       '先逐个确认 sources 里的来源能不能用、用哪个办法读（按 channel_rule 的顺序试：插件是否已安装并连接、命令行工具是否在、本机数据能否打开；Cindy 对话看 cindy_helper 历史工具是否可用），' +
       '再调用 maintenance，action 为 "sources"，sources_status 写每个来源的 status：ok / missing（没装）/ unauthorized（没连接或没授权）/ unavailable（这个任务里用不了）/ error，note 写一句用的办法或读不到的原因。',
     channel_rule: CHANNEL_RULE,
-    manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "usage" }) 的「自动维护」一节',
+    manual: 'ghost_manual({ ghost_id: "cindy-contacts", path: "tidy" })',
   };
 }
 
@@ -1851,6 +1851,30 @@ async function lastReply(taskId, since) {
   return best ? best.text.trim() : '';
 }
 
+/* 宿主语言：只用于侧栏任务标题和自动化名称。不支持或取不到时按英文。 */
+const TASK_NAMES = {
+  'zh-CN': { app: '通讯录', tidy: '整理', schedule: '整理通讯录' },
+  en: { app: 'Contacts', tidy: 'Tidy-up', schedule: 'Tidy up contacts' },
+  ja: { app: '連絡先', tidy: '整理', schedule: '連絡先を整理' },
+  ko: { app: '연락처', tidy: '정리', schedule: '연락처 정리' },
+};
+let localePromise = null;
+function taskNames() {
+  if (!localePromise) {
+    localePromise = (async () => {
+      try {
+        if (typeof cindy.request !== 'function') return 'en';
+        const r = await cindy.request({ kind: 'app-context' });
+        const l = r && r.ok && r.context && r.context.locale;
+        return TASK_NAMES[l] ? l : 'en';
+      } catch (_) {
+        return 'en';
+      }
+    })();
+  }
+  return localePromise.then((l) => TASK_NAMES[l]);
+}
+
 /** 每个人一个固定任务（全局整理共用一个）；再问都发到同一个任务里。 */
 async function taskFor(key, title, fresh) {
   const saved = fresh ? null : await getMeta(`task:${key}`);
@@ -1994,7 +2018,7 @@ async function ask(input) {
   if (!text) throw fail('INVALID_PARAMS', 'text is required');
   const contactId = str(input.contactId);
   if (!contactId) {
-    return sendToTask('general', '通讯录', `${text}\n\n请使用 ${CHANNEL} 插件的工具（ghost_call，ghost_id 为 ${CHANNEL}）查询和修改通讯录。`, { purpose: 'general' });
+    return sendToTask('general', (await taskNames()).app, `${text}\n\n请使用 ${CHANNEL} 插件的工具（ghost_call，ghost_id 为 ${CHANNEL}）查询和修改通讯录。`, { purpose: 'general' });
   }
   const d = await getContact(contactId, { interactionLimit: 60, eventLimit: 30 });
   const wantsDraft = DRAFT_RE.test(text);
@@ -2018,7 +2042,7 @@ async function ask(input) {
       ? '写邮件：用已安装的邮件插件只创建草稿，不要发送。回复已有往来时接在原邮件串里，并先确认这串往来在哪个邮箱账号里、用同一个账号。最终回复只写：草稿所在账号、收件人、主题和正文全文。'
       : '需要时去邮件、飞书、日历里查；查到的新往来用 record 记进档案，必要时用 save 更新 summary、narrative、latest 和还没完的事。最终回复简短，第一句给结论。',
   ].join('\n');
-  const entry = await sendToTask(`c:${d.id}`, `通讯录 · ${d.name}`, prompt, { purpose: wantsDraft ? 'draft' : 'ask', contactId: d.id, question: text });
+  const entry = await sendToTask(`c:${d.id}`, `${(await taskNames()).app} · ${d.name}`, prompt, { purpose: wantsDraft ? 'draft' : 'ask', contactId: d.id, question: text });
   return { ...entry, kind: 'task' };
 }
 
@@ -2031,22 +2055,25 @@ async function tidy(input) {
     const c = await requireContact(input.contactId);
     const text = [
       `回补通讯录里「${c.display_name}」更早的往来。`,
+      `先读整理手册：ghost_manual({ ghost_id: "${CHANNEL}", path: "tidy" })，照它做。`,
       `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "contact", contact_id: "${c.id}", months: ${months} } })。`,
       '2. 按返回的时间段和来源说明，只用这个人的身份和名字去查；查到的往来用 record 记下（contact_id 用上面的 id）。',
       '3. 用 save 重写这个人的 summary、narrative、facts、latest，并整理还没完的事。',
       '4. 调用 maintenance，action 为 "end"，带上 run_id。最终回复一句话说补到了哪天、多了几条往来。',
     ].join('\n');
-    return sendToTask(`c:${c.id}`, `通讯录 · ${c.display_name}`, text, { purpose: 'backfill', contactId: c.id, question: `往前补 ${months} 个月` });
+    return sendToTask(`c:${c.id}`, `${(await taskNames()).app} · ${c.display_name}`, text, { purpose: 'backfill', contactId: c.id, question: `往前补 ${months} 个月` });
   }
   const text = [
     scope === 'recent' ? '整理我的通讯录：把最近的往来整理进去。' : `回补我的通讯录：往前补 ${months} 个月的往来。`,
+    `先读整理手册：ghost_manual({ ghost_id: "${CHANNEL}", path: "tidy" })，照它做；这个任务专门用来维护我的通讯录，我在这里追问时按手册「用户在这个任务里追问时」一节回答。`,
     `1. 调用 ghost_call({ ghost_id: "${CHANNEL}", tool: "maintenance", args: { action: "begin", scope: "${scope}"${scope === 'backfill' ? `, months: ${months}` : ''} } })，先按返回的 first_step 检查并报告来源。`,
     '2. 按返回的时间段（segments，新的在前）和来源说明逐段查找；与我真实往来的人，用 record 记下每条往来。',
     '3. 有新往来的人：get 之后用 save 更新 summary、narrative、latest、facts 和还没完的事；值得记的真人没有档案就新建，明显重复的直接 merge 并写 reason。先写来往最多的人。',
     '4. 最后调用 maintenance，action 为 "end"，带上 run_id、数量和 coverage（每个来源读全了没有、哪里没读完）。',
     '最终回复只写两行：第一行「整理了 N 个人」（或为什么没整理成）；第二行写哪些来源没读到、为什么，都读到了就不写。',
   ].join('\n');
-  return sendToTask('maintain', '通讯录 · 整理', text, { purpose: scope });
+  const n = await taskNames();
+  return sendToTask('maintain', `${n.app} · ${n.tidy}`, text, { purpose: scope });
 }
 
 /* ───────────── 广播与主视图请求 ───────────── */

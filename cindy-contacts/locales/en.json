@@ -1,6 +1,6 @@
 {
   "name": "Contacts",
-  "description": "People files on this computer: AI reads your mail, calendar, Feishu and Cindy chats and writes up the people you deal with: who they are, what is still open, every exchange. Starts with the last two weeks; go further back any time. Imports old contacts and macOS Contacts. Data stays local.",
+  "description": "AI keeps track of everyone you deal with. It reads your mail, calendar and chats and writes up each person: who they are, where you left off and what is still open. Starts with the last two weeks; go back further any time. Imports macOS Contacts and old Smart Contacts. Data stays on this computer.",
   "whenToUse": "An unknown email, phone or Feishu/Slack/GitHub account; contacting, emailing or @-mentioning someone; preparing a meeting or reply and needing background or where things were left; news about a colleague, friend or client; tidying up, backfilling, deduplicating or importing contacts.",
   "tools": {
     "find": {

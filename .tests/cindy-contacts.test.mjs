@@ -474,6 +474,7 @@ test('按时间段整理：第一次只看最近两周；之后从上次整理�
     assert.deepEqual(b1.sources.map((x) => x.source), ['mail', 'calendar', 'im', 'cindy']);
     assert.match(b1.first_step, /sources/);
     assert.match(b1.channel_rule, /钥匙串/);
+    assert.match(b1.manual, /path: "tidy"/);
     assert.match(b1.channel_rule, /不要尝试解密/);
     // 先报告来源能不能用，页面据此告诉用户哪些没连
     const rs = ok(
@@ -698,6 +699,8 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.equal(q2.kind, 'task');
     assert.equal(a.tasks.created.length, 1);
     assert.match(a.tasks.sent[0].text, /只创建草稿/);
+    // 宿主没给语言时任务标题按英文回退
+    assert.match(a.tasks.created[0].title, /^Contacts · /);
     // 新任务先请宿主切到「自动审查」，只问一次
     assert.deepEqual(a.tasks.access, [{ taskId: 'task-1', mode: 'auto' }]);
     // 结果读回页面：任务结束后广播回复，并记进这个人的问答
@@ -713,6 +716,7 @@ test('人物页提问：只问这个人的事当场回答，写邮件和回补�
     assert.equal(a.tasks.created.length, 1);
     assert.equal(a.tasks.sent.length, 2);
     assert.match(a.tasks.sent[1].text, /scope: "contact"/);
+    assert.match(a.tasks.sent[1].text, /path: "tidy"/);
     assert.equal(a.tasks.access.length, 1, 'reused task is not asked again');
     assert.equal((await a.view('state')).result.autoAccess.granted, true);
 
