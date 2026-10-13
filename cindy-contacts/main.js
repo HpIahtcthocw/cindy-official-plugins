@@ -970,8 +970,8 @@ async function mergeContacts(input) {
     // 目标原有的分组：拆开时撤回只因这次合并加进来的分组
     targetGroupIds: (await q('SELECT group_id FROM contact_group_members WHERE contact_id = ?', [dst.id])).map((r) => r.group_id),
     // 两边都有的同一来源往来，合并时会去掉来源这条；存下全文，拆开时还回去
-    droppedInteractions: await q(
-      'SELECT * FROM contact_interactions WHERE contact_id = ? AND ref IN (SELECT ref FROM contact_interactions WHERE contact_id = ?) LIMIT 200',
+    droppedInteractions: await qAll(
+      'SELECT * FROM contact_interactions WHERE contact_id = ? AND ref IN (SELECT ref FROM contact_interactions WHERE contact_id = ?) ORDER BY id',
       [src.id, dst.id],
     ),
     relations: (await q('SELECT * FROM contact_relations WHERE from_id = ? OR to_id = ? LIMIT 100', [src.id, src.id])),
@@ -1033,6 +1033,15 @@ async function undoMerge(mergeId) {
   const keptAliases = parseAliases(dst.aliases).filter((a) => !added.has(a.toLowerCase()));
   const untouched = dst.updated_at === m.at;
   const t = snap.target;
+  // 目标名下还有别的合并没拆开：那些合并带来的分组仍要保留
+  const keepGroups = new Set(Array.isArray(snap.targetGroupIds) ? snap.targetGroupIds : []);
+  for (const o of await q("SELECT snapshot FROM contact_merges WHERE target_id = ? AND id <> ? AND (undone_at IS NULL OR undone_at = '')", [dst.id, m.id])) {
+    try {
+      for (const g of JSON.parse(o.snapshot).groupIds || []) keepGroups.add(g);
+    } catch (_) {
+      /* 旧快照读不出就跳过 */
+    }
+  }
   const statements = [
     {
       sql: `INSERT INTO contacts (id, kind, display_name, aliases, summary, narrative, agent_notes, status, source, created_at, updated_at, facts, latest, latest_at, covered_from)
@@ -1053,7 +1062,7 @@ async function undoMerge(mergeId) {
     ...(Array.isArray(snap.targetGroupIds)
       ? [{
           sql: 'DELETE FROM contact_group_members WHERE contact_id = ? AND group_id IN (SELECT value FROM json_each(?)) AND group_id NOT IN (SELECT value FROM json_each(?))',
-          params: [dst.id, list(snap.groupIds), list(snap.targetGroupIds)],
+          params: [dst.id, list(snap.groupIds), list([...keepGroups])],
         }]
       : []),
     untouched
@@ -1063,11 +1072,16 @@ async function undoMerge(mergeId) {
         }
       : { sql: 'UPDATE contacts SET aliases = ?, updated_at = ? WHERE id = ?', params: [JSON.stringify(keptAliases), at, dst.id] },
   ];
-  for (const r of Array.isArray(snap.droppedInteractions) ? snap.droppedInteractions : []) {
+  if (Array.isArray(snap.droppedInteractions) && snap.droppedInteractions.length) {
+    // 一条语句还原全部，单批语句数不随往来数量增长
     statements.push({
       sql: `INSERT OR IGNORE INTO contact_interactions (id, contact_id, occurred_at, channel, title, summary, quote, link, ref, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      params: [r.id, src.id, r.occurred_at, r.channel, r.title || '', r.summary || '', r.quote || '', r.link || '', r.ref, r.created_at || at],
+            SELECT json_extract(value, '$.id'), ?, json_extract(value, '$.occurred_at'), json_extract(value, '$.channel'),
+                   coalesce(json_extract(value, '$.title'), ''), coalesce(json_extract(value, '$.summary'), ''),
+                   coalesce(json_extract(value, '$.quote'), ''), coalesce(json_extract(value, '$.link'), ''),
+                   json_extract(value, '$.ref'), coalesce(json_extract(value, '$.created_at'), ?)
+            FROM json_each(?)`,
+      params: [src.id, at, JSON.stringify(snap.droppedInteractions)],
     });
   }
   for (const r of (snap.relations || []).slice(0, 80)) {

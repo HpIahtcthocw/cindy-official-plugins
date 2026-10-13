@@ -945,3 +945,26 @@ test('包含命中不冒充精确命中；合并链上的快照随最终档案�
     a.close();
   }
 });
+
+test('拆开合并：共同往来很多也能一次拆开；别的合并仍需要的分组不撤回', async () => {
+  const dir = tmp();
+  const a = boot({ libDir: dir });
+  try {
+    const x = ok(await a.call('save', { name: '多甲', identities: [{ platform: 'email', value: 'many-a@example.test' }], groups: ['客户'] }));
+    const y = ok(await a.call('save', { name: '多乙', identities: [{ platform: 'email', value: 'many-b@example.test' }] }));
+    const z = ok(await a.call('save', { name: '多丙', identities: [{ platform: 'email', value: 'many-c@example.test' }], groups: ['客户'] }));
+    for (const id of [x.id, y.id]) {
+      for (let k = 0; k < 2; k++) {
+        const items = Array.from({ length: 110 }, (_, i) => ({ contact_id: id, occurred_at: '2026-10-11T15:29:00Z', channel: 'calendar', title: '会', ref: `ev-${k * 110 + i}` }));
+        ok(await a.call('record', { items }));
+      }
+    }
+    const m1 = ok(await a.call('merge', { target_id: y.id, source_id: x.id, reason: '测试' }));
+    ok(await a.call('merge', { target_id: y.id, source_id: z.id, reason: '测试' }));
+    ok(await a.view('unmerge', { id: m1.mergeId }));
+    assert.equal(ok(await a.call('get', { id: x.id })).interactionTotal, 220);
+    assert.deepEqual(ok(await a.call('get', { id: y.id })).groups.map((g) => g.name), ['客户'], 'still needed by the other merge');
+  } finally {
+    a.close();
+  }
+});
