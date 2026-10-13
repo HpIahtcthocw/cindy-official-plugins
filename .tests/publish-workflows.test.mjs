@@ -120,9 +120,80 @@ test('device attestation accepts current and legacy checked labels, but not unch
     ['', 1],
   ]) {
     writeFileSync(event, JSON.stringify({ pull_request: { body } }));
-    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, GITHUB_EVENT_PATH: event } });
+    const env = { ...process.env, GITHUB_EVENT_PATH: event };
+    delete env.AUTHOR_ASSOCIATION;
+    delete env.AUTHOR_LOGIN;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env });
     assert.equal(result.status, expected, result.stderr || result.stdout);
   }
+});
+
+test('device attestation is skipped for repository maintainers and zqchris', (t) => {
+  const step = prWorkflow.match(/      - name: Require Cindy device verification attestation\n([\s\S]*?)(?=\n      - name:|$)/)?.[1];
+  assert.ok(step, 'workflow must contain the device attestation gate');
+  assert.match(step, /github\.event\.pull_request\.author_association/);
+  assert.match(step, /github\.event\.pull_request\.user\.login/);
+  const source = step.split('        run: |\n')[1];
+  assert.ok(source, 'attestation gate must contain an executable shell script');
+  const script = source.split('\n').map((line) => line.replace(/^          /, '')).join('\n');
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'cindy-attestation-maintainer-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const event = path.join(fixture, 'event.json');
+  const unchecked = '- [ ] **Cindy device verification / Cindy 实机验证**';
+  const run = (payload, extraEnv = {}) => {
+    writeFileSync(event, JSON.stringify({ pull_request: payload }));
+    const env = { ...process.env, GITHUB_EVENT_PATH: event, ...extraEnv };
+    if (!Object.hasOwn(extraEnv, 'AUTHOR_ASSOCIATION')) delete env.AUTHOR_ASSOCIATION;
+    if (!Object.hasOwn(extraEnv, 'AUTHOR_LOGIN')) delete env.AUTHOR_LOGIN;
+    return spawnSync('bash', ['-c', script], { encoding: 'utf8', env });
+  };
+  const output = (result) => result.stderr || result.stdout;
+
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    const result = run({
+      body: unchecked,
+      author_association: association,
+      user: { login: 'someone' },
+    });
+    assert.equal(result.status, 0, output(result));
+    assert.match(`${result.stdout}${result.stderr}`, /Skipping Cindy device verification checkbox/);
+  }
+
+  const byLogin = run({
+    body: unchecked,
+    author_association: 'CONTRIBUTOR',
+    user: { login: 'zqchris' },
+  });
+  assert.equal(byLogin.status, 0, output(byLogin));
+  assert.match(`${byLogin.stdout}${byLogin.stderr}`, /Skipping Cindy device verification checkbox/);
+
+  const byLoginCase = run({
+    body: unchecked,
+    author_association: 'NONE',
+    user: { login: 'ZqChris' },
+  });
+  assert.equal(byLoginCase.status, 0, output(byLoginCase));
+
+  for (const association of ['CONTRIBUTOR', 'FIRST_TIMER', 'FIRST_TIME_CONTRIBUTOR', 'NONE', '']) {
+    const result = run({
+      body: unchecked,
+      author_association: association,
+      user: { login: 'external-user' },
+    });
+    assert.equal(result.status, 1, `expected failure for ${association}: ${output(result)}`);
+  }
+
+  const envAssociation = run(
+    { body: unchecked, author_association: 'CONTRIBUTOR', user: { login: 'external-user' } },
+    { AUTHOR_ASSOCIATION: 'OWNER' },
+  );
+  assert.equal(envAssociation.status, 0, output(envAssociation));
+
+  const envLogin = run(
+    { body: unchecked, author_association: 'CONTRIBUTOR', user: { login: 'external-user' } },
+    { AUTHOR_LOGIN: 'zqchris' },
+  );
+  assert.equal(envLogin.status, 0, output(envLogin));
 });
 
 test('PR verification artifacts are scoped, pinned and uploaded before attestation', () => {

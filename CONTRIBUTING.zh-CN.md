@@ -108,8 +108,10 @@ cd 163-mail && npm ci && npm run build
 
 每个非草稿 PR 都会由 `Verify pull request` workflow 验证：跑 Server / Desktop 交付
 契约、localization 与 provisioning 门禁、跑每个被改动插件的 `*.test.mjs` 测试（先装
-该插件的依赖），并用与发布流水线完全相同的打包步骤做 dry-run。只要 PR 改动了插件
-包，CI 还会要求 PR Body 勾选 Cindy 实机验证项。真正上传仍只在合入 `main` 后发生。
+该插件的依赖），并用与发布流水线完全相同的打包步骤做 dry-run。外部贡献者只要改动
+了插件包，CI 还会要求 PR Body 勾选 Cindy 实机验证项。仓库维护者（`author_association`
+为 OWNER、MEMBER 或 COLLABORATOR，或登录名为 `zqchris`）会跳过该勾选门禁，CI 以
+notice 记录后直接通过。真正上传仍只在合入 `main` 后发生。
 
 5. Review 完整 diff，确认没有凭证、无关生成文件或误提交的 `node_modules`。
 6. 等待 review；不要直接向 `main` 推送。合并到 `main` 后区域 Workflow 会把改动包提交

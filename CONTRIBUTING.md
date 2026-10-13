@@ -142,9 +142,11 @@ Every non-draft pull request is verified by the `Verify pull request`
 workflow: it runs the Server/Desktop delivery contract, localization and
 provisioning gates, runs the `*.test.mjs` tests of every changed plugin
 (installing that plugin's dependencies first), and dry-runs the exact packaging
-step the publish pipeline uses. For every changed plugin package, CI also
-requires the Cindy device verification checkbox in the pull request body.
-The actual upload still happens only after merge to `main`.
+step the publish pipeline uses. For every changed plugin package from an
+external contributor, CI also requires the Cindy device verification checkbox in
+the pull request body. Repository maintainers (`author_association` OWNER,
+MEMBER, or COLLABORATOR, or login `zqchris`) skip that checkbox gate; CI passes
+with a notice. The actual upload still happens only after merge to `main`.
 
 5. Review the complete diff and confirm it contains no credentials, unrelated
    generated files, or an accidentally committed `node_modules`.

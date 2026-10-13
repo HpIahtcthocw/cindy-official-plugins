@@ -186,8 +186,25 @@ jobs:
 
       - name: Require Cindy device verification attestation
         if: ${{ steps.changes.outputs.plugins != '[]' }}
+        env:
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+          association="${AUTHOR_ASSOCIATION:-$(jq -r '.pull_request.author_association // empty' "${GITHUB_EVENT_PATH}")}"
+          login="${AUTHOR_LOGIN:-$(jq -r '.pull_request.user.login // empty' "${GITHUB_EVENT_PATH}")}"
+          skip=0
+          case "${association}" in
+            OWNER|MEMBER|COLLABORATOR) skip=1 ;;
+          esac
+          # GitHub logins are case-insensitive; zqchris is a known maintainer.
+          if [[ "${login,,}" == "zqchris" ]]; then
+            skip=1
+          fi
+          if [[ "${skip}" -eq 1 ]]; then
+            echo "::notice::Skipping Cindy device verification checkbox for maintainer ${login} (author_association=${association})."
+            exit 0
+          fi
           pr_body="$(jq -r '.pull_request.body // ""' "${GITHUB_EVENT_PATH}")"
           # Keep accepting the stricter stable-only attestation on existing PRs.
           if ! grep -Eq '^- \[[xX]\] \*\*(Cindy device verification / Cindy 实机验证|Production Cindy verification / 生产版 Cindy 验证)\*\*' \
