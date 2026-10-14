@@ -1007,6 +1007,9 @@ test('人物页对话：记得上文；删改档案交给任务直接改；快�
     // 「对不对」是提问，不当成要改
     a.tasks.quick = { ok: true, text: '对。' };
     assert.equal((await a.view('ask', { contactId: p.id, text: '她是做设计的，对不对' })).result.kind, 'answer');
+    // 带「不对」「删」的问句也不直接交给会改档案的任务
+    assert.equal((await a.view('ask', { contactId: p.id, text: '她这样做不对吗？' })).result.kind, 'answer');
+    assert.equal((await a.view('ask', { contactId: p.id, text: '那条待办删了吗' })).result.kind, 'answer');
   } finally {
     a.close();
   }

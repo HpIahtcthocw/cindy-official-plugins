@@ -2142,7 +2142,9 @@ async function ask(input) {
   const d = await getContact(contactId, { interactionLimit: 60, eventLimit: 30 });
   const wantsDraft = DRAFT_RE.test(text);
   const talk = await recentTalk(d.id);
-  const useTask = input.mode === 'task' || wantsDraft || EDIT_RE.test(text) || ACTION_RE.test(text);
+  // 问句（「她这样做不对吗？」）不按关键词直接交给会改档案的任务；快速通道带着上文，真要改时会转交。
+  const isQuestion = /[?？]\s*$|[吗嘛呢]\s*$/.test(text);
+  const useTask = input.mode === 'task' || wantsDraft || (EDIT_RE.test(text) && !isQuestion) || ACTION_RE.test(text);
   if (!useTask) {
     try {
       const answer = await quickAsk(d, text, talk);
