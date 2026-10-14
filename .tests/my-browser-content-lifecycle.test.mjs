@@ -6,9 +6,14 @@ const source=await fs.readFile(new URL('../my-browser/extension/content.js',impo
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(send=async()=>({enabled:false})){
   const timers=new Map(),sent=[],listeners=new Set();let sequence=0;
+  class Node extends EventTarget {
+    style={setProperty(){}};dataset={};textContent='';
+    append(){} setAttribute(){} remove(){} attachShadow(){return new Node();}
+  }
   const document=new EventTarget();document.querySelector=()=>null;document.title='Fixture';
+  document.createElement=document.createElementNS=()=>new Node();document.documentElement=new Node();
   const chrome={runtime:{id:'fixture',getURL:p=>'chrome-extension://fixture/'+p,sendMessage:m=>{sent.push(m);return send(m);},onMessage:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}},storage:{local:{get:async()=>({})}}};
-  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,CindyLearning:{uuid:()=> 'fixture-request'},CindyUI:{copy:()=>({})},speechSynthesis:{cancel(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
+  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,getComputedStyle:()=>({backgroundColor:'rgb(255,255,255)'}),CindyLearning:{uuid:()=> 'fixture-request'},CindyUI:{copy:()=>({})},speechSynthesis:{cancel(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
   vm.runInNewContext(source,context);
   return {chrome,context,timers,sent,listeners};
 }

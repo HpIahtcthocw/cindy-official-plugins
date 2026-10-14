@@ -20,7 +20,7 @@ async function fixture(t,options = {}) {
   const s=await b.request('status'); const url='http://127.0.0.1:'+s.port;
   let session;
   const clientId=crypto.randomUUID();
-  const version=require('../my-browser/extension/manifest.json').version;
+  const version='0.4.13'; // Stable signed wire contract, independent of extension releases.
   const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
   const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
   const publicJwk={kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,ext:false};

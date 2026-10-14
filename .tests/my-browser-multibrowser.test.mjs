@@ -5,7 +5,7 @@ import {webcrypto} from 'node:crypto';
 const require=createRequire(import.meta.url);
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
 const {createInstallation}=require('../my-browser/node/installation.cjs');
-const version=require('../my-browser/extension/manifest.json').version;
+const version='0.4.13'; // Stable signed wire contract, independent of extension releases.
 async function fixture(t) {
   const bridge=createBridge({ports:[0],connectWait:0,pollTimeout:10,jobTimeout:500});t.after(()=>bridge.close());
   const {port}=await bridge.request('status');

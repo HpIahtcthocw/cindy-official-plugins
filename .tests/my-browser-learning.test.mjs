@@ -8,7 +8,7 @@ import {createLearningService} from '../my-browser/learning-service.js';
 import {createSubtitleCache} from '../my-browser/subtitle-cache.js';
 const require=createRequire(import.meta.url),core=require('../my-browser/extension/learning-core.js');
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
-const version=require('../my-browser/extension/manifest.json').version;
+const version='0.4.13'; // Stable signed wire contract, independent of extension releases.
 async function credential(){
   const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
   const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
@@ -123,7 +123,7 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
 for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
- const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);assert.deepEqual(health.capabilities,[]);
+ const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,require('../my-browser/extension/manifest.json').version);assert.ok(health.session);assert.deepEqual(health.capabilities,[]);
  const status=await bridge.request('status');assert.equal(status.extension_connected,true);assert.equal(status.clients[0].id,id);
 });
 
@@ -310,4 +310,12 @@ test('bridge keeps a slow prefetched subtitle request active for the shared requ
    assert.equal((await bridge.request('learningActive',{id})).active,false);
    assert.equal((await bridge.request('learningResult',{id,result:{ok:true}})).ok,false);
  }finally{Date.now=realNow;}
+});
+
+test('document errors show a bounded reason without echoing arbitrary exception data',()=>{
+  const context={};vm.runInNewContext(fs.readFileSync(new URL('../my-browser/extension/ui.js',import.meta.url),'utf8'),context);
+  for(const locale of ['en','zh-CN']){
+    assert.match(context.CindyUI.error('ADDRESS_UNVERIFIED',locale,'DOCUMENT_UNAVAILABLE'),/DOCUMENT_UNAVAILABLE/);
+    assert.doesNotMatch(context.CindyUI.error('ADDRESS_UNVERIFIED',locale,'token=secret'),/token=secret/);
+  }
 });

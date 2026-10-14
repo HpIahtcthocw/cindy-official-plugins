@@ -9,6 +9,8 @@ const manifest = require('../extension/manifest.json');
 const distribution = require('../distribution.json');
 const EXT_ID = crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c => String.fromCharCode(97+parseInt(c,16)));
 const PROTOCOL = 3;
+// Keep in sync with background.js; package releases do not change authentication.
+const WIRE_VERSION = '0.4.13';
 const failure = (error,message,execution = 'not_executed') => ({ok:false,error,message,execution});
 function createBridge(options = {}) {
   let policy = P.defaults(), pins = [];
@@ -17,7 +19,7 @@ function createBridge(options = {}) {
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map(), learningChallenges = new Map();
-  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(version) || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === WIRE_VERSION || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(version) || /^0\.3\.\d+$/.test(version);
   const live = c => Date.now()-c.seen < 35000;
   // An isolated embedding/test can pin its own extension identity; the stdio runtime exposes no such override.
   const primaryId = options.extensionId || EXT_ID;
@@ -25,7 +27,7 @@ function createBridge(options = {}) {
   const sameIdentity = (p,c) => p && p.id === c.id && p.origin === c.origin && p.extensionId === c.extensionId;
   const pairedCredential = c => pins.some(p => sameIdentity(p,c) && !!c.publicKey && p.publicKey === c.publicKey);
   const approved = c => (c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId)) || pins.some(p => sameIdentity(p,c));
-  const sessionReady = c => c.trusted && (c.version !== manifest.version || (!!c.publicKey && c.authenticated && pairedCredential(c)));
+  const sessionReady = c => c.trusted && (c.version !== WIRE_VERSION || (!!c.publicKey && c.authenticated && pairedCredential(c)));
   const connected = () => [...clients.values()].filter(c => sessionReady(c) && live(c) && compatible(c.version));
   const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
   const normalizePublicKey = value => {
@@ -169,10 +171,10 @@ function createBridge(options = {}) {
       const challenge=publicKey?{value:crypto.randomBytes(32).toString('base64url'),expires:Date.now()+10000,publicKey}:null;
       client.challenge=challenge;
       client.trusted = approved(client); clients.set(id,client);
-      const authRequired=client.version===manifest.version;
+      const authRequired=client.version===WIRE_VERSION;
       const sessionAllowed=client.trusted&&(!authRequired||(!!client.publicKey&&client.authenticated&&pairedCredential(client)));
       if(sessionAllowed&&!client.session)client.session=crypto.randomUUID();
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:WIRE_VERSION,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
     }
     if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
     client.seen = Date.now();
@@ -258,7 +260,14 @@ function createBridge(options = {}) {
     }
     let result = job.revoked ? jobFailure(job,job.revoked.error,job.revoked.message) : b.result;
     if (!result || typeof result !== 'object' || Array.isArray(result)) result = jobFailure(job,'INVALID_RESULT','Invalid browser result. Verify before retrying.');
-    if (job.action === 'tabs' && !result.error) result = {...result,ok:true,tabs:(Array.isArray(result.tabs) ? result.tabs : []).slice(0,100).map(t => P.check(policy,'text',t.url).ok ? t : {id:t.id,redacted:true})};
+    if (job.action === 'tabs' && !result.error) result = {...result,ok:true,tabs:(Array.isArray(result.tabs) ? result.tabs : []).slice(0,100).map(t => {
+      if(P.check(policy,'text',t.url).ok)return t;
+      const row={id:t.id,redacted:true};
+      if(['loading','complete','unloaded'].includes(t.status))row.status=t.status;
+      if(['ADDRESS_UNVERIFIED','TAB_ACCESS_FAILED'].includes(t.error))row.error=t.error;
+      if(t.error==='ADDRESS_UNVERIFIED' && ['LOCAL_ADDRESS','NAVIGATION_UNOBSERVED','RESPONSE_UNOBSERVED','PEER_ADDRESS_MISSING','PEER_NOT_PUBLIC','DOCUMENT_CHANGED','DOCUMENT_UNAVAILABLE'].includes(t.reason))row.reason=t.reason;
+      return row;
+    })};
     else if (!result.error && result.url && !P.check(policy,job.action,result.url).ok) result = jobFailure(job,'REDIRECT_BLOCKED','No content returned from a blocked destination.');
     if (result.error && !['not_executed','executed','unknown'].includes(result.execution)) result = {...result,execution:jobFailure(job,'','').execution};
     finish(job,result,!!b.result && typeof b.result === 'object' && !Array.isArray(b.result) && b.result.execution !== 'unknown'); return send(res,{ok:true});
