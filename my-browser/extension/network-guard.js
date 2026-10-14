@@ -51,28 +51,29 @@
       readyDocuments.set(d.tabId,d.documentId);remember(readyDocuments);
     });
     chrome.tabs.onRemoved?.addListener(id=>readyDocuments.delete(id));
-    async function destinationAllowed(url) {
+    async function destinationAllowed(url, documentId) {
       // Literal IPs are already classified in assertSupported. Hostnames must
       // resolve to a public address when the browser's DNS can answer. A local
       // proxy's connection-peer IP is not this check: public sites through a
       // system/remote-DNS proxy still resolve publicly, or fail local DNS.
       // Failed/unavailable DNS is the narrow exemption for that proxy case;
       // it never admits a hostname that resolved to a private address.
+      // Cache per document so a later navigation re-resolves after DNS changes.
       const host=new URL(url).hostname.toLowerCase().replace(/\.$/,'');
       if(hostAddress(host))return;
-      if(destinationPublic.has(host)){
-        if(!destinationPublic.get(host))throw unverified('LOCAL_ADDRESS');
+      if(destinationPublic.has(documentId)){
+        if(!destinationPublic.get(documentId))throw unverified('LOCAL_ADDRESS');
         return;
       }
       if(typeof chrome.dns?.resolve!=='function'){
-        destinationPublic.set(host,true);remember(destinationPublic);return;
+        destinationPublic.set(documentId,true);remember(destinationPublic);return;
       }
       let address;
       try{address=(await chrome.dns.resolve(host))?.address;}catch{
-        destinationPublic.set(host,true);remember(destinationPublic);return;
+        destinationPublic.set(documentId,true);remember(destinationPublic);return;
       }
       const ok=typeof address==='string' && publicAddress(address);
-      destinationPublic.set(host,ok);remember(destinationPublic);
+      destinationPublic.set(documentId,ok);remember(destinationPublic);
       if(!ok)throw unverified('LOCAL_ADDRESS');
     }
     async function document(tabId) {
@@ -83,7 +84,7 @@
       let frame;try{frame=await chrome.webNavigation?.getFrame({tabId,frameId:0});}catch{}
       if(!frame?.documentId || !frame.url || frame.errorOccurred)throw unverified('DOCUMENT_UNAVAILABLE');
       assertSupported(frame.url);
-      await destinationAllowed(frame.url);
+      await destinationAllowed(frame.url, frame.documentId);
       return frame.documentId;
     }
     async function isReady(tabId) {

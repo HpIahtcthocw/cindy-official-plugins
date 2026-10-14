@@ -5,7 +5,7 @@
   if(!api?.runtime?.id)return;
   const brandURL=api.runtime.getURL('icons/48.png'),lifecycle=new AbortController();
   globalThis.__cindyReading=true;
-  let disposed=false,navigationTimer;
+  let disposed=false,navigationTimer,openEpoch=0;
   function runtimeReady(){if(disposed)return false;if(!api?.runtime?.id||typeof api.runtime.sendMessage!=='function'){dispose();return false;}return true;}
   async function extensionCall(fn){
     // Defer even synchronous API access so callers can catch invalid contexts.
@@ -71,8 +71,8 @@
   function applyVideoMode(mode){prefs.videoMode=mode;savePreferences({videoMode:mode}).catch(report);if(!needsTranslation())cancel();else if(videoSession){videoSession.paused=false;videoSession.failed=false;translateCues();}videoSession?.playback?.update();videoHandler?.();videoSession?.overlay?.update();}
   function stopPage(){translated=false;observer?.disconnect();observer=null;clearTimeout(translateTimer);}
   function rememberVideo(enabled){if(disposed)return;sendMessage({type:'cindy-video-state',enabled}).catch(()=>{});}
-  function close(){rememberVideo(false);cancel();stopVideo();speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;ensureVideoEntry();}
-  function hidePanel(){host?.style.setProperty('display','none','important');}
+  function close(){rememberVideo(false);cancel();stopVideo();speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;ensureVideoEntry();openEpoch++;}
+  function hidePanel(){host?.style.setProperty('display','none','important');openEpoch++;}
   function makePanel(){
     if(host){host.style.setProperty('display','block','important');host.style.removeProperty('left');host.style.setProperty('right','16px','important');host.style.setProperty('top','16px','important');return;}
     host=el('div');host.setAttribute('data-cindy-panel','');isolateHost(host,{position:'fixed',display:'block','z-index':'2147483646',top:'16px',right:'16px',width:'min(336px,calc(100vw - 32px))','max-height':'calc(100vh - 32px)'});
@@ -117,28 +117,34 @@
     if(!s||!node||node.closest('input,textarea,[contenteditable]')){selected='';selectedContext='';return;}
     const value=s.toString().trim();if(value&&value.length<=20000){selected=value;selectedContext=(node.closest('p,li,article')?.innerText||node.innerText||'').slice(0,4000);lastResult='';}
   }
-  let openTail=Promise.resolve();
+  let setupTail=Promise.resolve();
   function open(action){
-    // Concurrent UI actions share one configure() wait. Run them in order so a
-    // translate-page issued while the panel is still loading config is not
-    // dropped when the first caller rebuilds the host after configure().
-    const run=openTail.then(()=>openNow(action),()=>openNow(action));
-    openTail=run.catch(()=>{});
-    return run;
-  }
-  async function openNow(action){
     if(action==='selection'&&window.getSelection()?.toString().trim())selection();
-    if(action==='settings'&&videoSession){showSettings();videoSession.overlay.openSettings(false);return;}
-    if((action==='video'||action==='open'&&/(^|\.)youtube\.com$/.test(location.hostname))&&videoSession){videoSession.overlay.openSettings();return;}
-    // Opening must acknowledge the click even while Cindy/config is pending.
-    // Render failures too: a denied page must not look like a dead toolbar icon.
+    if(action==='settings'&&videoSession){showSettings();videoSession.overlay.openSettings(false);return Promise.resolve();}
+    if((action==='video'||action==='open'&&/(^|\.)youtube\.com$/.test(location.hostname))&&videoSession){videoSession.overlay.openSettings();return Promise.resolve();}
+    // Queue only configure/panel setup. Model translation must not block restore
+    // or later menu actions. Closing the panel invalidates in-flight setup work.
+    const epoch=openEpoch;
+    const setup=setupTail.then(()=>ensurePanel(epoch),()=>ensurePanel(epoch));
+    setupTail=setup.catch(()=>{});
+    return setup.then(()=>{
+      if(!runtimeReady()||epoch!==openEpoch)return;
+      return finishOpen(action);
+    });
+  }
+  async function ensurePanel(epoch){
+    if(!runtimeReady()||epoch!==openEpoch)return;
     const openingNewPanel=!host;
     makePanel();note(t.working);
     const openingPanel=host;
-    try{await configure();}catch(e){if(!disposed)report(e);return;}
-    if(!runtimeReady()||host!==openingPanel||host.style.getPropertyValue('display')==='none')return;
+    try{await configure();}catch(e){if(!disposed)report(e);throw e;}
+    if(!runtimeReady()||epoch!==openEpoch||host!==openingPanel)return;
     if(openingNewPanel&&!disposed){host?.remove();host=null;}
-    if(!runtimeReady())return;makePanel();
+    if(!runtimeReady()||epoch!==openEpoch)return;
+    makePanel();
+  }
+  async function finishOpen(action){
+    if(host?.style.getPropertyValue('display')==='none')return;
     if(action==='translate-page'){await togglePage();showPageHome();return;}
     if(action==='settings'){showSettings();return;}
     if(action==='video'||(/(^|\.)youtube\.com$/.test(location.hostname)&&action!=='selection')){await showVideo();if(action!=='auto')videoSession?.overlay?.openSettings();return;}
