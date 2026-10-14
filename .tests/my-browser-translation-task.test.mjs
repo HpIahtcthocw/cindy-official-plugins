@@ -36,6 +36,56 @@ test('executes translations in one visible task and reuses it after restart, wit
   assert.ok(f.sends.every(s=>s.taskId==='one'&&s.expectedRevision===3));assert.match(f.sends[0].text,/example.test\/a/);
   assert.equal(f.stats().state.pending,undefined);
 });
+function withPluginDefaults(f){
+  let model='grok',checks=0;
+  f.task.resolvedConfig={model:'astra'};
+  const caps=f.tasks.capabilities;
+  f.tasks.capabilities=async()=>({...await caps(),pluginDefaultModel:true,operations:[...(await caps()).operations,'setModel']});
+  f.tasks.setModel=async req=>{
+    checks++;assert.equal(req.route,'plugin-default');assert.equal(req.taskId,'one');assert.equal(req.expectedRevision,f.task.revision);
+    if(f.task.resolvedConfig.model!==model){f.task.resolvedConfig={model};f.task.revision++;}
+    return {task:structuredClone(f.task)};
+  };
+  const send=f.tasks.send;
+  f.tasks.send=async req=>{assert.equal(req.expectedRevision,f.task.revision);return send(req);};
+  return {select:value=>{model=value;},checks:()=>checks};
+}
+test('checks saved plugin model for first translation and each existing-task request, including restart',async()=>{
+  const f=fixture(),defaults=withPluginDefaults(f),model=f.make();
+  await model({prompt:'first'});
+  assert.equal(f.task.resolvedConfig.model,'grok');assert.equal(defaults.checks(),1);
+  defaults.select('astra');await model({prompt:'second'});
+  assert.equal(f.task.resolvedConfig.model,'astra');
+  defaults.select('grok');await f.make()({prompt:'third'});
+  assert.equal(f.task.resolvedConfig.model,'grok');assert.equal(defaults.checks(),3);
+  await model({prompt:'fourth'});assert.equal(defaults.checks(),4);
+  assert.equal(f.stats().creates,1);assert.deepEqual(f.sends.map(s=>s.expectedRevision),[4,5,6,6]);
+});
+test('model preference failure never silently sends with the old task model',async()=>{
+  const f=fixture();withPluginDefaults(f);
+  f.tasks.setModel=async()=>{throw Object.assign(Error('unavailable'),{code:'ROUTE_UNAVAILABLE'});};
+  await assert.rejects(f.make()({prompt:'x'}),/ROUTE_UNAVAILABLE/);
+  assert.equal(f.sends.length,0);assert.equal(f.stats().state.pending,undefined);
+});
+test('resumes uncertain delivery before syncing new settings for the next passage',async()=>{
+  const f=fixture(),defaults=withPluginDefaults(f);f.failSend();
+  await assert.rejects(f.make()({prompt:'first'}),/HOST_NOT_READY/);
+  defaults.select('astra');
+  await f.make()({prompt:'first'});
+  assert.equal(defaults.checks(),1);assert.equal(f.sends.length,1);assert.equal(f.task.resolvedConfig.model,'grok');
+  await f.make()({prompt:'second'});
+  assert.equal(defaults.checks(),2);assert.equal(f.task.resolvedConfig.model,'astra');assert.equal(f.sends.length,2);
+});
+test('queued translation reads settings when dispatched, not when it joined the queue',async()=>{
+  const f=fixture(),defaults=withPluginDefaults(f),model=f.make();f.auto(false);
+  const first=model({prompt:'first'});
+  while(!f.sends.length)await wait(1);
+  const second=model({prompt:'second'});
+  defaults.select('astra');assert.equal(defaults.checks(),1);
+  f.auto(true);await Promise.all([first,second]);
+  assert.equal(defaults.checks(),2);assert.equal(f.task.resolvedConfig.model,'astra');
+  assert.deepEqual(f.sends.map(s=>s.expectedRevision),[4,5]);assert.deepEqual(f.cancelled,[]);
+});
 test('switching videos cancels the old run; a cancelled queued passage is never sent',async()=>{
   const f=fixture();f.auto(false);const model=f.make();let firstActive=true,queuedActive=true;
   const active=value=>async()=>{if(!value())throw Error('REQUEST_CANCELLED');};
