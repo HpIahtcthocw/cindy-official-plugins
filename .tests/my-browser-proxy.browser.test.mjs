@@ -28,7 +28,7 @@ test('proxy translation renders visible Chinese and restores original text witho
   }});await bridge.request('status');
   const proxy=http.createServer((req,res)=>{
     let url;try{url=new URL(req.url);}catch{res.writeHead(403);return res.end();}
-    if(url.hostname==='reading.test'){
+    if(['reading.test','[2606:4700:4700::1111]'].includes(url.hostname)){
       res.setHeader('content-type','text/html');return res.end('<title>Proxy translation</title><style>body{font:20px/1.8 sans-serif;padding:40px}main{max-width:650px}reading-post{display:block}</style><main><reading-post><p id="original" slot="body">Reading through the configured proxy works.</p></reading-post></main><script>customElements.define("reading-post",class extends HTMLElement{constructor(){super();this.attachShadow({mode:"open"}).innerHTML="<slot name=body></slot>";}});</script>');
     }
     // Prevent test extension discovery from reaching any production bridge.
@@ -38,7 +38,7 @@ test('proxy translation renders visible Chinese and restores original text witho
   });
   proxy.on('connect',(_r,s)=>{s.on('error',()=>{});s.end('HTTP/1.1 403 Forbidden\r\n\r\n');});
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r));t.after(()=>{proxy.closeAllConnections();proxy.close();});
-  context=await chromium.launchPersistentContext(profile,{channel:'chromium',executablePath:process.env.CHROMIUM_PATH,headless:true,args:['--proxy-server=http://127.0.0.1:'+proxy.address().port,'--proxy-bypass-list=<-loopback>','--disable-extensions-except='+extension,'--load-extension='+extension]});
+  context=await chromium.launchPersistentContext(profile,{channel:'chromium',executablePath:process.env.CHROMIUM_PATH,headless:true,env:{...process.env,HOME:profile,CFFIXED_USER_HOME:profile},args:['--proxy-server=http://127.0.0.1:'+proxy.address().port,'--proxy-bypass-list=<-loopback>','--disable-extensions-except='+extension,'--load-extension='+extension]});
   const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
   for(let i=0;i<60;i++){
     const status=await bridge.request('status');if(status.extension_connected)break;
@@ -56,4 +56,12 @@ test('proxy translation renders visible Chinese and restores original text witho
   assert.match(JSON.stringify(dom),/中文译文：Reading through the configured proxy works/);
   if(process.env.CINDY_SCREENSHOTS){await fs.mkdir(process.env.CINDY_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.CINDY_SCREENSHOTS,'proxy-translation.png')});}
   await toggle();assert.equal(await page.locator('#original + span').count(),0);assert.equal(await page.locator('#original').innerText(),'Reading through the configured proxy works.');
+  const ipv6='http://[2606:4700:4700::1111]/';
+  const read=await bridge.request('act',{action:'text',payload:{url:ipv6}});
+  assert.equal(read.ok,true,JSON.stringify(read));assert.match(read.text,/Reading through the configured proxy/);
+  const click=await bridge.request('act',{action:'click',payload:{url:ipv6,selector:'#original'}});
+  assert.equal(click.ok,true,JSON.stringify(click));
+  const denied=await bridge.request('act',{action:'text',payload:{url:'http://[::1]/'}});
+  assert.equal(denied.error,'URL_NOT_ALLOWED');
+
 });

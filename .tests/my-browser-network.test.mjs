@@ -97,3 +97,32 @@ test('readyState recovery ignores a reply from a different document and incomple
   const loading=fixture(frames,{scripting:{executeScript:async({target})=>[{documentId:target.documentIds[0],result:'loading'}]}});
   assert.equal(await loading.guard.isReady(1),false);
 });
+
+test('each access rechecks DNS after public answers, failures and private answers',async()=>{
+  for(const initial of ['8.8.8.8','error']){
+    let address=initial,calls=0;
+    const frames=new Map([[1,{documentId:'old',url:'https://changing.example.test/'}]]);
+    const h=fixture(frames,{dns:{resolve:async()=>{calls++;if(address==='error')throw Error('DNS_FAILED');return {address};}}});
+    assert.equal(await h.guard.document(1),'old');
+    frames.set(1,{documentId:'new',url:'https://changing.example.test/'});address='127.0.0.1';
+    await assert.rejects(h.guard.document(1),{reason:'LOCAL_ADDRESS'});
+    address='8.8.8.8';assert.equal(await h.guard.document(1),'new');
+    address='fc00::1';await assert.rejects(h.guard.document(1),{reason:'LOCAL_ADDRESS'});
+    assert.equal(calls,4);
+  }
+});
+
+test('public IPv6 passes shared read/interaction policy and current-document guard',async()=>{
+  const P=createRequire(import.meta.url)('../my-browser/extension/policy.js');
+  const h=fixture();
+  for(const ip of ['2606:4700:4700::1111','2001:4860:4860::8888']){
+    const url='https://['+ip+']/';h.frames.set(1,{documentId:'v6',url});
+    for(const action of ['text','snapshot','click'])assert.equal(P.check(P.defaults(),action,url).ok,true);
+    assert.equal(await h.guard.document(1),'v6');
+    const policy=P.normalizePolicy({read:{block:['['+ip+']']},interact:{allow:['*'],block:[]}});
+    assert.equal(P.check(policy,'text',url).error,'READ_BLOCKED');
+  }
+  for(const ip of ['::1','fc00::1','fe80::1','::ffff:7f00:1','2001:db8::1','2002::1']){
+    assert.equal(P.check(P.defaults(),'text','http://['+ip+']/').error,'URL_NOT_ALLOWED');
+  }
+});

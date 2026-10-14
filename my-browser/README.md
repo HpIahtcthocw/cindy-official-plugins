@@ -297,6 +297,10 @@ A lost creation acknowledgement reuses the original creation key. Archived, dele
 
 Network verification survives extension service-worker restarts for the same document using browser-session storage. Reloads and other documents still require fresh public-address evidence. Chrome Web Store domains are protected by Chrome itself; the extension reports this restriction directly rather than suggesting a refresh. The Chrome store item ID and published install link are registered in `distribution.json`; the 0.4.13 update supersedes the previously submitted 0.4.12 package.
 
+## 0.4.17 review follow-up (host package 0.4.30)
+
+Panel initialization is shared by waiting clicks, but model requests never block restore or other menu actions. Closing the panel invalidates older waiting clicks; only a new click can reopen it. Public IPv6 literals pass both shared site policy and document checks; private, loopback and reserved addresses remain blocked. Destination DNS is resolved again on each access, so a previous public answer or DNS failure cannot authorize a later private result. Failed/unavailable DNS remains the existing remote-proxy exemption. No DNS result is cached by the extension.
+
 ## 0.4.16 review follow-up (host package 0.4.29)
 
 Panel actions wait in order for config, so a full-page translate issued while the first open is still loading is not dropped. After a service-worker restart, already-interactive documents are asked for `document.readyState` on the current `documentId` instead of waiting 25 seconds. Public IPv6 literals are allowed. Destination DNS, when the browser reports it, must be public; connection-peer IP remains unused so local proxies still work. Failed/unavailable DNS is the narrow exemption for system/remote-DNS proxies and does not admit a hostname that resolved private.

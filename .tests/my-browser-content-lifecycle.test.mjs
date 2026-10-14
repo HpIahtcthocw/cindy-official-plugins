@@ -5,11 +5,12 @@ import fs from 'node:fs/promises';
 const source=await fs.readFile(new URL('../my-browser/extension/content.js',import.meta.url),'utf8');
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(send=async()=>({enabled:false})){
-  const timers=new Map(),sent=[],listeners=new Set();let sequence=0;
+  const timers=new Map(),sent=[],listeners=new Set(),nodes=[];let sequence=0;
   class Node extends EventTarget {
-    constructor(){super();this.style={props:Object.create(null),setProperty(k,v){this.props[k]=v;},getPropertyValue(k){return this.props[k]||'';},removeProperty(k){delete this.props[k];}};}
+    constructor(){super();nodes.push(this);this.handlers={};this.attrs={};this.style={props:Object.create(null),setProperty(k,v){this.props[k]=v;},getPropertyValue(k){return this.props[k]||'';},removeProperty(k){delete this.props[k];}};}
     dataset={};textContent='';
-    append(){} setAttribute(){} remove(){} attachShadow(){return new Node();}
+    addEventListener(name,fn){this.handlers[name]=fn;super.addEventListener(name,fn);}
+    append(){} setAttribute(k,v){this.attrs[k]=v;} remove(){} attachShadow(){return new Node();}
     querySelector(){return {disabled:false};} querySelectorAll(){return [];}
     replaceChildren(){} closest(){return null;} getClientRects(){return [];}
     getBoundingClientRect(){return {top:0,bottom:0,left:0,right:0,width:0,height:0};}
@@ -17,9 +18,9 @@ function fixture(send=async()=>({enabled:false})){
   const document=new EventTarget();document.querySelector=()=>null;document.title='Fixture';
   document.createElement=document.createElementNS=()=>new Node();document.documentElement=new Node();document.body=new Node();
   const chrome={runtime:{id:'fixture',getURL:p=>'chrome-extension://fixture/'+p,sendMessage:m=>{sent.push(m);return send(m);},onMessage:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}},storage:{local:{get:async()=>({})}}};
-  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,getComputedStyle:()=>({backgroundColor:'rgb(255,255,255)'}),CindyLearning:{uuid:()=> 'fixture-request',validTarget:()=>false,languageName:v=>v},CindyUI:{copy:()=>({}),css:'',languagePicker:()=>new Node(),error:()=>'err'},speechSynthesis:{cancel(){}},MutationObserver:class{observe(){} disconnect(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
+  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,getComputedStyle:()=>({backgroundColor:'rgb(255,255,255)'}),CindyLearning:{uuid:()=> 'fixture-request-'+(++sequence),validTarget:()=>false,languageName:v=>v},CindyUI:{copy:()=>({close:"Close"}),css:'',languagePicker:()=>new Node(),error:()=>'err'},speechSynthesis:{cancel(){}},MutationObserver:class{observe(){} disconnect(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
   vm.runInNewContext(source,context);
-  return {chrome,context,timers,sent,listeners};
+  return {chrome,context,timers,sent,listeners,nodes};
 }
 test('a reloaded extension leaves no URL polling or page listeners after runtime disappears',async()=>{
   const f=fixture();await settle();const tick=[...f.timers.values()][0];
@@ -77,4 +78,35 @@ test('translate-page issued while config is pending still runs after configure f
   assert.equal(replies[0][0],'open');assert.equal(replies[1][0],'translate');
   assert.equal(replies[1][1]?.ok,true);
   assert.ok(observed.includes(f.context.document.body),'queued translate-page must start page translation');
+});
+
+test('closing during shared setup discards all waiting clicks but permits a new click',async()=>{
+  let resolveConfig;let observed=0;
+  const config=new Promise(r=>{resolveConfig=r;});
+  const f=fixture(m=>m.request?.op==='config'?config:Promise.resolve({ok:true,enabled:false}));
+  f.context.MutationObserver=class{observe(){observed++;}disconnect(){}};
+  await settle();const listener=[...f.listeners][0],replies=[];
+  listener({type:'cindy-ui',action:'open'},{id:'fixture'},r=>replies.push(r));await settle();
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(r));await settle();
+  const close=f.nodes.find(n=>n.attrs['aria-label']==='Close');
+  close.handlers.click({isTrusted:true});await settle();
+  resolveConfig({ok:true,locale:'en'});await settle();await settle();
+  assert.equal(replies.length,2);assert.equal(observed,0,'dismissed translate never starts');
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(r));
+  await settle();await settle();assert.equal(observed,1,'a new explicit click works');
+});
+
+test('restore and settings complete while the previous model request is pending',async()=>{
+  let resolveModel;const pending=new Promise(r=>{resolveModel=r;});
+  const f=fixture(m=>m.request?.op==='translate'?pending:Promise.resolve({ok:true,enabled:false}));
+  const paragraph={innerText:'Visible paragraph',closest:()=>null,getClientRects:()=>[{}],querySelector:()=>null,getBoundingClientRect:()=>({top:1,bottom:50})};
+  f.context.innerHeight=800;f.context.document.body.querySelectorAll=()=>[paragraph];
+  await settle();const listener=[...f.listeners][0],replies=[];
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['first',r]));await settle();await settle();
+  assert.ok(f.sent.some(m=>m.request?.op==='translate'));assert.equal(replies.length,0);
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['restore',r]));await settle();await settle();
+  assert.equal(replies[0]?.[0],'restore');assert.ok(f.sent.some(m=>m.type==='cindy-cancel'));
+  listener({type:'cindy-ui',action:'settings'},{id:'fixture'},r=>replies.push(['settings',r]));await settle();await settle();
+  assert.equal(replies[1]?.[0],'settings');
+  resolveModel({ok:true,translations:['late']});await settle();assert.equal(replies[2]?.[0],'first');
 });

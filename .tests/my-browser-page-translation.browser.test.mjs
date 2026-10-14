@@ -137,3 +137,48 @@ test('YouTube opens while config is pending and reports denied pages and missing
   if(process.env.CINDY_SCREENSHOTS)
     await page.screenshot({path:path.join(process.env.CINDY_SCREENSHOTS,'youtube-caption-error.png')});
 });
+
+test('pending setup closes permanently and pending model never blocks restore or settings',{
+  skip:!process.env.PLAYWRIGHT_CORE,timeout:30000,
+},async t=>{
+  const {chromium}=require(process.env.PLAYWRIGHT_CORE);
+  const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});t.after(()=>browser.close());
+  const page=await browser.newPage();
+  await page.route('https://reading.test/**',r=>r.fulfill({contentType:'text/html',body:'<main><p>A readable paragraph for pending translation.</p></main>'}));
+  await page.goto('https://reading.test/');
+  await page.evaluate(()=>{
+    const attach=Element.prototype.attachShadow;globalThis.roots=[];
+    Element.prototype.attachShadow=function(opts){const root=attach.call(this,opts);roots.push(root);return root;};
+    globalThis.modelCalls=0;globalThis.cancels=[];globalThis.replies=[];globalThis.pendingConfig=true;
+    globalThis.browser={runtime:{id:'fixture',getURL:()=> 'data:image/png;base64,',
+      onMessage:{addListener(fn){globalThis.command=fn;},removeListener(){}},
+      async sendMessage(m){
+        if(m.type==='cindy-cancel'){cancels.push(m.id);return {ok:true};}
+        if(m.type!=='cindy-learning')return {enabled:false};
+        if(m.request.op==='config')return pendingConfig?new Promise(r=>{globalThis.resolveConfig=r;}):{ok:true,locale:'en'};
+        if(m.request.op==='translate'){modelCalls++;return new Promise(r=>{globalThis.resolveModel=r;});}
+        throw Error('Unexpected request '+m.request.op);
+      }},storage:{local:{async get(){return {cindyReadingPreferences:{webTarget:'zh-CN',autoVideo:false}};}},onChanged:{addListener(){},removeListener(){}}}};
+    globalThis.sendAction=(action,label)=>command({type:'cindy-ui',action},{id:'fixture'},r=>replies.push({label,...r}));
+  });
+  for(const file of ['learning-core.js','subtitle-playback.js','ui.js','reading-ui.js','content.js'])await page.addScriptTag({path:path.join(extension,file)});
+  await page.evaluate(()=>{sendAction('open','open');sendAction('translate-page','discarded');});
+  await page.waitForFunction(()=>typeof resolveConfig==='function');
+  const point=await page.evaluate(()=>{const b=roots.flatMap(r=>[...r.querySelectorAll('button')]).find(b=>b.getAttribute('aria-label')==='Close');const r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+  await page.mouse.click(point.x,point.y);
+  await page.evaluate(()=>{pendingConfig=false;resolveConfig({ok:true,locale:'en'});});
+  await page.waitForFunction(()=>replies.length===2);
+  assert.equal(await page.locator('[data-cindy-panel]').isVisible(),false);
+  assert.equal(await page.evaluate(()=>modelCalls),0);
+  await page.evaluate(()=>sendAction('translate-page','model'));
+  await page.waitForFunction(()=>modelCalls===1);
+  await page.evaluate(()=>{sendAction('translate-page','restore');sendAction('settings','settings');});
+  await page.waitForFunction(()=>replies.some(r=>r.label==='restore')&&replies.some(r=>r.label==='settings'));
+  assert.ok(await page.evaluate(()=>cancels.length>0));
+  assert.equal(await page.evaluate(()=>replies.some(r=>r.label==='model')),false,'model is still pending');
+  await page.evaluate(()=>resolveModel({ok:true,translations:['Late translation must not appear']}));
+  await page.waitForFunction(()=>replies.some(r=>r.label==='model'));
+  assert.equal(await page.locator('[data-cindy-translation]').count(),0);
+  assert.ok(await page.evaluate(()=>roots.some(r=>r.textContent.includes('Model settings'))));
+  if(process.env.CINDY_SCREENSHOTS){await fs.mkdir(process.env.CINDY_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.CINDY_SCREENSHOTS,'pending-model-settings.png')});}
+});

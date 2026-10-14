@@ -43,7 +43,6 @@
   }
   function create(chrome) {
     const readyDocuments=new Map();
-    const destinationPublic=new Map();
     const remember=map=>{if(map.size>1024)map.delete(map.keys().next().value);};
     chrome.webNavigation?.onBeforeNavigate.addListener(d=>{if(d.frameId===0)readyDocuments.delete(d.tabId);});
     chrome.webNavigation?.onDOMContentLoaded?.addListener(d=>{
@@ -60,19 +59,12 @@
       // it never admits a hostname that resolved to a private address.
       const host=new URL(url).hostname.toLowerCase().replace(/\.$/,'');
       if(hostAddress(host))return;
-      if(destinationPublic.has(host)){
-        if(!destinationPublic.get(host))throw unverified('LOCAL_ADDRESS');
-        return;
-      }
-      if(typeof chrome.dns?.resolve!=='function'){
-        destinationPublic.set(host,true);remember(destinationPublic);return;
-      }
+      // Re-resolve for each access. A previous public answer or DNS failure
+      // must never authorize a later document after the hostname changes.
+      if(typeof chrome.dns?.resolve!=='function')return;
       let address;
-      try{address=(await chrome.dns.resolve(host))?.address;}catch{
-        destinationPublic.set(host,true);remember(destinationPublic);return;
-      }
+      try{address=(await chrome.dns.resolve(host))?.address;}catch{return;}
       const ok=typeof address==='string' && publicAddress(address);
-      destinationPublic.set(host,ok);remember(destinationPublic);
       if(!ok)throw unverified('LOCAL_ADDRESS');
     }
     async function document(tabId) {

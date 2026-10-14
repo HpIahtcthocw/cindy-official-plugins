@@ -16,7 +16,7 @@
   }
   const sendMessage=message=>extensionCall(()=>api.runtime.sendMessage(message));
   function dispose(){
-    if(disposed)return;disposed=true;generation++;lifecycle.abort();clearInterval(navigationTimer);
+    if(disposed)return;disposed=true;panelEpoch++;generation++;lifecycle.abort();clearInterval(navigationTimer);
     requests.clear();progressHandlers.clear();stopPage();stopVideo();
     for(const rec of translations.values())rec.host.remove();translations.clear();
     selectionButton?.remove();selectionButton=null;host?.remove();host=null;shadow=null;footer=null;status=null;
@@ -71,8 +71,8 @@
   function applyVideoMode(mode){prefs.videoMode=mode;savePreferences({videoMode:mode}).catch(report);if(!needsTranslation())cancel();else if(videoSession){videoSession.paused=false;videoSession.failed=false;translateCues();}videoSession?.playback?.update();videoHandler?.();videoSession?.overlay?.update();}
   function stopPage(){translated=false;observer?.disconnect();observer=null;clearTimeout(translateTimer);}
   function rememberVideo(enabled){if(disposed)return;sendMessage({type:'cindy-video-state',enabled}).catch(()=>{});}
-  function close(){rememberVideo(false);cancel();stopVideo();speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;ensureVideoEntry();}
-  function hidePanel(){host?.style.setProperty('display','none','important');}
+  function close(){panelEpoch++;rememberVideo(false);cancel();stopVideo();speechSynthesis.cancel();host?.remove();host=null;shadow=null;footer=null;status=null;ensureVideoEntry();}
+  function hidePanel(){panelEpoch++;host?.style.setProperty('display','none','important');}
   function makePanel(){
     if(host){host.style.setProperty('display','block','important');host.style.removeProperty('left');host.style.setProperty('right','16px','important');host.style.setProperty('top','16px','important');return;}
     host=el('div');host.setAttribute('data-cindy-panel','');isolateHost(host,{position:'fixed',display:'block','z-index':'2147483646',top:'16px',right:'16px',width:'min(336px,calc(100vw - 32px))','max-height':'calc(100vh - 32px)'});
@@ -82,7 +82,7 @@
     body=el('main',undefined,'stack');status=el('div','','status');status.setAttribute('role','status');footer=el('footer');cancelButton=button(t.cancel,()=>{if(videoSession){videoSession.paused=true;videoSession.retryButton.hidden=false;}cancel();videoSession?.playback?.update();stopPage();note(t.cancel);},'quiet');footer.append(status,cancelButton);panel.append(header,body,footer);shadow.append(panel);document.documentElement.append(host);updateFooter();
   }
   function clear(mode){if(mode!=='settings'){cancel();stopVideo();}body.onkeydown=null;body.replaceChildren();note('');}
-  function showPageHome(){clear('page');const media=document.querySelector('video,audio');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()));if(media)body.append(button(t.video,()=>showVideo(),'primary full'));body.append(button(translated?t.restore:t.translatePage,async()=>{await togglePage();if(host)showPageHome();},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences({autoSites:{[location.origin]:value?true:undefined}});})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
+  function showPageHome(preserveWork=false){clear(preserveWork?'settings':'page');const media=document.querySelector('video,audio');body.append(el('h2',t.readTitle),el('p',t.readHint,'muted'),field(t.target,languageControl()));if(media)body.append(button(t.video,()=>showVideo(),'primary full'));body.append(button(translated?t.restore:t.translatePage,()=>{const work=togglePage();if(host)showPageHome(true);return work;},'primary full'),el('small',translated?t.restoreHint:t.selectionHint),field(t.autoSite,switchControl(t.autoSite,prefs.autoSites[location.origin]===true,value=>{if(value)prefs.autoSites[location.origin]=true;else delete prefs.autoSites[location.origin];return savePreferences({autoSites:{[location.origin]:value?true:undefined}});})),button(t.modelSettings,showSettings,'text-link'),button(t.textFile,()=>sendMessage({type:'cindy-open-reader'}),'quiet'));}
   function showSettings(){clear('settings');body.append(button(t.back,()=>videoSession?videoSettings():showPageHome(),'quiet'),el('h2',t.settings),field(t.webLanguage,languageControl()));
     body.append(field(t.autoVideo,switchControl(t.autoVideo,prefs.autoVideo,v=>{prefs.autoVideo=v;return savePreferences({autoVideo:v});})),field(t.bufferPause,switchControl(t.bufferPause,prefs.bufferPause,v=>{prefs.bufferPause=v;videoSession?.playback?.update();return savePreferences({bufferPause:v});})));
     const theme=el('select');theme.setAttribute('aria-label',t.appearance);for(const [value,label]of [['light',t.light],['dark',t.dark]]){const o=el('option',label);o.value=value;theme.append(o);}theme.value=prefs.theme||pageTheme();theme.onchange=()=>{prefs.theme=theme.value;shadow.querySelector('.cindy-root').dataset.theme=prefs.theme;videoSession?.overlay?.update();savePreferences({theme:prefs.theme}).catch(report);};body.append(field(t.appearance,theme),el('h2',t.modelSettings),el('p',t.modelHint,'muted'));
@@ -117,29 +117,30 @@
     if(!s||!node||node.closest('input,textarea,[contenteditable]')){selected='';selectedContext='';return;}
     const value=s.toString().trim();if(value&&value.length<=20000){selected=value;selectedContext=(node.closest('p,li,article')?.innerText||node.innerText||'').slice(0,4000);lastResult='';}
   }
-  let openTail=Promise.resolve();
-  function open(action){
-    // Concurrent UI actions share one configure() wait. Run them in order so a
-    // translate-page issued while the panel is still loading config is not
-    // dropped when the first caller rebuilds the host after configure().
-    const run=openTail.then(()=>openNow(action),()=>openNow(action));
-    openTail=run.catch(()=>{});
-    return run;
-  }
-  async function openNow(action){
-    if(action==='selection'&&window.getSelection()?.toString().trim())selection();
-    if(action==='settings'&&videoSession){showSettings();videoSession.overlay.openSettings(false);return;}
-    if((action==='video'||action==='open'&&/(^|\.)youtube\.com$/.test(location.hostname))&&videoSession){videoSession.overlay.openSettings();return;}
-    // Opening must acknowledge the click even while Cindy/config is pending.
-    // Render failures too: a denied page must not look like a dead toolbar icon.
+  let panelSetup=null,panelEpoch=0;
+  function preparePanel(epoch){
+    if(panelSetup?.epoch===epoch)return panelSetup.promise;
     const openingNewPanel=!host;
     makePanel();note(t.working);
     const openingPanel=host;
-    try{await configure();}catch(e){if(!disposed)report(e);return;}
-    if(!runtimeReady()||host!==openingPanel||host.style.getPropertyValue('display')==='none')return;
-    if(openingNewPanel&&!disposed){host?.remove();host=null;}
-    if(!runtimeReady())return;makePanel();
-    if(action==='translate-page'){await togglePage();showPageHome();return;}
+    const setup={epoch};
+    setup.promise=(async()=>{
+      try{await configure();}catch(e){if(!disposed&&epoch===panelEpoch)report(e);return false;}
+      if(!runtimeReady()||epoch!==panelEpoch||host!==openingPanel||host.style.getPropertyValue('display')==='none')return false;
+      if(openingNewPanel){host.remove();host=null;}
+      makePanel();return true;
+    })().finally(()=>{if(panelSetup===setup)panelSetup=null;});
+    panelSetup=setup;return setup.promise;
+  }
+  async function open(action){
+    const epoch=panelEpoch;
+    if(action==='selection'&&window.getSelection()?.toString().trim())selection();
+    if(action==='settings'&&videoSession){showSettings();videoSession.overlay.openSettings(false);return;}
+    if((action==='video'||action==='open'&&/(^|\.)youtube\.com$/.test(location.hostname))&&videoSession){videoSession.overlay.openSettings();return;}
+    // Share only setup, never the model operation. Close invalidates all clicks
+    // already waiting here; a new explicit click gets the new panel epoch.
+    if(!await preparePanel(epoch)||epoch!==panelEpoch||!runtimeReady())return;
+    if(action==='translate-page'){const work=togglePage();showPageHome(true);await work;return;}
     if(action==='settings'){showSettings();return;}
     if(action==='video'||(/(^|\.)youtube\.com$/.test(location.hostname)&&action!=='selection')){await showVideo();if(action!=='auto')videoSession?.overlay?.openSettings();return;}
     if(action==='selection'&&selected){showSelection();await translateSelection();return;}
