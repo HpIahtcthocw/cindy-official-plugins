@@ -2144,7 +2144,8 @@ async function ask(input) {
   const wantsDraft = DRAFT_RE.test(text);
   const talk = await recentTalk(d.id);
   // 问句（「她这样做不对吗？」）不按关键词直接交给会改档案的任务；快速通道带着上文，真要改时会转交。
-  const isQuestion = /[?？吗嘛呢]$/.test(text.replace(/[\s。.!！~～…]+$/, ''));
+  // 句尾问号或语气词，或「删不删」「要不要」「是不是」这类正反问
+  const isQuestion = /[?？吗嘛呢]$/.test(text.replace(/[\s。.!！~～…]+$/, '')) || /(\S)不\1|要不要|是不是|该不该|能不能|需不需要/.test(text);
   const useTask = input.mode === 'task' || wantsDraft || (EDIT_RE.test(text) && !isQuestion) || ACTION_RE.test(text);
   if (!useTask) {
     try {
@@ -2165,7 +2166,7 @@ async function ask(input) {
     ...(talk ? ['', '这句话接着人物页上之前的对话（「对」「帮我删了」这类指的就是上文说的那件事）：', talk] : []),
     '',
     `先用 ghost_call({ ghost_id: "${CHANNEL}", tool: "get", args: { id: "${d.id}" } }) 读这个人的档案和往来。`,
-    '用户要删除、修改或更正档案里的内容时直接改，不要再问确认：还没完的事用 save 的 close_loops 关掉（id 来自 get，detail 写清是用户说没有这回事还是已完成），说错的内容用 save 改写；只有删除整个人才需要用户明确说要删这个人。改完一句话说改了什么。',
+    '只有用户明确要求删除、修改或更正（如「删了」「改成…」「关掉」，或对你上一句确认问题回答「对」）时才直接改，不要再问确认；用户只是在问要不要改、征求意见时，只回答和给建议，不改档案。要改时：还没完的事用 save 的 close_loops 关掉（id 来自 get，detail 写清是用户说没有这回事还是已完成），说错的内容用 save 改写；只有删除整个人才需要用户明确说要删这个人。改完一句话说改了什么。',
     wantsDraft
       ? '写邮件：用已安装的邮件插件只创建草稿，不要发送。回复已有往来时接在原邮件串里，并先确认这串往来在哪个邮箱账号里、用同一个账号。最终回复只写：草稿所在账号、收件人、主题和正文全文。'
       : '需要时去邮件、飞书、日历里查；查到的新往来用 record 记进档案，必要时用 save 更新 summary、narrative、latest 和还没完的事。最终回复简短，第一句给结论。',
