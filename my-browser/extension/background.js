@@ -516,14 +516,15 @@ async function handle(job,policy,target) {
     const tabs = (await chrome.tabs.query({})).filter(t => /^https?:/.test(t.url || '') && (!job.payload.host || (P.check(policy,'text',t.url).ok && P.matches(new URL(t.url).hostname,P.normalizeHost(job.payload.host)))));
     const records=[];let remaining=30000,truncated=false;
     for (const t of tabs) {
-      if (records.length>=(job.payload.limit || 20)) {truncated=true;break;}
       let metadata,diagnostic;
       if(P.check(policy,'text',t.url).ok)try {
         const documentId=await network.document(t.id);
         const out=await chrome.scripting.executeScript({target:{tabId:t.id,documentIds:[documentId]},world:'ISOLATED',func:()=>({url:location.href,title:document.title.slice(0,160)})});
         if(out?.[0]?.documentId===documentId && P.check(policy,'text',out[0].result?.url).ok)metadata=out[0].result;
       }catch(e){diagnostic={error:e.message==='ADDRESS_UNVERIFIED'?'ADDRESS_UNVERIFIED':'TAB_ACCESS_FAILED',...(e.message==='ADDRESS_UNVERIFIED'?{reason:e.reason}: {})};}
+      if(job.payload.host && diagnostic?.reason==='LOCAL_ADDRESS')continue;
       if(job.payload.host && metadata && !P.matches(new URL(metadata.url).hostname,P.normalizeHost(job.payload.host)))continue;
+      if (records.length>=(job.payload.limit || 20)) {truncated=true;break;}
       // Keep denied/unobserved tabs visible as bounded diagnostics. Never read
       // their title or expose their URL merely to make the list look complete.
       const row=metadata ? {id:t.id,title:metadata.title,...(metadata.url.length<=8192 ? {url:P.redactUrl(metadata.url)} : {url_omitted:true}),active:t.active,status:t.status} : {id:t.id,redacted:true,status:t.status,...diagnostic};

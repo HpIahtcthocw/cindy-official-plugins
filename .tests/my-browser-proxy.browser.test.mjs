@@ -1,4 +1,5 @@
-// Real MV3, signed local bridge and loopback proxy. Only model output is a fixture.
+// Real MV3, signed local bridge and loopback proxy. Model output and the
+// explicitly marked DNS-local scenario use controlled fixtures.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -28,7 +29,7 @@ test('proxy translation renders visible Chinese and restores original text witho
   }});await bridge.request('status');
   const proxy=http.createServer((req,res)=>{
     let url;try{url=new URL(req.url);}catch{res.writeHead(403);return res.end();}
-    if(['reading.test','[2606:4700:4700::1111]'].includes(url.hostname)){
+    if(['reading.test','private.example.test','[2606:4700:4700::1111]'].includes(url.hostname)){
       res.setHeader('content-type','text/html');return res.end('<title>Proxy translation</title><style>body{font:20px/1.8 sans-serif;padding:40px}main{max-width:650px}reading-post{display:block}</style><main><reading-post><p id="original" slot="body">Reading through the configured proxy works.</p></reading-post></main><script>customElements.define("reading-post",class extends HTMLElement{constructor(){super();this.attachShadow({mode:"open"}).innerHTML="<slot name=body></slot>";}});</script>');
     }
     // Prevent test extension discovery from reaching any production bridge.
@@ -56,6 +57,17 @@ test('proxy translation renders visible Chinese and restores original text witho
   assert.match(JSON.stringify(dom),/中文译文：Reading through the configured proxy works/);
   if(process.env.CINDY_SCREENSHOTS){await fs.mkdir(process.env.CINDY_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.CINDY_SCREENSHOTS,'proxy-translation.png')});}
   await toggle();assert.equal(await page.locator('#original + span').count(),0);assert.equal(await page.locator('#original').innerText(),'Reading through the configured proxy works.');
+  const localPage=await context.newPage();await localPage.goto('http://private.example.test/');
+  // Some Chromium variants do not expose chrome.dns to MV3. Supply only
+  // this environmental answer; exercise the real guard, tab handler and bridge.
+  await worker.evaluate(()=>{globalThis.savedDNS=chrome.dns;chrome.dns={resolve:async host=>({resultCode:0,address:host==='private.example.test'?'127.0.0.1':'93.184.216.34'})};});
+  const filtered=await bridge.request('act',{action:'tabs',payload:{host:'private.example.test'}});
+  assert.equal(filtered.ok,true,JSON.stringify(filtered));assert.equal(filtered.tabs.length,0);
+  const unfiltered=await bridge.request('act',{action:'tabs',payload:{}});
+  const localRow=unfiltered.tabs.find(row=>row.reason==='LOCAL_ADDRESS');
+  assert.ok(localRow,'unfiltered diagnostics retain the local failure');
+  assert.equal(localRow.redacted,true);assert.equal(localRow.url,undefined);assert.equal(localRow.title,undefined);
+  await worker.evaluate(()=>{chrome.dns=globalThis.savedDNS;delete globalThis.savedDNS;});
   const ipv6='http://[2606:4700:4700::1111]/';
   const read=await bridge.request('act',{action:'text',payload:{url:ipv6}});
   assert.equal(read.ok,true,JSON.stringify(read));assert.match(read.text,/Reading through the configured proxy/);
