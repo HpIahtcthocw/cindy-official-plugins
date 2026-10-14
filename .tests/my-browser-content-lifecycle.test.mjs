@@ -7,12 +7,23 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(send=async()=>({enabled:false})){
   const timers=new Map(),sent=[],listeners=new Set(),nodes=[];let sequence=0;
   class Node extends EventTarget {
-    constructor(){super();nodes.push(this);this.handlers={};this.attrs={};this.style={props:Object.create(null),setProperty(k,v){this.props[k]=v;},getPropertyValue(k){return this.props[k]||'';},removeProperty(k){delete this.props[k];}};}
+    constructor(){super();nodes.push(this);this.handlers={};this.attrs={};this.children=[];this.className='';this.isConnected=true;this.style={props:Object.create(null),setProperty(k,v){this.props[k]=v;},getPropertyValue(k){return this.props[k]||'';},removeProperty(k){delete this.props[k];}};}
     dataset={};textContent='';
     addEventListener(name,fn){this.handlers[name]=fn;super.addEventListener(name,fn);}
-    append(){} setAttribute(k,v){this.attrs[k]=v;} remove(){} attachShadow(){return new Node();}
-    querySelector(){return {disabled:false};} querySelectorAll(){return [];}
-    replaceChildren(){} closest(){return null;} getClientRects(){return [];}
+    append(...items){this.children.push(...items);for(const n of items)n.isConnected=true;}
+    setAttribute(k,v){this.attrs[k]=v;} remove(){this.isConnected=false;} attachShadow(){return new Node();}
+    querySelector(sel){
+      if(typeof sel==='string'&&sel.startsWith('.')){
+        const cls=sel.slice(1);
+        const match=n=>typeof n.className==='string'&&n.className.split(/\s+/).includes(cls);
+        const walk=list=>{for(const n of list||[]){if(match(n))return n;const found=walk(n.children);if(found)return found;}return null;};
+        return walk(this.children);
+      }
+      return {disabled:false};
+    }
+    querySelectorAll(){return [];}
+    replaceChildren(...items){for(const n of this.children)n.isConnected=false;this.children=items;for(const n of items)n.isConnected=true;}
+    closest(){return null;} getClientRects(){return [];}
     getBoundingClientRect(){return {top:0,bottom:0,left:0,right:0,width:0,height:0};}
   }
   const document=new EventTarget();document.querySelector=()=>null;document.title='Fixture';
@@ -138,6 +149,67 @@ test('restore does not wait for an in-flight page translation request',async()=>
   assert.equal(translates,1,'restore cancels rather than queueing behind the model');
   resolveTranslate({ok:true,translations:['x']});
   await settle();
+});
+test('restoring an in-flight page translation lets the next translate start immediately',async()=>{
+  const pending=[];let translates=0;
+  const f=fixture(m=>{
+    if(m.type==='cindy-learning'){
+      if(m.request?.op==='config')return Promise.resolve({ok:true,locale:'en',features:[]});
+      if(m.request?.op==='translate'){translates++;return new Promise(r=>pending.push(r));}
+      return Promise.resolve({ok:true});
+    }
+    return Promise.resolve({enabled:false});
+  });
+  f.context.innerHeight=800;f.context.innerWidth=1200;
+  f.context.MutationObserver=class{observe(){} disconnect(){}};
+  const paragraph={innerText:'Hello from the fixture page',getClientRects:()=>[{}],getBoundingClientRect:()=>({top:10,bottom:40,left:0,right:100,width:100,height:30}),closest:()=>null,querySelector:()=>null,isConnected:true,hasAttribute:()=>false,after(){}};
+  f.context.document.body.querySelectorAll=()=>[paragraph];
+  await settle();
+  const replies=[];const listener=[...f.listeners][0];
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['start',r]));
+  await settle();await settle();
+  assert.equal(translates,1);
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['restore',r]));
+  await settle();await settle();
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['restart',r]));
+  await settle();await settle();
+  assert.equal(translates,2,'restore must drop the running lock so a new translate can start');
+  assert.equal(replies.some(r=>r[0]==='restart'),false,'restart must wait for the new model request');
+  pending[0]({ok:true,translations:['stale']});
+  await settle();await settle();
+  assert.equal(replies.some(r=>r[0]==='restart'),false,'a stale reply must not finish the new session');
+  pending[1]({ok:true,translations:['fresh']});
+  await settle();await settle();
+  assert.equal(replies.some(r=>r[0]==='restart'&&r[1]?.ok),true);
+});
+test('a pending selection reply does not error after switching to page translation',async()=>{
+  let resolveSelection;let pageTranslates=0;
+  const f=fixture(m=>{
+    if(m.type==='cindy-learning'){
+      if(m.request?.op==='config')return Promise.resolve({ok:true,locale:'en',features:[]});
+      if(m.request?.op==='translate'&&m.request?.text)return new Promise(r=>{resolveSelection=r;});
+      if(m.request?.op==='translate'&&m.request?.texts){pageTranslates++;return new Promise(()=>{});}
+      return Promise.resolve({ok:true});
+    }
+    return Promise.resolve({enabled:false});
+  });
+  f.context.innerHeight=800;f.context.innerWidth=1200;
+  f.context.window.getSelection=()=>({toString:()=>'selected phrase',anchorNode:{parentElement:{closest:()=>null,innerText:'selected phrase'}}});
+  const paragraph={innerText:'Hello from the fixture page',getClientRects:()=>[{}],getBoundingClientRect:()=>({top:10,bottom:40,left:0,right:100,width:100,height:30}),closest:()=>null,querySelector:()=>null,isConnected:true,hasAttribute:()=>false,after(){}};
+  f.context.document.body.querySelectorAll=()=>[paragraph];
+  await settle();
+  const replies=[];const listener=[...f.listeners][0];
+  listener({type:'cindy-ui',action:'selection'},{id:'fixture'},r=>replies.push(['selection',r]));
+  await settle();await settle();
+  const status=f.nodes.find(n=>n.attrs.role==='status');
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['page',r]));
+  await settle();await settle();
+  assert.equal(pageTranslates,1);
+  resolveSelection({ok:true,translations:['late selection']});
+  await settle();await settle();
+  assert.equal(replies.find(r=>r[0]==='selection')?.[1]?.ok,true);
+  assert.notEqual(status?.className,'status error');
+  assert.notEqual(status?.textContent,'err');
 });
 test('hiding the panel while config is pending drops queued translate-page',async()=>{
   let resolveConfig;const observed=[];
