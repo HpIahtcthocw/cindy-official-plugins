@@ -31,7 +31,7 @@ function createBridge(options = {}) {
   const authenticatedCredential = c => !!c.publicKey && c.authenticated && (official(c) || pairedCredential(c));
   const sessionReady = c => c.trusted && (c.version !== manifest.version || authenticatedCredential(c));
   const connected = () => [...clients.values()].filter(c => sessionReady(c) && live(c) && compatible(c.version));
-  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
+  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),identitySupported:approved(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
   const normalizePublicKey = value => {
     if (typeof value !== 'string' || value.length > 2048) return null;
     try {

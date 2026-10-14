@@ -172,6 +172,9 @@ test('model failures retain their code and do not falsely diagnose a disconnecte
   assert.match(ui.error('SOME_NEW_FAILURE','zh-CN'),/尚无法确定具体原因.*SOME_NEW_FAILURE/);
   assert.doesNotMatch(ui.error('Error: token=private-value https:\/\/example.test','zh-CN'),/private-value|example.test/);
   assert.match(ui.error('Error: token=private-value','zh-CN'),/UNKNOWN_ERROR/);
+  for(const code of ['PAIRING_REQUIRED','SESSION_CHANGED'])for(const locale of ['en','zh-CN']) {
+    const message=ui.error(code,locale).replace(' ('+code+')','');assert.doesNotMatch(message,/confirm|pairing|配对|确认此浏览器/i);assert.match(message,/automatically|自动重连/);
+  }
   assert.match(ui.error('CINDY_DISCONNECTED','zh-CN'),/客户端未安装或未运行/);
   assert.doesNotMatch(ui.error('TIMEOUT','zh-CN'),/核对结果|重新提交/);
 });

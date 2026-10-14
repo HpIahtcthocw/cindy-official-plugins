@@ -34,6 +34,7 @@ test('official store and bundled extensions authenticate automatically without s
     const browser=await client('chrome',extensionId);
     const unsigned=await browser.request('/health');
     assert.equal(unsigned.session,undefined);
+    assert.equal((await bridge.request('status')).clients.find(c=>c.id===browser.id).identitySupported,true);
     assert.equal((await browser.request('/poll')).status,409);
     const first=await browser.health();
     assert.equal(first.pairing_required,false);assert.ok(first.session);
@@ -70,6 +71,7 @@ test('Safari identities get no bridge session or jobs until exact identity appro
 test('unknown Chromium extension identities are not silently trusted',async t=>{
   const {bridge,client}=await fixture(t);const unknown=await client('edge','a'.repeat(32),'chrome-extension://'+ 'a'.repeat(32),false);
   assert.equal((await unknown.health()).pairing_required,true);
+  assert.equal((await bridge.request('status')).clients[0].identitySupported,false);
   assert.equal((await bridge.request('status')).extension_connected,false);
 });
 test('consumer install is honestly blocked until published; local developer setup never claims installation',async()=>{

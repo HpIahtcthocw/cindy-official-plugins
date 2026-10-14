@@ -127,6 +127,16 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
     assert.equal(await logic.evaluate(()=>window.confirmCount),0);
     assert.equal(cfg.pairedClients,undefined);assert.equal(installCalls.length,0);
     assert.deepEqual(cfg.policy,{read:{block:[]},interact:{allow:[],block:[]}});
+    for(const supported of [true,false]) {
+      const candidate={id:crypto.randomUUID(),origin:supported?'chrome-extension://'+extensionId:'safari-web-extension://'+crypto.randomUUID()};
+      await fetch('http://127.0.0.1:'+(await bridge.request('status')).port+'/health',{headers:{'X-My-Browser-Extension':extensionId,'X-My-Browser-Origin':candidate.origin,'X-My-Browser-Client':candidate.id,'X-My-Browser-Version':status.version}});
+      await settings.locator('#refresh').click();await settings.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+      const row=settings.locator('.profile').filter({hasText:candidate.id.slice(0,8)});
+      assert.equal(await row.locator('button').count(),0);
+      assert.match(await row.textContent(),supported?/正在检查连接/:/不支持此扩展.*Chrome 网上应用店/);
+      const profile=(await tool('browser_status')).clients.find(c=>c.id===candidate.id);
+      assert.equal(profile.identitySupported,supported);assert.equal(profile.connected,false);
+    }
     assert.deepEqual(errors,[]);
     if(process.env.MY_BROWSER_SCREENSHOT)await settings.screenshot({path:process.env.MY_BROWSER_SCREENSHOT,fullPage:true});
     return;
