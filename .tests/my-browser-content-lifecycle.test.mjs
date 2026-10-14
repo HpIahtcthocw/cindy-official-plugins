@@ -7,13 +7,17 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(send=async()=>({enabled:false})){
   const timers=new Map(),sent=[],listeners=new Set();let sequence=0;
   class Node extends EventTarget {
-    style={setProperty(){}};dataset={};textContent='';
+    constructor(){super();this.style={props:Object.create(null),setProperty(k,v){this.props[k]=v;},getPropertyValue(k){return this.props[k]||'';},removeProperty(k){delete this.props[k];}};}
+    dataset={};textContent='';
     append(){} setAttribute(){} remove(){} attachShadow(){return new Node();}
+    querySelector(){return {disabled:false};} querySelectorAll(){return [];}
+    replaceChildren(){} closest(){return null;} getClientRects(){return [];}
+    getBoundingClientRect(){return {top:0,bottom:0,left:0,right:0,width:0,height:0};}
   }
   const document=new EventTarget();document.querySelector=()=>null;document.title='Fixture';
-  document.createElement=document.createElementNS=()=>new Node();document.documentElement=new Node();
+  document.createElement=document.createElementNS=()=>new Node();document.documentElement=new Node();document.body=new Node();
   const chrome={runtime:{id:'fixture',getURL:p=>'chrome-extension://fixture/'+p,sendMessage:m=>{sent.push(m);return send(m);},onMessage:{addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)}},storage:{local:{get:async()=>({})}}};
-  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,getComputedStyle:()=>({backgroundColor:'rgb(255,255,255)'}),CindyLearning:{uuid:()=> 'fixture-request'},CindyUI:{copy:()=>({})},speechSynthesis:{cancel(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
+  const context={chrome,document,window:new EventTarget(),location:{href:'https://example.test/start',hostname:'example.test',origin:'https://example.test'},AbortController,getComputedStyle:()=>({backgroundColor:'rgb(255,255,255)'}),CindyLearning:{uuid:()=> 'fixture-request',validTarget:()=>false,languageName:v=>v},CindyUI:{copy:()=>({}),css:'',languagePicker:()=>new Node(),error:()=>'err'},speechSynthesis:{cancel(){}},MutationObserver:class{observe(){} disconnect(){}},setInterval:fn=>{timers.set(++sequence,fn);return sequence;},clearInterval:id=>timers.delete(id),clearTimeout(){},setTimeout};
   vm.runInNewContext(source,context);
   return {chrome,context,timers,sent,listeners};
 }
@@ -50,4 +54,27 @@ test('an interrupted panel open cannot recreate removed UI when its config reply
   const replies=[];[...f.listeners][0]({type:'cindy-ui',action:'open'},{id:'fixture'},r=>replies.push(r));await settle();
   f.chrome.runtime=undefined;[...f.timers.values()][0]();resolveConfig({ok:true,locale:'en'});await settle();
   assert.equal(f.timers.size,0);assert.deepEqual(replies,[]);
+});
+test('translate-page issued while config is pending still runs after configure finishes',async()=>{
+  let resolveConfig;const observed=[];
+  const configReady=new Promise(r=>{resolveConfig=r;});
+  const f=fixture(m=>{
+    if(m.type==='cindy-learning'){
+      if(m.request?.op==='config')return configReady;
+      return Promise.resolve({ok:true,translations:['x']});
+    }
+    return Promise.resolve({enabled:false});
+  });
+  f.context.MutationObserver=class{observe(target){observed.push(target);}disconnect(){}};
+  await settle();
+  const replies=[];const listener=[...f.listeners][0];
+  listener({type:'cindy-ui',action:'open'},{id:'fixture'},r=>replies.push(['open',r]));await settle();
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['translate',r]));await settle();
+  assert.equal(observed.length,0,'translate must wait for the in-flight config');
+  resolveConfig({ok:true,locale:'en',features:[]});
+  await settle();await settle();await settle();
+  assert.equal(replies.length,2);
+  assert.equal(replies[0][0],'open');assert.equal(replies[1][0],'translate');
+  assert.equal(replies[1][1]?.ok,true);
+  assert.ok(observed.includes(f.context.document.body),'queued translate-page must start page translation');
 });

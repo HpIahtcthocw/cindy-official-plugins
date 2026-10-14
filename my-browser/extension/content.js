@@ -117,7 +117,16 @@
     if(!s||!node||node.closest('input,textarea,[contenteditable]')){selected='';selectedContext='';return;}
     const value=s.toString().trim();if(value&&value.length<=20000){selected=value;selectedContext=(node.closest('p,li,article')?.innerText||node.innerText||'').slice(0,4000);lastResult='';}
   }
-  async function open(action){
+  let openTail=Promise.resolve();
+  function open(action){
+    // Concurrent UI actions share one configure() wait. Run them in order so a
+    // translate-page issued while the panel is still loading config is not
+    // dropped when the first caller rebuilds the host after configure().
+    const run=openTail.then(()=>openNow(action),()=>openNow(action));
+    openTail=run.catch(()=>{});
+    return run;
+  }
+  async function openNow(action){
     if(action==='selection'&&window.getSelection()?.toString().trim())selection();
     if(action==='settings'&&videoSession){showSettings();videoSession.overlay.openSettings(false);return;}
     if((action==='video'||action==='open'&&/(^|\.)youtube\.com$/.test(location.hostname))&&videoSession){videoSession.overlay.openSettings();return;}

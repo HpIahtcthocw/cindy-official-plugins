@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const {publicAddress,create}=createRequire(import.meta.url)('../my-browser/extension/network-guard.js');
-function fixture(frames=new Map()){
+function fixture(frames=new Map(),extra={}){
   const events={};const event=name=>({addListener:fn=>events[name]=fn});
   // No webRequest or stored IP evidence: use the actual browser frame contract.
-  const chrome={webNavigation:{onBeforeNavigate:event('navigate'),onDOMContentLoaded:event('ready'),getFrame:async({tabId})=>frames.get(tabId)},tabs:{onRemoved:event('removed')}};
-  return {guard:create(chrome),frames,emit:(name,extra={})=>events[name](name==='removed'?1:{tabId:1,frameId:0,...extra})};
+  const chrome={webNavigation:{onBeforeNavigate:event('navigate'),onDOMContentLoaded:event('ready'),getFrame:async({tabId})=>frames.get(tabId)},tabs:{onRemoved:event('removed')},...extra};
+  return {guard:create(chrome),frames,emit:(name,extra={})=>events[name](name==='removed'?1:{tabId:1,frameId:0,...extra}),chrome};
 }
 test('actual peer address classification rejects private, mapped, reserved and absent IPs',()=>{
   for(const ip of ['8.8.8.8','1.1.1.1','2606:4700:4700::1111','2001:4860:4860::8888'])assert.equal(publicAddress(ip),true,ip);
@@ -24,7 +24,7 @@ test('proxy, cached, pre-install and restored pages use current browser document
 });
 test('local URLs and Chrome protected pages remain inaccessible regardless of proxy use',async()=>{
   const h=fixture();
-  for(const url of ['http://localhost/','https://device.local/','http://corp.internal/','http://127.1/','http://10.0.0.1/','http://192.168.1.1/','http://[::1]/','http://198.18.0.1/','file:///tmp/page','https://user:secret@example.test/']){
+  for(const url of ['http://localhost/','https://device.local/','http://corp.internal/','http://127.1/','http://10.0.0.1/','http://192.168.1.1/','http://[::1]/','http://[fc00::1]/','http://[fe80::1]/','http://198.18.0.1/','file:///tmp/page','https://user:secret@example.test/']){
     h.frames.set(1,{documentId:'doc',url});
     await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'},url);
   }
@@ -32,6 +32,34 @@ test('local URLs and Chrome protected pages remain inaccessible regardless of pr
     h.frames.set(1,{documentId:'doc',url:'https://'+host+'/'});
     await assert.rejects(h.guard.document(1),/BROWSER_PAGE_RESTRICTED/);
   }
+});
+test('public IPv6 literal URLs are allowed; private IPv6 literals stay blocked',async()=>{
+  const h=fixture();
+  h.frames.set(1,{documentId:'doc',url:'https://[2606:4700:4700::1111]/'});
+  assert.equal(await h.guard.document(1),'doc');
+  h.frames.set(1,{documentId:'doc',url:'https://[2001:4860:4860::8888]/path'});
+  assert.equal(await h.guard.document(1),'doc');
+  for(const url of ['http://[::1]/','http://[fc00::1]/','http://[fe80::1]/','http://[2001:db8::1]/']){
+    h.frames.set(1,{documentId:'doc',url});
+    await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'},url);
+  }
+});
+test('a hostname that resolves to a private IP is refused even when the page is loaded',async()=>{
+  const frames=new Map([[1,{documentId:'doc',url:'https://intranet.example.test/'}]]);
+  const h=fixture(frames,{dns:{resolve:async()=>({address:'10.0.0.9'})}});
+  await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'});
+  frames.set(1,{documentId:'doc',url:'https://ula.example.test/'});
+  const v6=fixture(frames,{dns:{resolve:async()=>({address:'fc00::1'})}});
+  await assert.rejects(v6.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'});
+});
+test('a hostname that resolves to a public IP is allowed; DNS failure is the proxy exemption',async()=>{
+  const frames=new Map([[1,{documentId:'doc',url:'https://example.test/'}]]);
+  const publicDns=fixture(frames,{dns:{resolve:async()=>({address:'8.8.8.8'})}});
+  assert.equal(await publicDns.guard.document(1),'doc');
+  const publicV6=fixture(frames,{dns:{resolve:async()=>({address:'2606:4700:4700::1111'})}});
+  assert.equal(await publicV6.guard.document(1),'doc');
+  const remoteDns=fixture(frames,{dns:{resolve:async()=>{throw Error('DNS_FAILED');}}});
+  assert.equal(await remoteDns.guard.document(1),'doc');
 });
 test('missing, failed and inaccessible documents fail without leaking page data',async()=>{
   const h=fixture();
@@ -50,4 +78,22 @@ test('DOM readiness is bound to the current document, cleared on navigation/remo
   h.emit('ready',{documentId:'doc2'});assert.equal(await h.guard.isReady(1),true);
   h.emit('navigate');assert.equal(await h.guard.isReady(1),false);
   h.emit('ready',{documentId:'doc2'});h.emit('removed');assert.equal(await h.guard.isReady(1),false);
+});
+test('a missed DOMContentLoaded after worker restart recovers from the current document readyState',async()=>{
+  const frames=new Map([[1,{documentId:'doc1',url:'https://example.test/'}]]);
+  let probed;
+  const h=fixture(frames,{scripting:{executeScript:async({target})=>{
+    probed=target;
+    return [{documentId:target.documentIds[0],result:'interactive'}];
+  }}});
+  assert.equal(await h.guard.isReady(1),true);
+  assert.deepEqual(probed,{tabId:1,documentIds:['doc1']});
+  assert.equal(await h.guard.isReady(1),true);
+});
+test('readyState recovery ignores a reply from a different document and incomplete states',async()=>{
+  const frames=new Map([[1,{documentId:'doc1',url:'https://example.test/'}]]);
+  const stale=fixture(frames,{scripting:{executeScript:async()=>[{documentId:'other',result:'complete'}]}});
+  assert.equal(await stale.guard.isReady(1),false);
+  const loading=fixture(frames,{scripting:{executeScript:async({target})=>[{documentId:target.documentIds[0],result:'loading'}]}});
+  assert.equal(await loading.guard.isReady(1),false);
 });
