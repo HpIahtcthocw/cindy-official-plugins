@@ -8,7 +8,7 @@ import {createLearningService} from '../my-browser/learning-service.js';
 import {createSubtitleCache} from '../my-browser/subtitle-cache.js';
 const require=createRequire(import.meta.url),core=require('../my-browser/extension/learning-core.js');
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
-const version='0.4.13';
+const version='0.4.13'; // Stable signed wire contract, independent of extension releases.
 async function credential(){
   const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
   const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
@@ -315,4 +315,12 @@ test('bridge keeps a slow prefetched subtitle request active for the shared requ
    assert.equal((await bridge.request('learningActive',{id})).active,false);
    assert.equal((await bridge.request('learningResult',{id,result:{ok:true}})).ok,false);
  }finally{Date.now=realNow;}
+});
+
+test('document errors show a bounded reason without echoing arbitrary exception data',()=>{
+  const context={};vm.runInNewContext(fs.readFileSync(new URL('../my-browser/extension/ui.js',import.meta.url),'utf8'),context);
+  for(const locale of ['en','zh-CN']){
+    assert.match(context.CindyUI.error('ADDRESS_UNVERIFIED',locale,'DOCUMENT_UNAVAILABLE'),/DOCUMENT_UNAVAILABLE/);
+    assert.doesNotMatch(context.CindyUI.error('ADDRESS_UNVERIFIED',locale,'token=secret'),/token=secret/);
+  }
 });

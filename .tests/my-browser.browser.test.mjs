@@ -17,13 +17,8 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   const profile=await fs.mkdtemp(path.join(os.tmpdir(),'my-browser-test-'));let context;
   t.after(async()=>{await context?.close();await fs.rm(profile,{recursive:true,force:true,maxRetries:3});});
   const extensionDir=path.join(profile,'unpacked-extension');await fs.cp(path.join(root,'extension'),extensionDir,{recursive:true});
-  // Fixture transport uses loopback/proxy interception. Simulate PUBLIC peer evidence
-  // only for named positive fixtures at the browser API boundary; private.test keeps
-  // the real loopback address. Production guard and document binding run unchanged.
-  const networkShim=`const nativeCompleted=chrome.webRequest.onCompleted.addListener.bind(chrome.webRequest.onCompleted);
-  chrome.webRequest.onCompleted.addListener=(fn,...args)=>nativeCompleted(d=>fn(['example.test','blocked.test','redirect.test','huge.test','long.test','cv.test','links.test','manylinks.test','pageurl.test','x.com'].includes(new URL(d.url).hostname)?{...d,ip:'8.8.8.8'}:d),...args);\n`;
-  const backgroundPath=path.join(extensionDir,'background.js');
-  await fs.writeFile(backgroundPath,networkShim+await fs.readFile(backgroundPath,'utf8'));
+  // Real loopback proxy transport. No IP rewriting: exercise the production
+  // document guard with the same proxy endpoint that caused PEER_NOT_PUBLIC.
   const {generateKeyPairSync,createHash}=require('node:crypto');
   const {publicKey}=generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'}});
   const extensionId=createHash('sha256').update(publicKey).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
@@ -39,6 +34,7 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   let cfg={policy:{read:{block:[]},interact:{allow:[],block:[]}}};const faults={read:false,save:false,wake:false};
   const server=http.createServer(async(req,res)=>{
     try{
+      if(req.headers.host?.startsWith('slow.test')){res.setHeader('Content-Type','text/html');if(req.url==='/slow.png')return;return res.end('<title>Slow resource</title><p>Ready before the image</p><img src="/slow.png">');}
       if(req.headers.host?.startsWith('example.test') || req.headers.host?.startsWith('private.test')){res.setHeader('Content-Type','text/html');return res.end(fixture);}
       if(req.headers.host?.startsWith('manylinks.test')){res.setHeader('Content-Type','text/html');
         return res.end('<title>Many links</title><p>body</p>'+Array.from({length:20000},(_,i)=>'<a href="/m'+i+'">M</a>').join(''));}
@@ -115,7 +111,12 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   assert.equal('policy' in status,false);assert.equal('extension_dir' in status,false);assert.equal('port' in status,false);
   assert.equal('origin' in status.clients[0],false);assert.equal('extensionId' in status.clients[0],false);
   assert.ok(status.clients[0].id);assert.equal(status.installation.browsers[0].browser,'chrome');
-  const connection=await context.serviceWorkers()[0].evaluate(()=>chrome.storage.session.get('connection'));assert.equal(connection.connection.connected,true);
+  const worker=context.serviceWorkers()[0];
+  for(let deadline=Date.now()+5000;Date.now()<deadline;){
+    if((await worker.evaluate(()=>chrome.storage.session.get('connection'))).connection?.connected)break;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  const connection=await worker.evaluate(()=>chrome.storage.session.get('connection'));assert.equal(connection.connection.connected,true);
   if(autoConnectOnly) {
     const settings=await context.newPage();await settings.goto(base+'/');
     await settings.getByText('浏览器已连接',{exact:true}).waitFor();
@@ -154,10 +155,18 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   const bytes=Buffer.byteLength(JSON.stringify(mentions));assert.ok(bytes<3000);
   t.diagnostic('X mentions fixture: '+JSON.stringify({browserReadCalls:1,elapsedMs:Date.now()-started,resultBytes:bytes,records:mentions.count}));
   const incremental=await tool('browser_read',{recipe:'x_mentions',after:'https://example.test/post/2',limit:5});assert.equal(incremental.records.length,2);assert.equal(incremental.cursorFound,true);
-  const privatePage=await context.newPage();await privatePage.goto('http://private.test/');
-  const denied=await tool('browser_read',{url:'http://private.test/',mode:'text'});
-  assert.equal(denied.error,'ADDRESS_UNVERIFIED',JSON.stringify(denied));assert.equal(denied.text,undefined);
-  assert.deepEqual((await tool('browser_tabs',{host:'private.test'})).tabs,[]);await privatePage.close();
+  const proxiedPage=await context.newPage();await proxiedPage.goto('http://private.test/');
+  const proxied=await tool('browser_read',{url:'http://private.test/',mode:'text'});
+  assert.equal(proxied.ok,true,JSON.stringify(proxied));assert.ok(proxied.text);
+  assert.equal((await tool('browser_tabs',{host:'private.test'})).tabs.length,1);
+  const local=await tool('browser_read',{url:'http://127.0.0.1/private',mode:'text'});
+  assert.equal(local.ok,false);assert.equal(local.text,undefined);
+  await proxiedPage.close();
+  const slow=await context.newPage();await slow.goto('http://slow.test/',{waitUntil:'domcontentloaded'});
+  const slowStart=Date.now(),slowRead=await tool('browser_read',{url:'http://slow.test/',mode:'text'});
+  assert.equal(slowRead.ok,true,JSON.stringify(slowRead));assert.match(slowRead.text,/Ready before the image/);
+  assert.ok(Date.now()-slowStart<15000,'DOM-ready page must not wait on the stalled image');
+  await slow.close();
   const url='http://example.test/';
   const page=await context.newPage();await page.goto(url);
   // A normal/double click must not leave a floating Cindy entry over arbitrary page text.
@@ -170,7 +179,7 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   await page.evaluate(()=>document.querySelector('[data-cindy-selection-entry]')?.remove());
   let r=await tool('browser_read',{url,mode:'text'});assert.equal(r.ok,true,JSON.stringify(r));assert.match(r.text,/Visible fixture text/);
   // Terminate and restart the real MV3 worker, keeping the browser and page.
-  // A new worker must recover exact-document evidence from session storage.
+  // A new worker must use current browser document identity without an IP receipt.
   const cdp=await context.newCDPSession(page);let workerVersion;
   cdp.on('ServiceWorker.workerVersionUpdated',({versions})=>{
     const v=versions.find(v=>v.scriptURL==='chrome-extension://'+extensionId+'/background.js');
@@ -180,13 +189,6 @@ for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome:
   const versionDeadline=Date.now()+3000;
   while(!workerVersion && Date.now()<versionDeadline)await new Promise(r=>setTimeout(r,25));
   assert.ok(workerVersion,'Chrome reports the running extension service worker');
-  await context.serviceWorkers()[0].evaluate(async()=>{
-    const deadline=Date.now()+3000;
-    while(!(await chrome.storage.session.get('verifiedNetworkDocuments')).verifiedNetworkDocuments?.length){
-      if(Date.now()>deadline)throw Error('Verified document receipt not saved');
-      await new Promise(r=>setTimeout(r,25));
-    }
-  });
   await cdp.send('ServiceWorker.stopWorker',{versionId:workerVersion});
   // Native extension messaging wakes a suspended worker. CDP startWorker does
   // not perform Chrome's extension lazy-event activation on all supported builds.

@@ -9,6 +9,7 @@ const manifest = require('../extension/manifest.json');
 const distribution = require('../distribution.json');
 const EXT_ID = crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c => String.fromCharCode(97+parseInt(c,16)));
 const PROTOCOL = 3;
+// Keep in sync with background.js; package releases do not change authentication.
 const WIRE_VERSION = '0.4.13';
 const failure = (error,message,execution = 'not_executed') => ({ok:false,error,message,execution});
 function createBridge(options = {}) {
@@ -278,7 +279,14 @@ function createBridge(options = {}) {
     }
     let result = job.revoked ? jobFailure(job,job.revoked.error,job.revoked.message) : b.result;
     if (!result || typeof result !== 'object' || Array.isArray(result)) result = jobFailure(job,'INVALID_RESULT','Invalid browser result. Verify before retrying.');
-    if (job.action === 'tabs' && !result.error) result = {...result,ok:true,tabs:(Array.isArray(result.tabs) ? result.tabs : []).slice(0,100).map(t => P.check(policy,'text',t.url).ok ? t : {id:t.id,redacted:true})};
+    if (job.action === 'tabs' && !result.error) result = {...result,ok:true,tabs:(Array.isArray(result.tabs) ? result.tabs : []).slice(0,100).map(t => {
+      if(P.check(policy,'text',t.url).ok)return t;
+      const row={id:t.id,redacted:true};
+      if(['loading','complete','unloaded'].includes(t.status))row.status=t.status;
+      if(['ADDRESS_UNVERIFIED','TAB_ACCESS_FAILED'].includes(t.error))row.error=t.error;
+      if(t.error==='ADDRESS_UNVERIFIED' && ['LOCAL_ADDRESS','NAVIGATION_UNOBSERVED','RESPONSE_UNOBSERVED','PEER_ADDRESS_MISSING','PEER_NOT_PUBLIC','DOCUMENT_CHANGED','DOCUMENT_UNAVAILABLE'].includes(t.reason))row.reason=t.reason;
+      return row;
+    })};
     else if (!result.error && result.url && !P.check(policy,job.action,result.url).ok) result = jobFailure(job,'REDIRECT_BLOCKED','No content returned from a blocked destination.');
     if (result.error && !['not_executed','executed','unknown'].includes(result.execution)) result = {...result,execution:jobFailure(job,'','').execution};
     finish(job,result,!!b.result && typeof b.result === 'object' && !Array.isArray(b.result) && b.result.execution !== 'unknown'); return send(res,{ok:true});

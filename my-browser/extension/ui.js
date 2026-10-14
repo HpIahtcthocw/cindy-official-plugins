@@ -29,7 +29,7 @@
   });
   function copy(locale){return locale==='zh-CN'?zh:en;}
   const addressReasons={
-    LOCAL_ADDRESS:['Local and private IP URLs are not supported. Open the website using its public domain.','不支持本机或私网 IP 网址，请使用网站的公网域名。'],
+    LOCAL_ADDRESS:['Local and private IP URLs, and hostnames that resolve to them, are not supported. Open the website using its public domain.','不支持本机或私网 IP 网址，以及解析到私网地址的域名。请使用网站的公网域名。'],
     NAVIGATION_UNOBSERVED:['This page was opened before the extension could observe it. Reload this tab once, then retry.','此页面打开时扩展尚未记录导航。请刷新此标签一次，再重试。'],
     RESPONSE_UNOBSERVED:['The main page response has not been verified. Wait for this tab to finish loading, then retry.','尚未取得主页面响应证据。请等待当前标签加载完成后重试。'],
     PEER_ADDRESS_MISSING:['The browser did not report a connection address, possibly because of its cache. Reload this tab once to obtain fresh evidence.','浏览器未提供连接地址，可能使用了缓存。请刷新当前标签一次以获取新证据。'],

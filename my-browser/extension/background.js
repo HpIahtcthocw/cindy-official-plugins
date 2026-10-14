@@ -5,6 +5,7 @@ var chrome = globalThis.browser || globalThis.chrome;
 const P = globalThis.MyBrowserPolicy;
 const network = globalThis.MyBrowserNetwork.create(chrome);
 const VERSION = chrome.runtime.getManifest().version;
+// Content/UI releases retain the signed 0.4.13 wire contract.
 const WIRE_VERSION = '0.4.13';
 let bridge = null;
 let discovery;
@@ -150,13 +151,17 @@ chrome.tabs.onActivated.addListener(({tabId}) => { restore.then(async () => {
   await remember();
 }); });
 async function waitForLoad(id) {
-  const end = Date.now()+15000;
+  const end = Date.now()+25000;
   while (Date.now()<end) {
     const tab = await chrome.tabs.get(id);
-    if (tab.status === 'complete') { await sleep(250); return chrome.tabs.get(id); }
+    // Images, ads and media can keep the tab loading after its main document is
+    // usable. Only accept DOM readiness bound to the current browser document.
+    if (tab.status === 'complete' || await network.isReady?.(id)) { await sleep(250); return chrome.tabs.get(id); }
     await sleep(150);
   }
-  throw new Error('PAGE_LOAD_TIMEOUT');
+  const latest=await chrome.tabs.get(id);
+  if(latest.status==='complete' || await network.isReady?.(id))return latest;
+  throw Object.assign(new Error('PAGE_LOAD_TIMEOUT'),{tabId:id,tabStatus:latest.status});
 }
 async function ensureTab(url,policy,action,onNavigate = () => {}) {
   await restore;
@@ -517,21 +522,24 @@ async function handle(job,policy,target) {
   if (!gate.ok) return gate;
   if (job.action === 'tabs') {
     const tabs = (await chrome.tabs.query({})).filter(t => /^https?:/.test(t.url || '') && (!job.payload.host || (P.check(policy,'text',t.url).ok && P.matches(new URL(t.url).hostname,P.normalizeHost(job.payload.host)))));
-    const records=[];let remaining=30000;
+    const records=[];let remaining=30000,truncated=false;
     for (const t of tabs) {
-      if (records.length>=(job.payload.limit || 20)) break;
-      let metadata;
+      let metadata,diagnostic;
       if(P.check(policy,'text',t.url).ok)try {
         const documentId=await network.document(t.id);
         const out=await chrome.scripting.executeScript({target:{tabId:t.id,documentIds:[documentId]},world:'ISOLATED',func:()=>({url:location.href,title:document.title.slice(0,160)})});
         if(out?.[0]?.documentId===documentId && P.check(policy,'text',out[0].result?.url).ok)metadata=out[0].result;
-      }catch {}
-      if(job.payload.host && (!metadata || !P.matches(new URL(metadata.url).hostname,P.normalizeHost(job.payload.host))))continue;
-      const row=metadata ? {id:t.id,title:metadata.title,...(metadata.url.length<=8192 ? {url:P.redactUrl(metadata.url)} : {url_omitted:true}),active:t.active} : {id:t.id,redacted:true};
-      const size=JSON.stringify(row).length;if (size>remaining) break;
+      }catch(e){diagnostic={error:e.message==='ADDRESS_UNVERIFIED'?'ADDRESS_UNVERIFIED':'TAB_ACCESS_FAILED',...(e.message==='ADDRESS_UNVERIFIED'?{reason:e.reason}: {})};}
+      if(job.payload.host && diagnostic?.reason==='LOCAL_ADDRESS')continue;
+      if(job.payload.host && metadata && !P.matches(new URL(metadata.url).hostname,P.normalizeHost(job.payload.host)))continue;
+      if (records.length>=(job.payload.limit || 20)) {truncated=true;break;}
+      // Keep denied/unobserved tabs visible as bounded diagnostics. Never read
+      // their title or expose their URL merely to make the list look complete.
+      const row=metadata ? {id:t.id,title:metadata.title,...(metadata.url.length<=8192 ? {url:P.redactUrl(metadata.url)} : {url_omitted:true}),active:t.active,status:t.status} : {id:t.id,redacted:true,status:t.status,...diagnostic};
+      const size=JSON.stringify(row).length;if (size>remaining) {truncated=true;break;}
       records.push(row);remaining-=size;
     }
-    return {ok:true,tabs:records,truncated:records.length<tabs.length};
+    return {ok:true,tabs:records,truncated};
   }
   let injecting = false, navigating = false;
   const failureState = () => navigating || (injecting && P.INTERACT.includes(job.action)) ? 'unknown' : 'not_executed';
@@ -561,8 +569,8 @@ async function handle(job,policy,target) {
     if (result.url && !P.check(policy,job.action,result.url).ok) return fail('REDIRECT_BLOCKED','The page moved to a blocked site. No content is returned; verify the action manually.',failureState());
     return result?.error && navigating ? {...result,execution:'unknown'} : result;
   } catch (e) {
-    const messages = {BROWSER_PAGE_RESTRICTED:'Chrome protects this Web Store domain from extension access, including the legacy developer console. Store-installed extensions have the same restriction. Refreshing or granting site access will not help; no page content was read or modified.',ADDRESS_UNVERIFIED:'The browser could not verify this document. See reason for missing navigation/response evidence or a non-public peer. No page content was read. Do not automatically retry, refresh, switch tools or create replacement tabs.',PAGE_NOT_OPEN:'This action has no open target. Inspect browser_tabs once; do not repeatedly open the URL to repair a stale action.',PAGE_CHANGED:'The existing tab navigated. No new tab was opened. Inspect browser_tabs once and use the actual URL; do not retry the old URL or invent URL variants.',TAB_LIMIT:'Three plugin-created tabs are still open and cannot safely be closed. No new tab was opened. Use an existing tab or ask the user to close unneeded tabs; do not retry in a loop.',TAB_ACCESS_FAILED:'The existing tab is still present but inaccessible. No replacement was opened. Check browser permissions.',PAGE_LOAD_TIMEOUT:'Loading timed out; the same tab was retained. Inspect its state once. Do not loop retries, change query strings, or open duplicate URLs.',REDIRECT_BLOCKED:'The existing tab redirected to a site that is not allowed. No replacement will be opened. Review its permissions; do not bypass the denial.'};
-    return {...fail(e.message in messages ? e.message : 'CHROME_OPERATION_FAILED',messages[e.message] || 'Browser access failed. Inspect the existing page and extension permissions; do not automatically open a replacement.',failureState()),...(e.message==='ADDRESS_UNVERIFIED' ? {reason:e.reason || 'UNKNOWN'} : {}),retryable:false};
+    const messages = {BROWSER_PAGE_RESTRICTED:'Chrome protects this Web Store domain from extension access, including the legacy developer console. Store-installed extensions have the same restriction. Refreshing or granting site access will not help; no page content was read or modified.',ADDRESS_UNVERIFIED:'The browser could not identify an accessible current document. See reason for the document or local-URL restriction. No page content was read. Inspect the retained tab; do not open replacements or retry in a loop.',PAGE_NOT_OPEN:'This action has no open target. Inspect browser_tabs once; do not repeatedly open the URL to repair a stale action.',PAGE_CHANGED:'The existing tab navigated. No new tab was opened. Inspect browser_tabs once and use the actual URL; do not retry the old URL or invent URL variants.',TAB_LIMIT:'Three plugin-created tabs are still open and cannot safely be closed. No new tab was opened. Use an existing tab or ask the user to close unneeded tabs; do not retry in a loop.',TAB_ACCESS_FAILED:'The existing tab is still present but inaccessible. No replacement was opened. Check browser permissions.',PAGE_LOAD_TIMEOUT:'Loading timed out; the same tab was retained. Inspect its state once. Do not loop retries, change query strings, or open duplicate URLs.',REDIRECT_BLOCKED:'The existing tab redirected to a site that is not allowed. No replacement will be opened. Review its permissions; do not bypass the denial.'};
+    return {...fail(e.message in messages ? e.message : 'CHROME_OPERATION_FAILED',messages[e.message] || 'Browser access failed. Inspect the existing page and extension permissions; do not automatically open a replacement.',failureState()),...(e.message==='ADDRESS_UNVERIFIED' ? {reason:e.reason || 'UNKNOWN'} : {}),...(e.message==='PAGE_LOAD_TIMEOUT'?{tabId:e.tabId,status:e.tabStatus}:{}),retryable:false};
   }
 }
 async function chain() {
@@ -684,7 +692,7 @@ async function learningRequest(message,sender) {
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if(sender.id!==chrome.runtime.id)return;
   if(message?.type==='cindy-learning') {
-    learningRequest(message,sender).then(reply).catch(e=>reply({ok:false,error:e.message}));return true;
+    learningRequest(message,sender).then(reply).catch(e=>reply({ok:false,error:e.message,...(e.message==='ADDRESS_UNVERIFIED'?{reason:e.reason}: {})}));return true;
   }
   if(message?.type==='cindy-cancel') {
     const call=learningCalls.get(message.id);
