@@ -2124,7 +2124,8 @@ function watchRun(entry) {
 const DRAFT_RE = /(写|起草|拟|回).{0,8}(邮件|信|email)|草稿|draft|e-?mail/i;
 /** 删改档案的请求：快速通道只能读，直接交给能写档案的任务。 */
 const EDIT_RE =
-  /删|去掉|移除|改成|改为|改一下|更正|纠正|(?<!对)不对|错了|没这事|没有这回事|标记|办完了|已完成|关掉|合并|\b(delete|remove|correct|wrong|update|change|mark|close|merge|didn'?t happen)\b|削除|消して|修正|間違い|삭제|지워|수정|틀렸/i;
+  // 只认明确要动手的说法；「不对」「错了」这类评价交给快速通道带着上文判断，真要改时它会转交。
+  /删|去掉|移除|改成|改为|改一下|更正|纠正|没这事|没有这回事|标记(成|为)|关掉|合并|\b(delete|remove|close|merge|didn'?t happen)\b|削除|消して|修正して|삭제|지워|수정해/i;
 const ACTION_RE =
   /回补|补全|往前补|去查|查一下|查查|搜一下|找一下|帮我(发|约|安排|问)|发给|提醒|\b(check|look ?up|search|find|backfill|schedule|remind|send|book|arrange)\b|調べ|探し|確認して|予定|送って|リマインド|찾아|확인해|검색|일정|보내|알려/i;
 

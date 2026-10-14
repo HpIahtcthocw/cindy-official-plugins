@@ -1011,6 +1011,10 @@ test('人物页对话：记得上文；删改档案交给任务直接改；快�
     assert.equal((await a.view('ask', { contactId: p.id, text: '她这样做不对吗？' })).result.kind, 'answer');
     assert.equal((await a.view('ask', { contactId: p.id, text: '那条待办删了吗' })).result.kind, 'answer');
     assert.equal((await a.view('ask', { contactId: p.id, text: '那条待办删了吗。' })).result.kind, 'answer');
+    // 「不对」「错了」是评价，不算要改；「删了吧」是要删
+    assert.equal((await a.view('ask', { contactId: p.id, text: '她这样做不对吧' })).result.kind, 'answer');
+    for (let i = 0; i < 100 && a.events.filter((e) => e.name === 'task' && e.data.status === 'done').length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal((await a.view('ask', { contactId: p.id, text: '那就帮我删了吧' })).result.kind, 'task');
   } finally {
     a.close();
   }
