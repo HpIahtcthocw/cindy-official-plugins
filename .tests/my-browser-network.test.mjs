@@ -135,3 +135,20 @@ test('public IPv6 passes shared read/interaction policy and current-document gua
     assert.equal(P.check(P.defaults(),'text','http://['+ip+']/').error,'URL_NOT_ALLOWED');
   }
 });
+
+
+test('nonzero DNS results use the proxy exemption without allowing later private answers',async()=>{
+  const frames=new Map([[1,{documentId:'doc',url:'https://example.test/'}]]);
+  let answer;
+  const h=fixture(frames,{dns:{resolve:async()=>answer}});
+  for(const resultCode of [-105,-2,1]){
+    answer={resultCode};assert.equal(await h.guard.document(1),'doc');
+    for(const address of ['127.0.0.1','10.0.0.9','fc00::1']){
+      answer={resultCode:0,address};
+      await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'});
+    }
+  }
+  answer={resultCode:0,address:'8.8.8.8'};assert.equal(await h.guard.document(1),'doc');
+  answer={resultCode:0};
+  await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'},'missing address in a successful result is not a DNS failure');
+});

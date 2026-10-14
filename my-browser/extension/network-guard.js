@@ -63,7 +63,12 @@
       // must never authorize a later document after the hostname changes.
       if(typeof chrome.dns?.resolve!=='function')return;
       let address;
-      try{address=(await chrome.dns.resolve(host))?.address;}catch{return;}
+      try{
+        const result=await chrome.dns.resolve(host);
+        // Resolution failures can fulfill the promise without an address.
+        if(Number.isInteger(result?.resultCode) && result.resultCode!==0)return;
+        address=result?.address;
+      }catch{return;}
       const ok=typeof address==='string' && publicAddress(address);
       if(!ok)throw unverified('LOCAL_ADDRESS');
     }

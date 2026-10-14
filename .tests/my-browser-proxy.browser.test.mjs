@@ -67,6 +67,14 @@ test('proxy translation renders visible Chinese and restores original text witho
   const localRow=unfiltered.tabs.find(row=>row.reason==='LOCAL_ADDRESS');
   assert.ok(localRow,'unfiltered diagnostics retain the local failure');
   assert.equal(localRow.redacted,true);assert.equal(localRow.url,undefined);assert.equal(localRow.title,undefined);
+  // A fulfilled DNS failure must still allow a proxy-loaded public hostname.
+  await worker.evaluate(()=>{chrome.dns.resolve=async()=>({resultCode:-105});});
+  const remoteDnsRead=await bridge.request('act',{action:'text',payload:{url:'http://reading.test/'}});
+  assert.equal(remoteDnsRead.ok,true,JSON.stringify(remoteDnsRead));
+  assert.match(remoteDnsRead.text,/Reading through the configured proxy/);
+  await worker.evaluate(()=>{chrome.dns.resolve=async()=>({resultCode:0,address:'127.0.0.1'});});
+  const privateRead=await bridge.request('act',{action:'text',payload:{url:'http://reading.test/'}});
+  assert.equal(privateRead.reason,'LOCAL_ADDRESS','failed DNS must not authorize a later private result');
   await worker.evaluate(()=>{chrome.dns=globalThis.savedDNS;delete globalThis.savedDNS;});
   const ipv6='http://[2606:4700:4700::1111]/';
   const read=await bridge.request('act',{action:'text',payload:{url:ipv6}});
