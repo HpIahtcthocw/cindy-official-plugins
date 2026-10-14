@@ -12,7 +12,7 @@ const root=path.resolve(import.meta.dirname,'../my-browser');
 const {createBridge}=require('../my-browser/node/bridge.cjs');
 const P=require('../my-browser/extension/policy.js');
 const enabled=!!process.env.PLAYWRIGHT_CORE;
-test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negative paths',{skip:!enabled,timeout:120000},async t=>{
+for (const autoConnectOnly of [true,false]) test(autoConnectOnly ? 'real Chrome: auto-connect and reconnect without pairing UI' : 'real Chrome: sandbox messages → Node → MV3 → DOM, settings and negative paths',{skip:!enabled,timeout:120000},async t=>{
   const {chromium}=require(process.env.PLAYWRIGHT_CORE);
   const profile=await fs.mkdtemp(path.join(os.tmpdir(),'my-browser-test-'));let context;
   t.after(async()=>{await context?.close();await fs.rm(profile,{recursive:true,force:true,maxRetries:3});});
@@ -29,7 +29,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   const extensionId=createHash('sha256').update(publicKey).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c=>String.fromCharCode(97+parseInt(c,16)));
   const extensionManifest=JSON.parse(await fs.readFile(path.join(extensionDir,'manifest.json'),'utf8'));
   await fs.writeFile(path.join(extensionDir,'manifest.json'),JSON.stringify({...extensionManifest,key:publicKey.toString('base64')}));
-  const bridge=createBridge({ports:[18819],extensionId});t.after(()=>bridge.close());
+  let bridge=createBridge({ports:[18819],extensionId});t.after(()=>bridge.close());
   await bridge.request('status'); // Fail before launching Chrome if the isolated test port is occupied.
   const installCalls=[];
   const installation=require('../my-browser/node/installation.cjs').createInstallation({platform:'darwin',exists:p=>p.includes('Chrome') || p.includes('Safari'),run:async(...args)=>installCalls.push(args)});
@@ -53,7 +53,7 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
       if(req.headers.host?.startsWith('redirect.test')){res.writeHead(302,{Location:'http://blocked.test/'});return res.end();}
       let data='';for await(const c of req)data+=c;
       const json=value=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));};
-      if(req.url==='/node-request'){const v=JSON.parse(data);return json({ok:true,result:v.method==='installation'?{ok:true,...installation.status()}:v.method==='openInstallation'?await installation.open(v.params.browser,v.params.mode):await bridge.request(v.method,v.params)});}
+      if(req.url==='/node-request'){const v=JSON.parse(data);return json({ok:true,result:v.method==='status'&&faults.disconnected?{...await bridge.request('status'),extension_connected:false,clients:[]}:v.method==='installation'?{ok:true,...installation.status()}:v.method==='openInstallation'?await installation.open(v.params.browser,v.params.mode):await bridge.request(v.method,v.params)});}
       if(req.url==='/kv'){
         if((req.method==='GET'&&faults.read)||(req.method==='PUT'&&faults.save)){res.statusCode=503;return json({});}
         if(req.method==='PUT'){cfg=JSON.parse(data);res.statusCode=204;return res.end();}return json(cfg);
@@ -108,10 +108,29 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   const until=Date.now()+15000;let status;
   do{status=await tool('browser_status');if(status.extension_connected)break;await new Promise(r=>setTimeout(r,300));}while(Date.now()<until);
   assert.equal(status.extension_connected,true,'MV3 connected: '+JSON.stringify({status,workers:await Promise.all(context.serviceWorkers().map(sw=>sw.evaluate(async()=>({connection:await chrome.storage.session.get('connection'),id:chrome.runtime.id}))))}));
+  assert.equal(cfg.pairedClients,undefined);assert.equal(await logic.evaluate(()=>window.confirmCount),0);
   assert.equal('policy' in status,false);assert.equal('extension_dir' in status,false);assert.equal('port' in status,false);
   assert.equal('origin' in status.clients[0],false);assert.equal('extensionId' in status.clients[0],false);
   assert.ok(status.clients[0].id);assert.equal(status.installation.browsers[0].browser,'chrome');
   const connection=await context.serviceWorkers()[0].evaluate(()=>chrome.storage.session.get('connection'));assert.equal(connection.connection.connected,true);
+  if(autoConnectOnly) {
+    const settings=await context.newPage();await settings.goto(base+'/');
+    await settings.getByText('浏览器已连接',{exact:true}).waitFor();
+    assert.equal(await settings.locator('#profiles button').count(),0);
+    assert.equal(await settings.getByRole('button',{name:'确认连接',exact:true}).count(),0);
+    assert.equal(cfg.pairedClients,undefined);
+    await bridge.close();bridge=createBridge({ports:[18819],extensionId});await bridge.request('status');
+    const deadline=Date.now()+20000;
+    do {status=await tool('browser_status');if(status.extension_connected)break;await new Promise(r=>setTimeout(r,300));}while(Date.now()<deadline);
+    assert.equal(status.extension_connected,true,'extension reconnects after the bridge restarts');
+    await settings.reload();await settings.getByText('浏览器已连接',{exact:true}).waitFor();
+    assert.equal(await logic.evaluate(()=>window.confirmCount),0);
+    assert.equal(cfg.pairedClients,undefined);assert.equal(installCalls.length,0);
+    assert.deepEqual(cfg.policy,{read:{block:[]},interact:{allow:[],block:[]}});
+    assert.deepEqual(errors,[]);
+    if(process.env.MY_BROWSER_SCREENSHOT)await settings.screenshot({path:process.env.MY_BROWSER_SCREENSHOT,fullPage:true});
+    return;
+  }
   // Establish interception before this page's first request (extension-created targets may navigate before Playwright attaches).
   const xPage=await context.newPage();await xPage.goto('https://x.com/notifications/mentions');
   const started=Date.now();const mentions=await tool('browser_read',{recipe:'x_mentions',limit:5,maxChars:2000});
@@ -430,10 +449,18 @@ test('real Chrome: sandbox messages → Node → MV3 → DOM, settings and negat
   if(process.env.MY_BROWSER_SCREENSHOT)await settings.screenshot({path:process.env.MY_BROWSER_SCREENSHOT,fullPage:true});
   const candidate={id:crypto.randomUUID(),origin:'safari-web-extension://'+crypto.randomUUID(),extensionId};
   await fetch('http://127.0.0.1:'+(await bridge.request('status')).port+'/health',{headers:{'X-My-Browser-Extension':candidate.extensionId,'X-My-Browser-Origin':candidate.origin,'X-My-Browser-Client':candidate.id,'X-My-Browser-Version':status.version,'X-My-Browser-Family':'safari'}});
-  await logic.evaluate(()=>window.confirmAllowed=false);await settings.locator('#refresh').click();await settings.getByRole('button',{name:'确认连接',exact:true}).click();await settings.getByText('No browser was authorized.',{exact:true}).waitFor();assert.equal(cfg.pairedClients,undefined);
-  await logic.evaluate(()=>window.confirmAllowed=true);await settings.getByRole('button',{name:'确认连接',exact:true}).click();await settings.waitForFunction(()=>!document.querySelector('#profiles button'));assert.equal(cfg.pairedClients[0].id,candidate.id);assert.ok(cfg.policy.read.block.includes('new-block.test'));
+  const confirmations=await logic.evaluate(()=>window.confirmCount);
+  await logic.evaluate(()=>window.confirmAllowed=false);await settings.locator('#refresh').click();
+  await settings.waitForFunction(()=>!document.querySelector('#refresh').disabled);
+  assert.equal(await settings.locator('#profiles button').count(),0);
+  assert.equal(await settings.getByRole('button',{name:'确认连接',exact:true}).count(),0);
+  assert.equal(await logic.evaluate(()=>window.confirmCount),confirmations);
+  assert.equal(cfg.pairedClients,undefined);assert.ok(cfg.policy.read.block.includes('new-block.test'));
+  assert.equal((await bridge.request('status')).clients.find(c=>c.id===candidate.id).connected,false);
+  faults.disconnected=true;await settings.locator('#refresh').click();
   await settings.locator('.browser-card').filter({has:settings.getByText('Chrome',{exact:true})}).getByRole('button',{name:'安装浏览器扩展'}).click();
-  await settings.getByText('请在浏览器完成确认，本页会自动检查连接。',{exact:true}).waitFor();
+  await settings.getByText('请在浏览器完成扩展安装，随后会自动连接。',{exact:true}).waitFor();
+  faults.disconnected=false;
   assert.equal(installCalls.length,1);assert.equal(installCalls[0][1][2],'https://chromewebstore.google.com/detail/cindy/dmbhhhdijpeaibfeocdcjhfefkgpkeef');
   await logic.evaluate(()=>window.confirmAllowed=false);
   await settings.locator('#all-sites').check();await settings.locator('#save').click();await settings.locator('#hint.error').waitFor();

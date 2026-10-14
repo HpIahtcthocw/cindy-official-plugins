@@ -20,8 +20,7 @@ async function authenticate(bridge,port,headers){
   Object.defineProperty(headers,'__sign',{value:key.sign,enumerable:false,configurable:true});
   const base=`http://127.0.0.1:${port}`; let health=await (await fetch(base+'/health',{headers})).json();
   if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}
-  await bridge.request('setTrustedClients',{clients:[{id:headers['X-My-Browser-Client'],origin:'chrome-extension://'+headers['X-My-Browser-Extension'],extensionId:headers['X-My-Browser-Extension'],publicKey:JSON.stringify(JSON.parse(Buffer.from(key.publicKey,'base64url').toString('utf8')))}]});
-  if(health.pairing_required){health=await (await fetch(base+'/health',{headers})).json();if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}}
+  assert.ok(health.session,'official extension connects without a saved pairing');
   return health;
 }
 

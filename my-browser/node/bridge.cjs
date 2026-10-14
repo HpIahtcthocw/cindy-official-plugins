@@ -1,5 +1,5 @@
 'use strict';
-// Only Cindy stdio can enqueue work or approve a new extension identity.
+// Only Cindy stdio can enqueue browser actions or restore legacy paired identities.
 const http = require('node:http');
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -24,8 +24,12 @@ function createBridge(options = {}) {
   const knownIds = new Set([primaryId,...[distribution.chrome.extensionId,distribution.edge.extensionId].filter(Boolean)]);
   const sameIdentity = (p,c) => p && p.id === c.id && p.origin === c.origin && p.extensionId === c.extensionId;
   const pairedCredential = c => pins.some(p => sameIdentity(p,c) && !!c.publicKey && p.publicKey === c.publicKey);
-  const approved = c => (c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId)) || pins.some(p => sameIdentity(p,c));
-  const sessionReady = c => c.trusted && (c.version !== manifest.version || (!!c.publicKey && c.authenticated && pairedCredential(c)));
+  const official = c => c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId);
+  const approved = c => official(c) || pins.some(p => sameIdentity(p,c));
+  // Official extensions connect after proof of key possession, without a manual
+  // pairing record. Legacy/custom identities still require their saved binding.
+  const authenticatedCredential = c => !!c.publicKey && c.authenticated && (official(c) || pairedCredential(c));
+  const sessionReady = c => c.trusted && (c.version !== manifest.version || authenticatedCredential(c));
   const connected = () => [...clients.values()].filter(c => sessionReady(c) && live(c) && compatible(c.version));
   const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
   const normalizePublicKey = value => {
@@ -170,14 +174,14 @@ function createBridge(options = {}) {
       client.challenge=challenge;
       client.trusted = approved(client); clients.set(id,client);
       const authRequired=client.version===manifest.version;
-      const sessionAllowed=client.trusted&&(!authRequired||(!!client.publicKey&&client.authenticated&&pairedCredential(client)));
+      const sessionAllowed=client.trusted&&(!authRequired||authenticatedCredential(client));
       if(sessionAllowed&&!client.session)client.session=crypto.randomUUID();
       return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
     }
-    if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect or approve this browser in Cindy.'),409);
+    if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect the Cindy browser extension.'),409);
     client.seen = Date.now();
     if(req.url === '/learning/challenge' && req.method === 'GET') {
-      if(!client.publicKey||!client.authenticated||!pairedCredential(client))return send(res,failure('PAIRING_REQUIRED','Reconnect the paired browser extension before starting learning.'),403);
+      if(!authenticatedCredential(client))return send(res,failure('PAIRING_REQUIRED','Reconnect the Cindy browser extension before starting learning.'),403);
       for(const [key,item] of learningChallenges)if(Date.now()>item.expiresAt)learningChallenges.delete(key);
       const value=crypto.randomBytes(32).toString('base64url');
       learningChallenges.set(value,{clientId:id,expiresAt:Date.now()+10000});
@@ -193,8 +197,8 @@ function createBridge(options = {}) {
       const pending=learningChallenges.get(challenge);
       const bodyDigest=crypto.createHash('sha256').update(learningRaw).digest('base64url');
       const payload=challenge+'\\n'+req.method+'\\n'+req.url+'\\n'+bodyDigest;
-      const valid=pending?.clientId===id&&pending.expiresAt>Date.now()&&!!client.publicKey&&client.authenticated&&pairedCredential(client)&&normalizePublicKey(h['x-my-browser-key'])===client.publicKey&&verifyProof(client.publicKey,payload,proof);
-      if(!valid)return send(res,failure('PAIRING_REQUIRED','Reconnect the paired browser extension before starting learning.'),403);
+      const valid=pending?.clientId===id&&pending.expiresAt>Date.now()&&authenticatedCredential(client)&&normalizePublicKey(h['x-my-browser-key'])===client.publicKey&&verifyProof(client.publicKey,payload,proof);
+      if(!valid)return send(res,failure('PAIRING_REQUIRED','Reconnect the Cindy browser extension before starting learning.'),403);
       learningChallenges.delete(challenge);
     }
     if (req.method === 'POST' && req.url === '/learning/start') {

@@ -10,7 +10,7 @@ async function fixture(t) {
   const bridge=createBridge({ports:[0],connectWait:0,pollTimeout:10,jobTimeout:500});t.after(()=>bridge.close());
   const {port}=await bridge.request('status');
   const pinned=[];
-  async function client(browser='chrome',extensionId=EXT_ID,origin='chrome-extension://'+extensionId,paired=true) {
+  async function client(browser='chrome',extensionId=EXT_ID,origin='chrome-extension://'+extensionId,paired=false) {
     const id=crypto.randomUUID();let session;
     const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
     const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey),publicJwk={kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,ext:false};
@@ -27,6 +27,24 @@ async function fixture(t) {
   }
   return {bridge,client};
 }
+test('official store and bundled extensions authenticate automatically without saved pairings',async t=>{
+  const {bridge,client}=await fixture(t);
+  const storeId=require('../my-browser/distribution.json').chrome.extensionId;
+  for(const extensionId of new Set([EXT_ID,storeId])) {
+    const browser=await client('chrome',extensionId);
+    const unsigned=await browser.request('/health');
+    assert.equal(unsigned.session,undefined);
+    assert.equal((await browser.request('/poll')).status,409);
+    const first=await browser.health();
+    assert.equal(first.pairing_required,false);assert.ok(first.session);
+    assert.equal((await browser.request('/learning/challenge')).status,200);
+    // Settings refresh and startup both restore an empty legacy binding list.
+    await bridge.request('setTrustedClients',{clients:[]});
+    assert.equal((await browser.request('/poll')).status,200);
+    const again=await browser.health();assert.equal(again.session,first.session);
+  }
+  assert.equal((await bridge.request('status')).extension_connected,true);
+});
 test('Chrome and Edge jobs are connection-bound; ambiguous profile selection never guesses',async t=>{
   const {bridge,client}=await fixture(t);const chrome=await client(),edge=await client('edge');await chrome.health();await edge.health();
   let r=await bridge.request('act',{action:'text',payload:{url:'https://example.test'}});assert.equal(r.error,'BROWSER_REQUIRED');
