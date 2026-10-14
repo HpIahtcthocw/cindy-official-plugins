@@ -1,13 +1,14 @@
 'use strict';
-if (typeof importScripts === 'function') importScripts('policy.js','network-guard.js','learning-core.js');
+if (typeof importScripts === 'function') importScripts('policy.js','network-guard.js','learning-core.js','youtube-transcript.js');
 // A lexical `const chrome` masks Chromium's lazy API initialization; use a var alias.
 var chrome = globalThis.browser || globalThis.chrome;
 const P = globalThis.MyBrowserPolicy;
 const network = globalThis.MyBrowserNetwork.create(chrome);
 const VERSION = chrome.runtime.getManifest().version;
+const WIRE_VERSION = '0.4.13';
 let bridge = null;
 let discovery;
-let wireVersion=VERSION;
+let wireVersion=WIRE_VERSION;
 let running = false;
 const b64url = bytes => {
   let binary=''; for(const byte of new Uint8Array(bytes)) binary+=String.fromCharCode(byte);
@@ -88,13 +89,21 @@ async function discoverBridge() {
     const candidates=await Promise.all(Array.from({length:10},async(_,offset)=>{
       const port=first+offset,base='http://127.0.0.1:'+port;
       try{
-        let r=await fetchJSON(base,'/health',null,undefined,450,VERSION);
-        if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey});}
-        if(r.challenge){auth=auth||await authReady().catch(()=>null);if(!auth)return null;const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,VERSION,{publicKey:auth.publicKey,proof});}
+        let r=await fetchJSON(base,'/health',null,undefined,450,WIRE_VERSION);
+        if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,WIRE_VERSION,{publicKey:auth.publicKey});}
+        if(r.challenge){auth=auth||await authReady().catch(()=>null);if(!auth)return null;const proof=await auth.sign(r.challenge);r=await fetchJSON(base,'/health',null,undefined,450,WIRE_VERSION,{publicKey:auth.publicKey,proof});}
         if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id)return null;
-        if(r.version!==VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
+        if(r.version!==WIRE_VERSION&&!['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(r.version)&&!/^0\.3\.\d+$/.test(r.version)){diagnostic='UPDATE_CINDY_CHROME';return null;}
         const version=r.version;
-        if(version!==VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){auth=auth||await authReady().catch(()=>null);if(!auth)return null;const proof=await auth.sign(r.challenge);if(!proof)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
+        if(version!==WIRE_VERSION){r=await fetchJSON(base,'/health',null,undefined,450,version);if(r.auth_required){auth=auth||await authReady().catch(()=>null);if(!auth)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey});}if(r.challenge){auth=auth||await authReady().catch(()=>null);if(!auth)return null;const proof=await auth.sign(r.challenge);if(!proof)return null;r=await fetchJSON(base,'/health',null,undefined,450,version,{publicKey:auth.publicKey,proof});}if(r.plugin!=='my-browser'||r.protocol!==3||r.extensionId!==chrome.runtime.id||r.version!==version)return null;}
+        if(r.native_binding_required){
+          try {
+            const registered=await Promise.race([chrome.runtime.sendNativeMessage('com.makecindy.browser',{port,clientId,publicKey:auth.publicKey}),sleep(10000).then(()=>{throw Error('NATIVE_BINDING_UNAVAILABLE');})]);
+            if(!registered?.ok)throw Error('NATIVE_BINDING_UNAVAILABLE');
+            const proof=await auth.sign(r.challenge);
+            r=await fetchJSON(base,'/health',null,undefined,1500,version,{publicKey:auth.publicKey,proof});
+          }catch{diagnostic='NATIVE_BINDING_UNAVAILABLE';return null;}
+        }
         if(r.pairing_required){diagnostic='PAIRING_REQUIRED';return null;}
         if(typeof r.session!=='string'||!r.session)return null;
         const learning=r.capabilities?.includes('learning-v1')===true&&r.capabilities?.includes('learning-auth-v2')===true;
@@ -709,6 +718,28 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
 });
 // YouTube exposes timed caption metadata through its own player. Read only this
 // fixed field; no arbitrary page JavaScript and no cookies leave the browser.
+async function fetchYoutubeCaptions(url) {
+  let response,data;
+  try {
+    response=await fetch(url,{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15000)});
+    if(!response.ok)throw Error('SUBTITLE_UNAVAILABLE');
+    if(!response.body)throw Error('SUBTITLE_EMPTY');
+    const reader=response.body.getReader(),parts=[];let bytes=0;
+    try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('SUBTITLE_TOO_LARGE');parts.push(value);}}finally{await reader.cancel().catch(()=>{});}
+    data=new Uint8Array(bytes);let at=0;for(const part of parts){data.set(part,at);at+=part.length;}
+  } catch(e) {
+    if(['SUBTITLE_UNAVAILABLE','SUBTITLE_EMPTY','SUBTITLE_TOO_LARGE'].includes(e.message))throw e;
+    throw Error(['TimeoutError','AbortError'].includes(e.name)?'SUBTITLE_TIMEOUT':'SUBTITLE_FETCH_FAILED');
+  }
+  const text=new TextDecoder().decode(data);
+  if(!text.trim())throw Error('SUBTITLE_EMPTY');
+  let parsed;
+  try{parsed=JSON.parse(text);}catch{throw Error('SUBTITLE_RESPONSE_INVALID');}
+  if(!parsed||!Array.isArray(parsed.events))throw Error('SUBTITLE_RESPONSE_INVALID');
+  const cues=globalThis.CindyLearning.youtubeSubtitles(parsed);
+  if(!cues.length)throw Error('SUBTITLE_EMPTY');
+  return cues;
+}
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{
   if(m?.type!=='cindy-captions'||sender.id!==chrome.runtime.id)return;
   (async()=>{
@@ -722,21 +753,28 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{
     }});
     const tracks=result?.[0]?.documentId===documentId?result[0].result:[];
     const track=tracks.find(t=>t.language===m.language)||tracks.find(t=>t.kind!=='asr')||tracks[0];
-    if(!track)return {ok:true,cues:[]};
-    const url=new URL(track.url);
-    if(url.protocol!=='https:'||!/(^|\.)youtube\.com$/.test(url.hostname)||url.pathname!=='/api/timedtext'||url.username||url.password)throw Error('INVALID_SUBTITLE_SOURCE');
-    url.searchParams.set('fmt','json3');
-    const response=await fetch(url.href,{credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw Error('SUBTITLE_UNAVAILABLE');
-    const reader=response.body.getReader(),parts=[];let bytes=0;
-    try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('SUBTITLE_TOO_LARGE');parts.push(value);}}finally{await reader.cancel().catch(()=>{});}
-    const data=new Uint8Array(bytes);let at=0;for(const part of parts){data.set(part,at);at+=part.length;}
-    const parsed=JSON.parse(new TextDecoder().decode(data));
-    const cues=globalThis.CindyLearning.youtubeSubtitles(parsed);
+    let cues=[],sourceError;
+    if(track){
+      const url=new URL(track.url);
+      if(url.protocol!=='https:'||!/(^|\.)youtube\.com$/.test(url.hostname)||url.pathname!=='/api/timedtext'||url.username||url.password)throw Error('INVALID_SUBTITLE_SOURCE');
+      url.searchParams.set('fmt','json3');
+      try{cues=await fetchYoutubeCaptions(url.href);}catch(e){
+        if(!['SUBTITLE_EMPTY','SUBTITLE_RESPONSE_INVALID','SUBTITLE_UNAVAILABLE','SUBTITLE_TIMEOUT','SUBTITLE_FETCH_FAILED'].includes(e.message))throw e;
+        sourceError=e;
+      }
+    }
+    if(!cues.length){
+      const fallback=await chrome.scripting.executeScript({target:{tabId:tab.id,documentIds:[documentId]},world:'MAIN',func:globalThis.CindyYoutubeTranscript.read,args:[tab.url]});
+      if(fallback?.[0]?.documentId!==documentId)throw Error('PAGE_CHANGED');
+      const transcript=fallback[0].result;
+      if(!transcript?.ok)throw Error(transcript?.error==='SUBTITLE_UNAVAILABLE'?sourceError?.message||'SUBTITLE_UNAVAILABLE':transcript?.error||'SUBTITLE_UNAVAILABLE');
+      cues=transcript.cues;
+      if(!cues.length&&sourceError)throw sourceError;
+    }
     await learningRequest({id:crypto.randomUUID(),request:{op:'config'}},sender);
     if((await chrome.tabs.get(tab.id)).url!==tab.url)throw Error('PAGE_CHANGED');
-    return {ok:true,cues,language:track.language};
-  })().then(reply).catch(e=>reply({ok:false,error:e.message}));return true;
+    return {ok:true,cues,language:track?.language};
+  })().then(reply).catch(e=>reply({ok:false,error:e.message,...(e.message==='ADDRESS_UNVERIFIED'?{reason:e.reason}: {})}));return true;
 });
 
 // Resume only the user's subtitle panel on the same tab and exact URL after reload.

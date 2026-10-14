@@ -102,10 +102,10 @@ async function handleTool(name,args) {
     if (!status?.ok) return status||fail('STATUS_UNAVAILABLE','Cannot check browser connections. Re-enable Cindy Chrome and refresh its settings.');
     // Tool output is an explicit projection. The settings channel below retains
     // policy, extension_dir and pairing identity details without sending them to AI.
-    return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,
-      clients:(status.clients || []).map(c=>({id:c.id,browser:c.browser,version:c.version,protocolVersion:c.protocolVersion,connected:c.connected,trusted:c.trusted,identitySupported:c.identitySupported})),
+    return {ok:true,version:status.version,protocol:status.protocol,extension_connected:status.extension_connected,nativeBinding:status.nativeBinding,
+      clients:(status.clients || []).map(c=>({id:c.id,browser:c.browser,version:c.version,protocolVersion:c.protocolVersion,connected:c.connected,trusted:c.trusted,identitySupported:c.identitySupported,nativeBindingRequired:c.nativeBindingRequired})),
       installation:{ok:!!installation?.ok,browsers:(installation?.browsers || []).map(b=>({browser:b.browser,supported:b.supported,installed:b.installed,published:b.published,bundled:b.bundled}))},
-      how_to_install:'Open Cindy Chrome plugin settings and choose Install extension. Chrome uses the official Chrome Web Store listing; Edge uses the developer directory fallback until an Edge store route is published. Keep Cindy Chrome enabled after installation; official extensions connect automatically. Directory loading is the only developer fallback included in this plugin package.'};
+      how_to_install:'Open Cindy Chrome plugin settings and choose Install extension. Chrome uses the official Chrome Web Store listing; Edge uses the developer directory fallback until an Edge store route is published. Keep Cindy Chrome enabled after installation; updated official extensions connect automatically. If nativeBinding is unavailable, re-enable the plugin; new profiles need Chrome extension 0.4.16 or later. Directory loading is the only developer fallback included in this plugin package.'};
   }
   if (name === 'browser_tabs') return node('act',{action:'tabs',payload:P.validate('tabs',args)});
   if (name === 'browser_read') {

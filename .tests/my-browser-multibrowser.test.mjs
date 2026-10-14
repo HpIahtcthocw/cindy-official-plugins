@@ -5,12 +5,13 @@ import {webcrypto} from 'node:crypto';
 const require=createRequire(import.meta.url);
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
 const {createInstallation}=require('../my-browser/node/installation.cjs');
-const version=require('../my-browser/extension/manifest.json').version;
+const version='0.4.13';
 async function fixture(t) {
-  const bridge=createBridge({ports:[0],connectWait:0,pollTimeout:10,jobTimeout:500});t.after(()=>bridge.close());
+  const nativeToken='d'.repeat(64);
+  const bridge=createBridge({nativeToken,ports:[0],connectWait:0,pollTimeout:10,jobTimeout:500});t.after(()=>bridge.close());
   const {port}=await bridge.request('status');
   const pinned=[];
-  async function client(browser='chrome',extensionId=EXT_ID,origin='chrome-extension://'+extensionId,paired=false) {
+  async function client(browser='chrome',extensionId=EXT_ID,origin='chrome-extension://'+extensionId,paired=false,native=true) {
     const id=crypto.randomUUID();let session;
     const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
     const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey),publicJwk={kty:jwk.kty,crv:jwk.crv,x:jwk.x,y:jwk.y,ext:false};
@@ -22,12 +23,12 @@ async function fixture(t) {
     const record={id,origin,extensionId,publicKey:JSON.stringify(publicJwk)};
     const pairNow=async()=>{pinned.push(record);await bridge.request('setTrustedClients',{clients:[...pinned]});};
     if(paired)await pairNow();
-    const health=async()=>{let r=await request('/health');if(r.challenge){const proof=Buffer.from(await webcrypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(r.challenge))).toString('base64url');const response=await fetch('http://127.0.0.1:'+port+'/health',{headers:{'X-My-Browser-Extension':extensionId,'X-My-Browser-Origin':origin,'X-My-Browser-Client':id,'X-My-Browser-Version':version,'X-My-Browser-Family':browser,'X-My-Browser-Key':publicKey,'X-My-Browser-Proof':proof}});r={status:response.status,...await response.json()};}session=r.session;return r;};
+    const health=async()=>{let r=await request('/health');if(r.challenge){const proof=Buffer.from(await webcrypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new TextEncoder().encode(r.challenge))).toString('base64url');const response=await fetch('http://127.0.0.1:'+port+'/health',{headers:{'X-My-Browser-Extension':extensionId,'X-My-Browser-Origin':origin,'X-My-Browser-Client':id,'X-My-Browser-Version':version,'X-My-Browser-Family':browser,'X-My-Browser-Key':publicKey,'X-My-Browser-Proof':proof}});r={status:response.status,...await response.json()};}if(native && r.native_binding_required){await fetch('http://127.0.0.1:'+port+'/native/bind',{method:'POST',headers:{Authorization:'Bearer '+nativeToken},body:JSON.stringify({clientId:id,origin,publicKey})});r=await request('/health');}session=r.session;return r;};
     return {id,origin,extensionId,request,health,pair:pairNow};
   }
   return {bridge,client};
 }
-test('official store and bundled extensions authenticate automatically without saved pairings',async t=>{
+test('official store and bundled extensions authenticate after native registration without manual pairings',async t=>{
   const {bridge,client}=await fixture(t);
   const storeId=require('../my-browser/distribution.json').chrome.extensionId;
   for(const extensionId of new Set([EXT_ID,storeId])) {
@@ -110,4 +111,15 @@ test('ZIP is not an installation route; developer mode opens only the bundled di
   assert.equal((await i.open('chrome','zip')).error,'INVALID_INSTALL_TARGET');
   const r=await i.open('chrome','developer');assert.equal(r.ok,true);assert.equal(calls.length,2);
   assert.ok(calls[1][1][1].endsWith('/my-browser/extension'));
+});
+
+test('a native HTTP caller cannot self-register by claiming the official ID and signing a new key',async t=>{
+  const {bridge,client}=await fixture(t);
+  const forged=await client('chrome',EXT_ID,'chrome-extension://'+EXT_ID,false,false);
+  const health=await forged.health();
+  assert.equal(health.session,undefined);assert.equal(health.native_binding_required,true);
+  assert.equal((await forged.request('/poll')).status,409);
+  assert.equal((await forged.request('/learning/challenge')).status,409);
+  assert.equal((await forged.request('/native/bind',{clientId:forged.id})).status,403);
+  assert.equal((await bridge.request('status')).extension_connected,false);
 });

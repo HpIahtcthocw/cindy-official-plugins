@@ -8,7 +8,7 @@ import {createLearningService} from '../my-browser/learning-service.js';
 import {createSubtitleCache} from '../my-browser/subtitle-cache.js';
 const require=createRequire(import.meta.url),core=require('../my-browser/extension/learning-core.js');
 const {createBridge,EXT_ID}=require('../my-browser/node/bridge.cjs');
-const version=require('../my-browser/extension/manifest.json').version;
+const version='0.4.13';
 async function credential(){
   const pair=await webcrypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign','verify']);
   const jwk=await webcrypto.subtle.exportKey('jwk',pair.publicKey);
@@ -18,9 +18,10 @@ async function credential(){
 async function authenticate(bridge,port,headers){
   const key=await credential(); headers['X-My-Browser-Key']=key.publicKey;
   Object.defineProperty(headers,'__sign',{value:key.sign,enumerable:false,configurable:true});
+  await bridge.request('setTrustedClients',{clients:[{id:headers['X-My-Browser-Client'],extensionId:EXT_ID,origin:'chrome-extension://'+EXT_ID,publicKey:Buffer.from(key.publicKey,'base64url').toString()}]});
   const base=`http://127.0.0.1:${port}`; let health=await (await fetch(base+'/health',{headers})).json();
   if(health.challenge){headers['X-My-Browser-Proof']=Buffer.from(await key.sign(health.challenge)).toString('base64url');health=await (await fetch(base+'/health',{headers})).json();}
-  assert.ok(health.session,'official extension connects without a saved pairing');
+  assert.ok(health.session,'existing saved binding remains valid');
   return health;
 }
 
@@ -122,7 +123,8 @@ test('task handoff recovers an uncertain send with the same durable keys and doe
 for(const previousVersion of ['0.3.48','0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'])test('new bridge preserves extension '+previousVersion,async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');const id=crypto.randomUUID();
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':id,'X-My-Browser-Version':previousVersion};
- const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,version);assert.ok(health.session);assert.deepEqual(health.capabilities,[]);
+ await bridge.request('setTrustedClients',{clients:[{id,extensionId:EXT_ID,origin:'chrome-extension://'+EXT_ID}]});
+ const health=await (await fetch(`http://127.0.0.1:${port}/health`,{headers})).json();assert.equal(health.version,previousVersion);assert.equal(health.installedVersion,require('../my-browser/extension/manifest.json').version);assert.ok(health.session);assert.deepEqual(health.capabilities,[]);
  const status=await bridge.request('status');assert.equal(status.extension_connected,true);assert.equal(status.clients[0].id,id);
 });
 
@@ -140,6 +142,7 @@ test('failed translation repair is bounded and cancellation prevents the extra m
 test('installed extension version is independent from compatibility negotiation',async t=>{
  const bridge=createBridge({ports:[0]});t.after(()=>bridge.close());const {port}=await bridge.request('status');
  const headers={'X-My-Browser-Extension':EXT_ID,'X-My-Browser-Client':crypto.randomUUID(),'X-My-Browser-Version':'0.4.2','X-My-Browser-Installed-Version':'0.4.4'};
+ await bridge.request('setTrustedClients',{clients:[{id:headers['X-My-Browser-Client'],extensionId:EXT_ID,origin:'chrome-extension://'+EXT_ID}]});
  await fetch(`http://127.0.0.1:${port}/health`,{headers});
  let status=await bridge.request('status');assert.equal(status.clients[0].version,'0.4.4');assert.equal(status.clients[0].protocolVersion,'0.4.2');assert.equal(status.clients[0].connected,true);
  delete headers['X-My-Browser-Installed-Version'];await fetch(`http://127.0.0.1:${port}/health`,{headers});

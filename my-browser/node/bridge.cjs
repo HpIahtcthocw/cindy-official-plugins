@@ -9,15 +9,17 @@ const manifest = require('../extension/manifest.json');
 const distribution = require('../distribution.json');
 const EXT_ID = crypto.createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest('hex').slice(0,32).replace(/[0-9a-f]/g,c => String.fromCharCode(97+parseInt(c,16)));
 const PROTOCOL = 3;
+const WIRE_VERSION = '0.4.13';
 const failure = (error,message,execution = 'not_executed') => ({ok:false,error,message,execution});
 function createBridge(options = {}) {
   let policy = P.defaults(), pins = [];
+  const nativeBindings=new Map();
   let server, starting, port = 0;
   const unconfirmedDispatches = new Map();
   let unconfirmedOverflow = false;
   const jobs = new Map(), clients = new Map(), waiting = new Map();
   const learning = new Map(), learningChallenges = new Map();
-  const compatible = version => version === manifest.version || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(version) || /^0\.3\.\d+$/.test(version);
+  const compatible = version => version === WIRE_VERSION || ['0.4.0','0.4.1','0.4.2','0.4.3','0.4.4','0.4.5','0.4.6','0.4.7','0.4.8','0.4.9','0.4.10','0.4.11','0.4.12'].includes(version) || /^0\.3\.\d+$/.test(version);
   const live = c => Date.now()-c.seen < 35000;
   // An isolated embedding/test can pin its own extension identity; the stdio runtime exposes no such override.
   const primaryId = options.extensionId || EXT_ID;
@@ -26,12 +28,13 @@ function createBridge(options = {}) {
   const pairedCredential = c => pins.some(p => sameIdentity(p,c) && !!c.publicKey && p.publicKey === c.publicKey);
   const official = c => c.origin === 'chrome-extension://'+c.extensionId && knownIds.has(c.extensionId);
   const approved = c => official(c) || pins.some(p => sameIdentity(p,c));
-  // Official extensions connect after proof of key possession, without a manual
-  // pairing record. Legacy/custom identities still require their saved binding.
-  const authenticatedCredential = c => !!c.publicKey && c.authenticated && (official(c) || pairedCredential(c));
-  const sessionReady = c => c.trusted && (c.version !== manifest.version || authenticatedCredential(c));
+  // New official identities need native-bootstrap registration as well as proof.
+  // Existing saved bindings remain valid without a native host or reapproval.
+  const boundCredential = c => pairedCredential(c) || (official(c) && nativeBindings.get(c.id)===c.publicKey);
+  const authenticatedCredential = c => !!c.publicKey && c.authenticated && boundCredential(c);
+  const sessionReady = c => c.trusted && (c.version !== WIRE_VERSION ? pins.some(p=>sameIdentity(p,c)) : authenticatedCredential(c));
   const connected = () => [...clients.values()].filter(c => sessionReady(c) && live(c) && compatible(c.version));
-  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),identitySupported:approved(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
+  const publicClient = c => ({id:c.id,browser:c.browser,version:c.installedVersion,protocolVersion:c.version,connected:sessionReady(c) && live(c) && compatible(c.version),trusted:sessionReady(c),identitySupported:approved(c),nativeBindingRequired:official(c)&&!boundCredential(c),origin:c.origin,extensionId:c.extensionId,...(c.publicKey ? {publicKey:c.publicKey} : {})});
   const normalizePublicKey = value => {
     if (typeof value !== 'string' || value.length > 2048) return null;
     try {
@@ -147,6 +150,18 @@ function createBridge(options = {}) {
   async function route(req,res) {
     // Custom headers require preflight on websites. Never enable CORS, including on /health.
     const h = req.headers;
+    if(req.url==='/native/bind') {
+      // This authority exists only in the private native-host connection file.
+      // It is never a browser header, public manifest value or /health result.
+      const expected=options.nativeToken;
+      const supplied=h.authorization;
+      if(req.method!=='POST'||h.host!=='127.0.0.1:'+port||h.origin||typeof expected!=='string'||expected.length!==64||
+         typeof supplied!=='string'||Buffer.byteLength(supplied)!==71||!crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from('Bearer '+expected)))return send(res,failure('FORBIDDEN','Native binding required.'),403);
+      const b=await body(req),c=clients.get(b.clientId);
+      if(!c||!official(c)||!c.authenticated||c.origin!==b.origin||normalizePublicKey(b.publicKey)!==c.publicKey)return send(res,failure('FORBIDDEN','Binding does not match the authenticated profile.'),403);
+      nativeBindings.set(c.id,c.publicKey);
+      return send(res,{ok:true});
+    }
     const extensionId = h['x-my-browser-extension'];
     const origin = h['x-my-browser-origin'] || 'chrome-extension://'+extensionId;
     const id = h['x-my-browser-client'];
@@ -158,7 +173,7 @@ function createBridge(options = {}) {
     let client = clients.get(id);
     if (client && (client.origin !== origin || client.extensionId !== extensionId)) return send(res,failure('IDENTITY_CHANGED','Reconnect with the correct browser profile.'),403);
     if (req.method === 'GET' && req.url === '/health') {
-      for (const [key,c] of clients) if (Date.now()-c.seen > 180000 && ![...jobs.values()].some(j => j.clientId === key)) clients.delete(key);
+      for (const [key,c] of clients) if (Date.now()-c.seen > 180000 && ![...jobs.values()].some(j => j.clientId === key)) {clients.delete(key);nativeBindings.delete(key);}
       if (!client && clients.size >= 16) return send(res,failure('TOO_MANY_BROWSERS','Close unused browser connections.'),429);
       const keyHeader=h['x-my-browser-key'];
       const publicKey=keyHeader===undefined ? client?.publicKey || null : normalizePublicKey(keyHeader);
@@ -173,12 +188,13 @@ function createBridge(options = {}) {
       const challenge=publicKey?{value:crypto.randomBytes(32).toString('base64url'),expires:Date.now()+10000,publicKey}:null;
       client.challenge=challenge;
       client.trusted = approved(client); clients.set(id,client);
-      const authRequired=client.version===manifest.version;
-      const sessionAllowed=client.trusted&&(!authRequired||authenticatedCredential(client));
+      const authRequired=client.version===WIRE_VERSION;
+      const sessionAllowed=sessionReady(client);
+      const nativeRequired=official(client)&&authRequired&&!boundCredential(client);
       if(sessionAllowed&&!client.session)client.session=crypto.randomUUID();
-      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:manifest.version,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
+      return send(res,{ok:true,plugin:'my-browser',protocol:PROTOCOL,version:compatible(client.version)?client.version:WIRE_VERSION,installedVersion:manifest.version,extensionId,clientId:id,pairing_required:!sessionAllowed,native_binding_required:nativeRequired,auth_required:authRequired,capabilities:sessionAllowed&&authRequired?['learning-v1','learning-auth-v2']:[],...(challenge ? {challenge:challenge.value} : {}),...(sessionAllowed ? {session:client.session} : {})});
     }
-    if (!client?.trusted || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect the Cindy browser extension.'),409);
+    if (!client || !sessionReady(client) || !client.session || !live(client) || !compatible(client.version) || h['x-my-browser-session'] !== client.session) return send(res,failure('SESSION_CHANGED','Reconnect the Cindy browser extension.'),409);
     client.seen = Date.now();
     if(req.url === '/learning/challenge' && req.method === 'GET') {
       if(!authenticatedCredential(client))return send(res,failure('PAIRING_REQUIRED','Reconnect the Cindy browser extension before starting learning.'),403);
