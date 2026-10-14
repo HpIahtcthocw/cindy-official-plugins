@@ -2151,7 +2151,8 @@ async function ask(input) {
     try {
       const answer = await quickAsk(d, text, talk);
       // 快速通道判断要动手：不记这句记号，改走任务
-      if (!answer.includes(HANDOFF)) {
+      // 整句就是记号才转交；回答里引用到这个字面量不算
+      if (answer.replace(/^[\s`'"“”「」]+|[\s`'"“”「」。.]+$/g, '') !== HANDOFF) {
         const entry = { key: `quick@${nowIso()}`, q: text, a: answer, at: nowIso(), via: 'quick', status: 'done' };
         await pushQa(d.id, entry);
         return { kind: 'answer', ...entry };

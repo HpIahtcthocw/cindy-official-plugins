@@ -998,6 +998,10 @@ test('人物页对话：记得上文；删改档案交给任务直接改；快�
     assert.match(a.tasks.sent.at(-1).text, /征求意见时，只回答和给建议，不改档案/);
     assert.ok(!(await a.view('qa', { contactId: p.id })).result.some((x) => String(x.a || '').includes('[[TASK]]')));
 
+    // 回答里只是引用到记号，不算转交
+    for (let i = 0; i < 100 && !a.events.some((e) => e.name === 'task' && e.data.status === 'done'); i++) await new Promise((r) => setTimeout(r, 20));
+    a.tasks.quick = { ok: true, text: '档案里提到了 [[TASK]] 这个写法。' };
+    assert.equal((await a.view('ask', { contactId: p.id, text: '档案里有没有写 [[TASK]]' })).result.kind, 'answer');
     // 「帮我删了」不经快速通道，直接交给任务
     const before = a.oneshots.length;
     // 等上一件交给任务的事做完（同一个人同时只跑一件）
