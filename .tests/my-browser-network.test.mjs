@@ -52,6 +52,15 @@ test('a hostname that resolves to a private IP is refused even when the page is 
   const v6=fixture(frames,{dns:{resolve:async()=>({address:'fc00::1'})}});
   await assert.rejects(v6.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'});
 });
+test('a later document re-resolves DNS so a private rebound is not served from cache',async()=>{
+  const frames=new Map([[1,{documentId:'doc1',url:'https://example.test/'}]]);
+  const resolved=[];
+  const h=fixture(frames,{dns:{resolve:async()=>{resolved.push(true);return {address:resolved.length===1?'8.8.8.8':'10.0.0.9'};}}});
+  assert.equal(await h.guard.document(1),'doc1');
+  frames.set(1,{documentId:'doc2',url:'https://example.test/'});
+  await assert.rejects(h.guard.document(1),{message:'ADDRESS_UNVERIFIED',reason:'LOCAL_ADDRESS'});
+  assert.equal(resolved.length,2);
+});
 test('a hostname that resolves to a public IP is allowed; DNS failure is the proxy exemption',async()=>{
   const frames=new Map([[1,{documentId:'doc',url:'https://example.test/'}]]);
   const publicDns=fixture(frames,{dns:{resolve:async()=>({address:'8.8.8.8'})}});

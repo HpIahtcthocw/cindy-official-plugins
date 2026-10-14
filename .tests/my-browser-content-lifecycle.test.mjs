@@ -110,3 +110,52 @@ test('restore and settings complete while the previous model request is pending'
   assert.equal(replies[1]?.[0],'settings');
   resolveModel({ok:true,translations:['late']});await settle();assert.equal(replies[2]?.[0],'first');
 });
+
+test('restore does not wait for an in-flight page translation request',async()=>{
+  let resolveConfig,resolveTranslate;let translates=0;
+  const configReady=new Promise(r=>{resolveConfig=r;});
+  const f=fixture(m=>{
+    if(m.type==='cindy-learning'){
+      if(m.request?.op==='config')return configReady;
+      if(m.request?.op==='translate'){translates++;return new Promise(r=>{resolveTranslate=r;});}
+      return Promise.resolve({ok:true});
+    }
+    return Promise.resolve({enabled:false});
+  });
+  f.context.innerHeight=800;f.context.innerWidth=1200;
+  f.context.MutationObserver=class{observe(){} disconnect(){}};
+  const paragraph={innerText:'Hello from the fixture page',getClientRects:()=>[{}],getBoundingClientRect:()=>({top:10,bottom:40,left:0,right:100,width:100,height:30}),closest:()=>null,querySelector:()=>null,isConnected:true,hasAttribute:()=>false,after(){}};
+  f.context.document.body.querySelectorAll=()=>[paragraph];
+  await settle();
+  const replies=[];const listener=[...f.listeners][0];
+  resolveConfig({ok:true,locale:'en',features:[]});
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['start',r]));
+  await settle();await settle();
+  assert.equal(translates,1);
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['restore',r]));
+  await settle();await settle();
+  assert.equal(replies.some(r=>r[0]==='restore'&&r[1]?.ok),true,'restore must finish while translation is still pending');
+  assert.equal(translates,1,'restore cancels rather than queueing behind the model');
+  resolveTranslate({ok:true,translations:['x']});
+  await settle();
+});
+test('hiding the panel while config is pending drops queued translate-page',async()=>{
+  let resolveConfig;const observed=[];
+  const configReady=new Promise(r=>{resolveConfig=r;});
+  const f=fixture(m=>{
+    if(m.type==='cindy-learning'){
+      if(m.request?.op==='config')return configReady;
+      return Promise.resolve({ok:true,translations:['x']});
+    }
+    return Promise.resolve({enabled:false});
+  });
+  f.context.MutationObserver=class{observe(target){observed.push(target);}disconnect(){}};
+  await settle();
+  const replies=[];const listener=[...f.listeners][0];
+  listener({type:'cindy-ui',action:'open'},{id:'fixture'},r=>replies.push(['open',r]));await settle();
+  listener({type:'cindy-ui',action:'translate-page'},{id:'fixture'},r=>replies.push(['translate',r]));await settle();
+  const ev=new Event('keydown');ev.key='Escape';f.context.document.dispatchEvent(ev);
+  resolveConfig({ok:true,locale:'en',features:[]});
+  await settle();await settle();await settle();
+  assert.equal(observed.length,0,'closed panel must not start queued translation');
+});
