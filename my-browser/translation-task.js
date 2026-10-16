@@ -2,7 +2,7 @@ import './extension/learning-core.js';
 const timing=globalThis.CindyLearning.learningTiming;
 // Execute through the existing public task API. One persisted, visible task;
 // never oneshot_text, a custom harness, or a log-only companion session.
-export function createTranslationTask({tasks,load,save,locale=()=> 'en',interval=700,timeout=timing.model,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms))}) {
+export function createTranslationTask({tasks,load,save,locale=()=> 'en',interval=700,timeout=timing.model,now=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),maxConfigRetries=2}) {
   let tail=Promise.resolve();
   const terminal=new Set(['completed','failed','cancelled','interrupted']);
   const statuses=new Set([...terminal,'queued','running','stopping','reconciling']);
@@ -132,20 +132,34 @@ export function createTranslationTask({tasks,load,save,locale=()=> 'en',interval
           await waitForRun(state,await submitted(state),active,progress);await clearPending(state);
         }
       }
-      await active();
-      if(!state.pending){
-        attempted=false;
-        // Resolve settings for every NEW input, including an existing binding
-        // after plugin restart. Previously accepted receipts keep their exact
-        // model/revision and are drained above before another model is selected.
-        task=await syncModel(await tasks.get({taskId:state.taskId}),caps);
-        identity=await identityFor(task.revision);
+      // A model change while this passage is in flight (plugin setting or the
+      // task's own model menu) must not stop the whole video. Resubmit only
+      // after the Host rejected the old revision or the old run is terminal.
+      for(let configRetries=0;;){
+        const retryable=e=>configRetries<maxConfigRetries&&!state.pending&&['REVISION_CONFLICT','STALE_REVISION'].includes(e?.code);
         await active();
-        state.pending={key:crypto.randomUUID(),text,revision:task.revision,identity,scope,url};await save(state);
+        if(!state.pending){
+          attempted=false;
+          // Resolve settings for every NEW input, including an existing binding
+          // after plugin restart. Previously accepted receipts keep their exact
+          // model/revision and are drained above before another model is selected.
+          try{task=await syncModel(await tasks.get({taskId:state.taskId}),caps);}
+          catch(e){if(retryable(e)){configRetries++;continue;}throw e;}
+          identity=await identityFor(task.revision);
+          await active();
+          state.pending={key:crypto.randomUUID(),text,revision:task.revision,identity,scope,url};await save(state);
+        }
+        await active();await progress('submitting-task');attempted=true;
+        try{run=await submitted(state);}
+        catch(e){if(retryable(e)){configRetries++;run=undefined;continue;}throw e;}
+        run=await waitForRun(state,run,active,progress);
+        await active();
+        if(run.status!=='completed'&&!state.pending.cancelRequested&&configRetries<maxConfigRetries&&
+          (await tasks.get({taskId:state.taskId})).revision!==state.pending.revision){
+          await clearPending(state);configRetries++;run=undefined;continue;
+        }
+        break;
       }
-      await active();await progress('submitting-task');attempted=true;
-      run=await waitForRun(state,await submitted(state),active,progress);
-      await active();
       if(run.status!=='completed')fail(run.status==='cancelled'?'REQUEST_CANCELLED':'TASK_FAILED');
       const result=await output(state,run);await active();await clearPending(state);
       return {ok:true,text:result,model:run.acceptedConfig?.model,taskId:state.taskId};
