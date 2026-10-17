@@ -271,7 +271,7 @@ test('a run the user cancelled from the task is not resent even if the model cha
     const f=fixture();f.auto(false);const pending=f.make()({prompt:'x'});
     while(!f.sends.length)await wait(1);
     f.task.revision=4;f.runs.get('r1').status=status;f.auto(true);
-    await assert.rejects(pending,status==='cancelled'?/REQUEST_CANCELLED/:/TASK_FAILED/);
-    assert.equal(f.sends.length,1,status);
+    await assert.rejects(pending,status==='cancelled'?/REQUEST_CANCELLED/:/TASK_INTERRUPTED/);
+    assert.equal(f.sends.length,1,status);assert.equal(f.stats().state.pending,undefined,status);
   }
 });

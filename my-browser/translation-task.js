@@ -162,14 +162,14 @@ export function createTranslationTask({tasks,load,save,locale=()=> 'en',interval
         }
         break;
       }
-      if(run.status!=='completed')fail(run.status==='cancelled'?'REQUEST_CANCELLED':'TASK_FAILED');
+      if(run.status!=='completed')fail(run.status==='cancelled'?'REQUEST_CANCELLED':run.status==='interrupted'?'TASK_INTERRUPTED':'TASK_FAILED');
       const result=await output(state,run);await active();await clearPending(state);
       return {ok:true,text:result,model:run.acceptedConfig?.model,taskId:state.taskId};
     }catch(e){
       const code=e.code||e.message;
       if(['REQUEST_CANCELLED','TIMEOUT'].includes(code)){
         try{if(state.pending){if(attempted)await cancelPending(state,progress);else await clearPending(state);}}catch{fail('TASK_STOPPING');}
-      }else if(run&&terminal.has(run.status)&&['TASK_FAILED','BAD_MODEL_OUTPUT'].includes(code)){await clearPending(state);}
+      }else if(run&&terminal.has(run.status)&&['TASK_FAILED','TASK_INTERRUPTED','BAD_MODEL_OUTPUT'].includes(code)){await clearPending(state);}
       // Transport or reply-read failures keep the exact durable receipt. A
       // retry resumes it; another passage cannot silently cancel or replace it.
       throw Error(code||'TASK_TRANSLATION_ERROR');
