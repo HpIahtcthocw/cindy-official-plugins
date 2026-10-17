@@ -154,7 +154,9 @@ export function createTranslationTask({tasks,load,save,locale=()=> 'en',interval
         catch(e){if(retryable(e)){configRetries++;run=undefined;continue;}throw e;}
         run=await waitForRun(state,run,active,progress);
         await active();
-        if(run.status!=='completed'&&!state.pending.cancelRequested&&configRetries<maxConfigRetries&&
+        // Only a Host failure caused by the config change is resent; a run the
+        // user cancelled or interrupted from the task stays stopped.
+        if(run.status==='failed'&&!state.pending.cancelRequested&&configRetries<maxConfigRetries&&
           (await tasks.get({taskId:state.taskId})).revision!==state.pending.revision){
           await clearPending(state);configRetries++;run=undefined;continue;
         }

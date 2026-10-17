@@ -266,3 +266,12 @@ test('a one-off revision conflict or concurrent setting change retries with the 
   defaults.select('grok');await g.make()({prompt:'y'});
   assert.equal(g.task.resolvedConfig.model,'grok-new');assert.equal(g.sends.length,1);assert.equal(g.stats().state.pending,undefined);
 });
+test('a run the user cancelled from the task is not resent even if the model changed',async()=>{
+  for(const status of ['cancelled','interrupted']){
+    const f=fixture();f.auto(false);const pending=f.make()({prompt:'x'});
+    while(!f.sends.length)await wait(1);
+    f.task.revision=4;f.runs.get('r1').status=status;f.auto(true);
+    await assert.rejects(pending,status==='cancelled'?/REQUEST_CANCELLED/:/TASK_FAILED/);
+    assert.equal(f.sends.length,1,status);
+  }
+});

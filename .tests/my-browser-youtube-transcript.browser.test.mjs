@@ -63,6 +63,12 @@ test('collapsed description is expanded for the transcript entry and restored af
  const result=await page.evaluate(url=>CindyYoutubeTranscript.read(url),url);
  assert.equal(result.ok,true);assert.deepEqual(result.cues,[{start:0,end:10,text:'Only sentence.'}]);
  assert.deepEqual(await page.evaluate(()=>[expands,collapses,document.querySelector('ytd-engagement-panel-section-list-renderer').getAttribute('visibility')]),[1,1,'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN']);
- await page.evaluate(()=>{document.querySelector('#expand').remove();});
+ // A user scrolling the expanded description takes over; it is not collapsed.
+ const reading=page.evaluate(url=>CindyYoutubeTranscript.read(url),url);
+ await page.waitForSelector('#collapse');await page.mouse.move(10,10);await page.mouse.wheel(0,40);
+ assert.equal((await reading).ok,true);
+ assert.deepEqual(await page.evaluate(()=>[expands,collapses]),[2,1]);
+ assert.equal(await page.evaluate(()=>document.querySelector('ytd-engagement-panel-section-list-renderer').getAttribute('visibility')),'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED','panel stays open for the user');
+ await page.evaluate(()=>{document.querySelector('#visibility-button button').click();document.querySelector('#collapse').click();document.querySelector('#expand').remove();});
  assert.deepEqual(await page.evaluate(url=>CindyYoutubeTranscript.read(url),url),{ok:true,cues:[]},'no transcript entry stays an empty result');
 });

@@ -17,6 +17,7 @@
     };
     document.addEventListener('pointerdown',interaction,true);
     document.addEventListener('keydown',interaction,true);
+    document.addEventListener('wheel',interaction,{capture:true,passive:true});
     try {
       current();
       if(!existing){
@@ -77,6 +78,7 @@
     finally{
       document.removeEventListener('pointerdown',interaction,true);
       document.removeEventListener('keydown',interaction,true);
+      document.removeEventListener('wheel',interaction,{capture:true});
       // Close only the panel we opened, and only if the user has not taken over.
       if(opened&&!interacted&&location.href===expectedURL)
         [...document.querySelectorAll(panelSelector)].find(expanded)?.querySelector('#visibility-button button')?.click();
