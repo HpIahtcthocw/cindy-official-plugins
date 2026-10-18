@@ -82,6 +82,9 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
   restart:()=>controls?controls.exclusive(async()=>{await controls.assertEnabled();return restartNative(server);}):restartNative(server),
   release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};}):clipboardAction({udid:p.udid,action:'release'}),
   shutdown:p=>controls.request('settings_shutdown',{udid:p.udid}),
+  // Both run under the runtime lock and the user's run switch, like Agent tools.
+  boot:p=>controls.request('settings_boot',{udid:p.udid}),
+  screenshot:p=>controls.request('screenshot',{udid:p.udid}),
   activity:async()=>{await controls?.assertEnabled();controls?.touch();return {ok:true};},
   guard:()=>controls?.assertEnabled(),
   run:fn=>controls?controls.exclusive(fn):fn(),

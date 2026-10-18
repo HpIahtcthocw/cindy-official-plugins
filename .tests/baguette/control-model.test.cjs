@@ -1,0 +1,68 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const M=require('../../baguette-simulator/node/control-model.js');
+const udid='00000000-0000-4000-8000-000000000001';
+const booted={ready:true,parked:false,generation:1,device:{udid,name:'iPhone 17 Pro',state:'Booted',runtime:'com.apple.CoreSimulator.SimRuntime.iOS-27-1',deviceType:'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro'},settings:{enabled:true,idleMinutes:15},idleDeadline:0};
+
+test('presence and overlay reflect device, service and page state in priority order',()=>{
+ assert.deepEqual(M.presence(booted),{tone:'on',key:'connected'});assert.equal(M.overlay(booted),null);
+ assert.equal(M.overlay({...booted,ready:false,parked:true}).kind,'offline');assert.equal(M.presence({...booted,ready:false,parked:true}).tone,'warn');
+ assert.equal(M.overlay({...booted,ready:false,parked:false}).kind,'connecting');
+ assert.equal(M.overlay({...booted,device:{...booted.device,state:'Shutdown'}}).kind,'off');
+ assert.equal(M.overlay({...booted,device:{...booted.device,state:'Booting'}}).kind,'booting');
+ assert.equal(M.overlay({...booted,settings:{enabled:false}}).kind,'paused');
+ assert.equal(M.overlay(null).kind,'offline');
+ assert.equal(M.overlay(booted,{switching:true,phase:'booting'}).kind,'switching');
+ assert.equal(M.overlay({...booted,device:{...booted.device,state:'Shutdown'}},{recovering:true}).kind,'recovering','page flags win over device state');
+});
+
+test('idle countdown appears only inside the final minute of a running, enabled device',()=>{
+ const now=1_000_000;
+ assert.equal(M.idleLeft({...booted,idleDeadline:now+90_000},now),null);
+ assert.equal(M.idleLeft({...booted,idleDeadline:now+42_400},now),43);
+ assert.equal(M.idleLeft({...booted,idleDeadline:now-5000},now),0);
+ assert.equal(M.idleLeft({...booted,idleDeadline:now+30_000,settings:{enabled:false}},now),null);
+ assert.equal(M.idleLeft({...booted,idleDeadline:now+30_000,device:{...booted.device,state:'Shutdown'}},now),null);
+ assert.equal(M.idleLeft({...booted,idleDeadline:null},now),null);
+ assert.equal(M.clock(65),'1:05');assert.equal(M.clock(0),'0:00');
+});
+
+test('device rows hide the UDID, label the runtime and keep the current device first',()=>{
+ const rows=M.deviceRows([
+  {udid:'b',name:'Zed iPad',state:'Shutdown',runtime:'com.apple.CoreSimulator.SimRuntime.iOS-27-0',deviceType:'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M4'},
+  {udid:'a',name:'Alpha',state:'Booted',runtime:'com.apple.CoreSimulator.SimRuntime.iOS-26-4',deviceType:'x.iPhone-17'},
+  {udid,name:'Mine',state:'Shutdown',runtime:'iOS 27.1',deviceType:'x.iPhone-17-Pro',isAvailable:false},
+ ],udid,'zh-CN');
+ assert.deepEqual(rows.map(r=>r.udid),[udid,'a','b']);
+ assert.equal(rows[0].current,true);assert.equal(rows[0].available,false);assert.equal(rows[0].meta,'iOS 27.1 · 已关闭');
+ assert.equal(rows[1].meta,'iOS 26.4 · 运行中');assert.equal(rows[1].tone,'on');
+ assert.equal(rows[2].family,'ipad');assert.equal(rows[2].meta,'iOS 27.0 · 已关闭');
+ assert.ok(!JSON.stringify(rows).includes('00000000-0000-4000-8000-000000000001".slice'),'rows never expose UDID fragments as labels');
+ assert.equal(M.runtimeLabel('com.apple.CoreSimulator.SimRuntime.iOS-27-1'),'iOS 27.1');assert.equal(M.runtimeLabel(''),'');
+});
+
+test('screen corner radius follows the device family',()=>{
+ assert.equal(M.screenRadius({deviceType:'x.iPhone-17-Pro'},300),39);
+ assert.equal(M.screenRadius({deviceType:'x.iPad-Pro-13-inch'},600),21);
+ assert.equal(M.screenRadius({deviceType:'x.iPhone-17'},0),0);
+});
+
+test('the one-tap default is the newest iPhone that has a compatible runtime, on its newest runtime',()=>{
+ const catalog={
+  deviceTypes:[
+   {name:'iPad Pro 13-inch (M4)',identifier:'t.iPad',minRuntimeVersion:'17.0'},
+   {name:'iPhone 17',identifier:'t.iPhone17',minRuntimeVersion:'26.0'},
+   {name:'iPhone 17 Pro',identifier:'t.iPhone17Pro',minRuntimeVersion:'26.0'},
+   {name:'iPhone Duo',identifier:'t.Duo',minRuntimeVersion:'27.1'},
+  ],
+  runtimes:[
+   {name:'iOS 26.4',identifier:'r.26.4',version:'26.4'},
+   {name:'iOS 27.0',identifier:'r.27.0',version:'27.0',supportedDeviceTypes:['t.iPhone17','t.iPhone17Pro','t.iPad']},
+   {name:'iOS 27.1',identifier:'r.27.1',version:'27.1',supportedDeviceTypes:['t.Duo']},
+  ]};
+ assert.deepEqual(M.defaultChoice(catalog),{deviceType:'t.Duo',runtime:'r.27.1',name:'iPhone Duo'});
+ const withoutDuoRuntime={...catalog,runtimes:catalog.runtimes.slice(0,2)};
+ assert.deepEqual(M.defaultChoice(withoutDuoRuntime),{deviceType:'t.iPhone17Pro',runtime:'r.27.0',name:'iPhone 17 Pro'});
+ assert.deepEqual(M.runtimesFor(catalog,'t.iPad').map(r=>r.identifier),['r.26.4','r.27.0']);
+ assert.deepEqual(M.runtimesFor(catalog,'t.Duo').map(r=>r.identifier),['r.27.1']);
+ assert.equal(M.defaultChoice({deviceTypes:catalog.deviceTypes,runtimes:[]}),null);
+});

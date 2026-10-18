@@ -30,3 +30,37 @@ test('blocked routes never reach the native server, even with a valid viewer ses
   assert.deepEqual(seen,[`GET /simulators/${udid}`]);
  }finally{bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
 });
+
+const {stagedPage,injectStage,STAGE_STYLE}=require('../../baguette-simulator/node/viewer-proxy.cjs');
+test('only the device page receives the Cindy stage stylesheet, and not when the full workbench is requested',()=>{
+ assert.equal(stagedPage(`/simulators/${udid}`),true);assert.equal(stagedPage(`/simulators/${udid}?handheld=1`),true);assert.equal(stagedPage(`/simulators/${udid}/`),true);
+ assert.equal(stagedPage(`/simulators/${udid}?handheld=0&cindyFull=1`),false);
+ for(const url of ['/simulators','/simulators.json',`/simulators/${udid}/stream`,`/simulators/${udid}/hinge`,'/sim-native.js'])assert.equal(stagedPage(url),false,url);
+ assert.equal(injectStage('<html><head><title>x</title></head><body></body></html>'),'<html><head><title>x</title>'+STAGE_STYLE+'</head><body></body></html>');
+ assert.equal(injectStage('<html><head lang="en"><body>'),'<html><head lang="en">'+STAGE_STYLE+'<body>');
+ assert.equal(injectStage('<p>bare</p>'),STAGE_STYLE+'<p>bare</p>');
+ assert.match(STAGE_STYLE,/\.top-bar/);assert.match(STAGE_STYLE,/--nv-page-bg/);
+});
+
+test('the proxy injects the stylesheet into the device page HTML with a correct length and leaves other responses alone',async()=>{
+ const upstream=http.createServer((req,res)=>{
+  if(req.url.startsWith(`/simulators/${udid}/stream`)){res.writeHead(200,{'Content-Type':'application/json'});return res.end('{"ok":true}');}
+  res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Frame-Options':'DENY'});res.end('<!doctype html><html><head><meta charset="utf-8"></head><body>page</body></html>');
+ });
+ await new Promise(r=>upstream.listen(0,'127.0.0.1',r));
+ const port=upstream.address().port;
+ const bridge=await createClipboard('http://127.0.0.1:'+port,async()=>{}, {port,status:async()=>({ready:true})});bridge.devices.add(udid);
+ try{
+  const token=bridge.fragment.split('.')[1];
+  const auth=await fetch(bridge.base+'/control-api',{method:'POST',headers:{Origin:bridge.base,'X-Cindy-Clipboard':token},body:JSON.stringify({action:'status',udid})});
+  const cookie=auth.headers.get('set-cookie').split(';')[0];
+  const page=await fetch(`${bridge.base}/simulators/${udid}?handheld=1`,{headers:{Cookie:cookie}});
+  const body=await page.text();
+  assert.equal(page.status,200);assert.ok(body.includes('id="cindy-stage-style"'));assert.equal(Number(page.headers.get('content-length')),Buffer.byteLength(body));
+  assert.equal(page.headers.get('x-frame-options'),null);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'self'/);
+  const full=await (await fetch(`${bridge.base}/simulators/${udid}?handheld=0&cindyFull=1`,{headers:{Cookie:cookie}})).text();
+  assert.ok(!full.includes('cindy-stage-style'));
+  const json=await (await fetch(`${bridge.base}/simulators/${udid}/stream`,{headers:{Cookie:cookie}})).text();
+  assert.equal(json,'{"ok":true}');
+ }finally{bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
+});

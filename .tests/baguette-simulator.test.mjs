@@ -15,3 +15,5 @@ import './baguette/fold-orientation.test.cjs';
 import './baguette/runtime.test.cjs';
 import './baguette/device-manager.test.cjs';
 import './baguette/defaults-routes.test.cjs';
+import './baguette/control-model.test.cjs';
+import './baguette/vendor-syntax.test.cjs';

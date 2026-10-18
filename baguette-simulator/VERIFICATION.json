@@ -2,18 +2,21 @@
   "date": "2026-10-19",
   "pluginVersion": "0.1.24",
   "baguette": "0.2.7",
-  "status": "upstream-upgrade-local-smoke-verified",
+  "status": "upstream-upgrade-and-controller-redesign-local-verified",
   "passed": [
     "Official v0.2.7 source and release archives match the pinned SHA-256 values; release Web resources are byte-identical to the tagged source",
     "Rebased vendor-native.patch applies to the tagged source; the full upstream Swift suite (2449 tests in 302 suites) passes, including the new custom-set DevicectlHinge regression",
-    "Plugin Node tests (55) pass, including blocked Defaults/app-list/relaunch routes that never reach the native server and the updated Duo panel remapping slice",
     "LTO build on Xcode 27.1 (27A9269): --version reports 0.2.7; on a private-set iPhone Duo (iOS 27.1) hinge read 0° through the guest monitor, describe-ui, screenshot and serve (/simulators, device page, /hinge) succeeded; the device stayed booted",
-    "Tracked binaries total 8,677,926 bytes after the icon change, within the 10 MiB repository gate"
+    "Tracked binaries total 8,677,926 bytes after the icon change, within the 10 MiB repository gate",
+    "Plugin Node tests pass, including: blocked Defaults/app-list/relaunch routes; every vendored and first-party page script parses (regression for the misplaced 0.2.7 web hunk that broke /simulators/:udid); control-model view logic; control.js against a fake DOM (load once, recover, start after shutdown, idle card, device switch)",
+    "Headless Chrome against the real proxy and a booted private-set iPad Air 11 (iOS 27.0): the redesigned controller renders Cindy chrome with the live handheld screen, contain-fit with corner radius, light and dark; no console errors. iPhone Duo (iOS 27.1) renders the 3D stage under the same chrome (first 3D frame did not arrive within the headless budget; stream behavior is unchanged upstream code)",
+    "Settings page variants (devices, empty with one-tap creation, paused, English, dark) rendered in headless Chrome against a mocked host channel"
   ],
   "notVerified": [
     "0.1.24 package has not yet been installed in a production or Beta Cindy; the PR device-verification gate remains open",
-    "Viewer Handheld mode and the iOS 27 stream-disconnect SIGABRT status under 0.2.7 were not exercised",
-    "Xcode 26 integration remains unverified"
+    "Xcode 26 integration remains unverified",
+    "Controller interactions (device menu, More menu, dialogs, confirm shutdown) were exercised only through the fake-DOM tests, not clicked in a real browser",
+    "Duo 3D live frames and the full-toolbar toggle were not observed in a real browser session"
   ],
   "previousReleaseVerification": {
     "date": "2026-10-13",

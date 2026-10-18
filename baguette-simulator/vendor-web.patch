@@ -268,11 +268,10 @@
                title="Simulated location"
 --- a/sim-native.js
 +++ b/sim-native.js
-@@ -489,6 +489,14 @@
-   // screen takes the whole view, no bezel, no workbench, the way the
-   // phone in your hand would look. HandheldMode (handheld/handheld-mode.js)
-   // answers whether, where and how big; this paints it. The CSS under
-+
+@@ -836,6 +836,14 @@
+   let foldable = false;
+   let currentLitPanel = 'primary';
+ 
 +  function syncLitPanel(panel) {
 +    if (!foldable || (panel !== 'primary' && panel !== 'secondary') || panel === currentLitPanel) return;
 +    currentLitPanel = panel;
@@ -280,9 +279,10 @@
 +    orientationIndex = Math.max(0, orientationCycle().indexOf(currentOrientation));
 +    if (render3DPanel) render3DPanel.setInterfaceOrientation(currentOrientation);
 +  }
-   // `[data-handheld]` in sim-native.html does the rest. See
-   // docs/features/handheld/README.md.
- 
++
+   function resetToPortrait() {
+     if (deviceMode) return; // a physical phone rotates itself
+     fetch('/simulators/' + encodeURIComponent(udid) + '/orientation?value=portrait',
 @@ -1782,7 +1790,6 @@
        members: [
          { id: 'nativeAxToggle', label: 'Accessibility', role: 'state' },
@@ -323,14 +323,14 @@
      row.addEventListener('click', () => {
        source.click();
        closeFoldMenus();
-@@ -2601,6 +2611,7 @@
-         locationPanel.attach(host, udid);
-       } else if (locationPanel) {
-         locationPanel.refresh();
+@@ -2668,6 +2678,7 @@
+           format: currentFormat(),
+           background: live3DBackground(),
+           fixed,
 +          onLitPanelChange: syncLitPanel,
-       }
-     }
-   }
+           onFps: (fps) => {
+             const status = document.getElementById('nativeStatus');
+             if (status) status.textContent = fps + ' fps · 3D';
 --- a/stream-session.js
 +++ b/stream-session.js
 @@ -38,6 +38,7 @@
