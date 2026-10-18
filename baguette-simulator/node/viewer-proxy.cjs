@@ -8,14 +8,49 @@ const BLOCKED_ROUTE=/^\/simulators\/[^/]+\/(?:defaults(?:\.json)?|defaults-group
 function blockedRoute(url){
  try{return BLOCKED_ROUTE.test(decodeURIComponent(String(url).split(/[?#]/,1)[0]).replace(/\/{2,}/g,'/'));}catch{return true;}
 }
+// Cindy draws the controller chrome; the device page only renders the screen.
+// Injected into the page HTML before its scripts run, so the 3D stage reads the
+// matching background at attach time. `?cindyFull=1` keeps the upstream workbench.
+const STAGE_STYLE='<style id="cindy-stage-style">'+[
+ '.preview-banner,#nativeRightRails,.handheld-ui,.handheld-hint,#nativeHandheldUI,#nativeHandheldHint{display:none!important}',
+ 'html:not([data-cindy-full]) .top-bar,html:not([data-cindy-full]) #nativeSidebarViewToggle,html:not([data-cindy-full]) #nativeThemeToggle,html:not([data-cindy-full]) #nativeStatus{display:none!important}',
+ 'html,body{background:transparent!important}',
+ '@media (prefers-color-scheme:light){#simNativeView{--nv-page-bg:#f8f8f6!important}}',
+ '@media (prefers-color-scheme:dark){#simNativeView{--nv-page-bg:#1f1f1e!important}}',
+ '#simNativeView[data-handheld] #nativeDeviceFrame{background:transparent!important}',
+ '#simNativeView[data-handheld] #nativeDeviceFrame>div>div:first-child{border-radius:var(--cindy-screen-radius,0)!important}',
+ '#simNativeView[data-handheld] #nativeDeviceFrame>div{outline:1px solid rgba(0,0,0,.08);outline-offset:-1px;border-radius:var(--cindy-screen-radius,0)}',
+].join('\n')+'</style>';
+const DEVICE_PAGE=/^\/simulators\/[^/?#]+\/?(?:[?#]|$)/;
+function stagedPage(url){
+ if(!DEVICE_PAGE.test(url))return false;
+ try{return new URL(url,'http://localhost').searchParams.get('cindyFull')!=='1';}catch{return false;}
+}
+function injectStage(html){
+ const at=html.search(/<\/head>/i);
+ if(at>=0)return html.slice(0,at)+STAGE_STYLE+html.slice(at);
+ const open=html.search(/<head[^>]*>/i);
+ if(open>=0){const end=html.indexOf('>',open)+1;return html.slice(0,end)+STAGE_STYLE+html.slice(end);}
+ return STAGE_STYLE+html;
+}
 function proxyRequest(req,res,port){
  if(blockedRoute(req.url)){res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({error:'Not available in Cindy'}));}
  const forwarded={...req.headers};delete forwarded.cookie;delete forwarded['x-cindy-clipboard'];
+ const staging=req.method==='GET'&&stagedPage(req.url);
+ if(staging)delete forwarded['accept-encoding'];
  const upstream=http.request({hostname:'127.0.0.1',port,path:req.url,method:req.method,headers:{...forwarded,host:`127.0.0.1:${port}`,origin:`http://127.0.0.1:${port}`}},response=>{
   const headers={...response.headers};delete headers['x-frame-options'];
   // Only our same-origin controller may embed the native page.
   headers['content-security-policy']=((headers['content-security-policy']||'').replace(/frame-ancestors[^;]*(;|$)/gi,'')+"; frame-ancestors 'self'").replace(/^;\s*/,'');
-  res.writeHead(response.statusCode,headers);response.pipe(res);
+  const html=staging&&response.statusCode===200&&/text\/html/i.test(headers['content-type']||'')&&!headers['content-encoding'];
+  if(!html){res.writeHead(response.statusCode,headers);return response.pipe(res);}
+  const chunks=[];
+  response.on('data',chunk=>chunks.push(chunk));
+  response.on('end',()=>{
+   const body=Buffer.from(injectStage(Buffer.concat(chunks).toString('utf8')),'utf8');
+   delete headers['content-length'];delete headers['transfer-encoding'];
+   res.writeHead(200,{...headers,'content-length':String(body.length)});res.end(body);
+  });
  });
  upstream.on('error',()=>{if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'});res.end('<p data-viewer-unavailable>画面连接中断，请点击上方“恢复画面”。</p>');}else res.destroy();});
  upstream.setTimeout(15000,()=>upstream.destroy());req.on('aborted',()=>upstream.destroy());req.pipe(upstream);
@@ -39,4 +74,4 @@ function attachUpgrade(server,port,sockets,authorized=()=>false){
   request.on('response',()=>socket.destroy());request.on('error',()=>socket.destroy());socket.on('error',()=>request.destroy());socket.on('close',()=>request.destroy());request.end();
  });
 }
-module.exports={html,chineseHtml,blockedRoute,proxyRequest,attachUpgrade};
+module.exports={html,chineseHtml,blockedRoute,stagedPage,injectStage,STAGE_STYLE,proxyRequest,attachUpgrade};

@@ -489,14 +489,6 @@
   // screen takes the whole view, no bezel, no workbench, the way the
   // phone in your hand would look. HandheldMode (handheld/handheld-mode.js)
   // answers whether, where and how big; this paints it. The CSS under
-
-  function syncLitPanel(panel) {
-    if (!foldable || (panel !== 'primary' && panel !== 'secondary') || panel === currentLitPanel) return;
-    currentLitPanel = panel;
-    currentOrientation = panel === 'secondary' ? 'landscape-left' : 'portrait';
-    orientationIndex = Math.max(0, orientationCycle().indexOf(currentOrientation));
-    if (render3DPanel) render3DPanel.setInterfaceOrientation(currentOrientation);
-  }
   // `[data-handheld]` in sim-native.html does the rest. See
   // docs/features/handheld/README.md.
 
@@ -843,6 +835,14 @@
    *  screens — so nothing here follows the hinge; the 3D scene does. */
   let foldable = false;
   let currentLitPanel = 'primary';
+
+  function syncLitPanel(panel) {
+    if (!foldable || (panel !== 'primary' && panel !== 'secondary') || panel === currentLitPanel) return;
+    currentLitPanel = panel;
+    currentOrientation = panel === 'secondary' ? 'landscape-left' : 'portrait';
+    orientationIndex = Math.max(0, orientationCycle().indexOf(currentOrientation));
+    if (render3DPanel) render3DPanel.setInterfaceOrientation(currentOrientation);
+  }
 
   function resetToPortrait() {
     if (deviceMode) return; // a physical phone rotates itself
@@ -2611,7 +2611,6 @@
         locationPanel.attach(host, udid);
       } else if (locationPanel) {
         locationPanel.refresh();
-          onLitPanelChange: syncLitPanel,
       }
     }
   }
@@ -2679,6 +2678,7 @@
           format: currentFormat(),
           background: live3DBackground(),
           fixed,
+          onLitPanelChange: syncLitPanel,
           onFps: (fps) => {
             const status = document.getElementById('nativeStatus');
             if (status) status.textContent = fps + ' fps · 3D';

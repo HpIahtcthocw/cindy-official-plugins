@@ -31,13 +31,14 @@ cindy.onHostMessage(async function (msg) {
 if (typeof BroadcastChannel !== 'undefined') {
   const settings = new BroadcastChannel('baguette-settings');
   settings.onmessage = async ({data: msg}) => {
-    const methods = {status:'settings_status',save:'settings_save',shutdown:'settings_shutdown',stopAll:'settings_stop_all',boot:'settings_boot',viewer:'settings_viewer'};
+    const methods = {status:'settings_status',save:'settings_save',shutdown:'settings_shutdown',stopAll:'settings_stop_all',boot:'settings_boot',viewer:'settings_viewer',catalog:'viewer_catalog',create:'create_device'};
     if (msg?.type !== 'request' || typeof msg.id !== 'string' || !Object.hasOwn(methods,msg.action)) return;
     let result;
     try {
       let locale = 'en';
       try { if ((await cindy.request({kind:'app-context'}))?.context?.locale === 'zh-CN') locale = 'zh-CN'; } catch {}
       const params = msg.action === 'save' ? {enabled:msg.enabled,idleMinutes:msg.idleMinutes}
+        : msg.action === 'create' ? {name:msg.name,deviceType:msg.deviceType,runtime:msg.runtime}
         : {udid:msg.udid,_locale:locale};
       const response = await cindy.node.request({method:methods[msg.action],params,timeoutMs:120000});
       result = response.ok ? {...response.result,ok:response.result?.ok !== false}

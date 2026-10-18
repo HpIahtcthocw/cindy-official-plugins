@@ -12,7 +12,7 @@ async function createClipboard(origin,perform,control){
   const own=`127.0.0.1:${server.address().port}`;
   if(req.headers.host!==own)return reply(403,{error:'Invalid host'});
   if(control&&req.method==='GET'){
-   if(['/control.js','/control.css','/devices.js'].includes(req.url)){
+   if(['/control.js','/control-model.js','/control.css'].includes(req.url)){
     res.writeHead(200,{'Content-Type':req.url.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','X-Content-Type-Options':'nosniff'});
     return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,req.url.slice(1))));
    }
@@ -45,7 +45,7 @@ async function createClipboard(origin,perform,control){
    if(!devices.has(p.udid))return reply(400,{error:'Unknown device',execution:'not_executed'});
    if(req.url==='/control-api'){
     res.setHeader('Set-Cookie',`cindy_viewer_${server.address().port}=${token}; HttpOnly; SameSite=Strict; Path=/`);
-    if(!['status','restart','release','shutdown','activity','catalog','create','rename','switch'].includes(p.action))return reply(400,{error:'Invalid action'});
+    if(!['status','restart','release','shutdown','boot','screenshot','activity','catalog','create','rename','switch'].includes(p.action))return reply(400,{error:'Invalid action'});
     try{const result=await control[p.action](p);return reply(result?.ok===false?409:200,result);}
     catch(error){return reply(503,{errorCode:error.code||'CONTROL_FAILED',error:'Operation not confirmed. Refresh the device status in Baguette settings.',execution:error.execution||'unknown'});}
    }
