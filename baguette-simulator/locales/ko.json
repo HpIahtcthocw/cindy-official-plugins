@@ -1,7 +1,7 @@
 {
-  "name": "Baguette 시뮬레이터",
-  "description": "독립 iOS 시뮬레이터. 사이드바에서 테스트 기기 추가, 이름 변경, 전환, 확대 및 종료를 지원합니다. 실행 스위치와 기본 15분 유휴 종료로 데이터를 보존합니다. macOS 15+, Apple Silicon, 전체 Xcode 및 iOS runtime이 필요합니다.",
-  "whenToUse": "사용자가 Baguette를 명시적으로 선택한 경우에만 사용하세요. 먼저 environment와 devices를 호출하고 로그인된 기기를 재사용하세요. Cindy 내장 기기를 인계받거나 자동 대체하지 마세요. 키 고착은 press(release-input)을 사용하세요. heal은 앱을 종료하므로 사용자 수락이 필요합니다. 실행 허용은 사용자가 플러그인 설정에서 관리하며 AI가 임의로 다시 켜면 안 됩니다. 사용 후 shutdown을 호출하세요. 미리보기 닫기는 기기 종료가 아닙니다.",
+  "name": "iOS 시뮬레이터",
+  "description": "독립 iOS 시뮬레이터. 사이드바에서 테스트 기기 추가, 이름 변경, 전환, 확대 및 종료를 지원합니다. 실행 스위치와 기본 15분 유휴 종료로 데이터를 보존합니다. macOS 15+, Apple Silicon, 전체 Xcode 및 iOS runtime이 필요합니다. 오픈소스 Baguette(tddworks, Apache-2.0) 기반입니다.",
+  "whenToUse": "iOS 시뮬레이터 작업의 기본 도구입니다. 빌드된 앱 설치, 실행, 조작과 실시간 화면에 사용하세요. 먼저 environment와 devices를 호출하고 로그인된 기기를 재사용하세요. 키 고착은 press(release-input)을 사용하세요. heal은 앱을 종료하므로 사용자 수락이 필요합니다. 실행 허용은 사용자가 플러그인 설정에서 관리하며 AI가 임의로 다시 켜면 안 됩니다. 사용 후 shutdown을 호출하세요. 미리보기 닫기는 기기 종료가 아닙니다.",
   "tools": {
     "environment": {
       "description": "먼저 macOS 15.0 이상인지 확인합니다. 동봉 Baguette, Xcode, 사용 가능한 iOS 런타임과 기종을 읽습니다. 먼저 호출하세요. 의존성을 다운로드하지 않습니다."

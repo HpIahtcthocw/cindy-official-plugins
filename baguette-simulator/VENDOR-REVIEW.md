@@ -1,10 +1,10 @@
 # Vendored runtime evidence
 
-Upstream: [tddworks/baguette v0.2.0](https://github.com/tddworks/baguette/releases/tag/v0.2.0), macOS arm64 release. Original release archive SHA-256: `8d382a4c9efe1e64ea591353bb10fec3bd46ec1ef909d63be1bee9c201f4ef3b` (downloaded from the official GitHub release and matched against its asset digest on 2026-09-26). The two native executables are rebuilt from the official source with the patch documented below; `vendor-inventory.json` enumerates all 97 packaged upstream files with SHA-256 and byte size. Official logo is resized to 512×512 within Cindy’s 512 KiB limit.
+Upstream: [tddworks/baguette v0.2.7](https://github.com/tddworks/baguette/releases/tag/v0.2.7), macOS arm64 release (Apache-2.0, © tddworks). Original release archive SHA-256: `af95902bd11eb1e81309a697c863b5b25698aae480da1d67b8e9db178343b8c3`, matching the GitHub asset digest (checked 2026-10-19). The two native executables are rebuilt from the official source with the patch documented below; `vendor-inventory.json` enumerates all 102 packaged upstream files with SHA-256 and byte size. The release Web folder is byte-identical to the tagged source. Since 0.1.24 the plugin icon is Cindy's own iOS Simulator icon; the Baguette logo is no longer shipped.
 
 ## Exact source modifications
 
-`vendor-web.patch` is the complete diff against `Sources/Baguette/Resources/Web` at tag v0.2.0 (official release archive Web resources). These ten Web files differ (nine carried-forward patches and the reviewed Duo edge-drag fix):
+`vendor-web.patch` is the complete diff, with context, against `Sources/Baguette/Resources/Web` at tag v0.2.7 (official release archive Web resources). These ten Web files differ (nine carried-forward patches, the reviewed Duo edge-drag fix, and the 0.2.7 Defaults toggle removal):
 
 - `stream-session.js`: bounded reconnect after unexpected socket close; cancel scheduled reconnect on deliberate stop.
 - `baguette/parts/keyboard.js`: delegate key/text/clipboard actions to the same-origin /clipboard private-device bridge (fragment port never selects a destination), suppress OS repeats and duplicate in-flight paste, serialize keys/paste/copy, report queue overflow with English fallback for added input errors, drop unsent keys on blur/hide/detach/release.
@@ -16,6 +16,8 @@ Upstream: [tddworks/baguette v0.2.0](https://github.com/tddworks/baguette/releas
 - `sim-3d.js`: fallback selector escaping uses CSS hexadecimal escapes for every code point, including backslashes and quotes.
 
 The first-party `native/keyboard.m` adapts Baguette’s SimulatorKit ABI and device resolution (Apache-2.0); its source and `native/build.sh` accompany the ad-hoc signed Apple Silicon binary. It waits for every delivery completion, releases keys on partial failure, refuses a foreign/default device set and serializes helper access using a per-device lock. It does not restart SpringBoard or extract clipboard/account contents.
+
+- `sim-native.html`, `sim-native.js` (0.2.7): remove the Defaults card toolbar button and its overflow-menu row. The card scripts stay unchanged but cannot be opened; `node/viewer-proxy.cjs` returns 404 for its routes (see the 0.2.7 review).
 
 ## Outbound-domain and execution scan
 
@@ -32,7 +34,7 @@ The plugin declares Node and loopback preview, uses fixed executable paths and a
 
 ## Known limits and verification boundary
 
-Native WebSocket disconnect SIGABRT was observed with 0.1.98; its status with 0.2.0 is not yet device-verified, so bounded recovery is preserved. Worker shutdown also stops the controller. Browser session ownership is separate from persistent simulator data. Historical tests cover the bridge and real iOS 27 native input. The installed 0.2.0 candidate checks are recorded below and in VERIFICATION.json.
+Native WebSocket disconnect SIGABRT was observed with 0.1.98; its status with 0.2.7 is not yet device-verified, so bounded recovery is preserved. Worker shutdown also stops the controller. Browser session ownership is separate from persistent simulator data. Historical tests cover the bridge and real iOS 27 native input. The installed 0.2.0 candidate checks and the 0.2.7 local smoke are recorded below and in VERIFICATION.json.
 
 The proxy bootstraps an HttpOnly SameSite=Strict capability cookie only from a token-authenticated control request. All proxied viewer HTTP, map and WebSocket routes require it; credentials are stripped before HTTP forwarding. The empty controller shell is public so its fragment can authenticate. This protects the proxy, not against same-user processes that can access CoreSimulator or the upstream Baguette loopback listener directly. Manual restart excludes only the retired child from crash accounting.
 
@@ -56,11 +58,22 @@ Native helper update: releaseKeys submits HID usages 4–231 before waiting once
 - Official source archive SHA-256: `5414809d0217a128a99508f7d9a36e8ab5da524125c3180e86bdc509cf948559` (`https://api.github.com/repos/tddworks/baguette/tarball/v0.2.0`). `native/build-baguette.sh` verifies this archive, applies the shipped patch, builds with pinned Package.resolved, and copies only the two rebuilt executables. Full inventory records the packaged bytes. The native patch includes motor routing and renamed-model regressions.
 - Installed-client checks: Cindy 0.1.93 Beta, Xcode 27.1 beta (27A9269), iOS 27.1 (24A94401), private Duo. Actual sidebar pixels confirmed 0° and 130° pose rendering. Touch navigated Settings; Unicode input rendered Duo测试 once. Xcode 26 integration and exhaustive viewer features are not claimed.
 
+## 0.2.7 upgrade review (2026-10-19)
+
+- Official release: https://github.com/tddworks/baguette/releases/tag/v0.2.7 . Official source archive SHA-256: `c7a3003515af13c752af5cdbb8846cbf6dc0b819c3645f6b98e17951a4927771` (`https://api.github.com/repos/tddworks/baguette/tarball/v0.2.7`); `native/build-baguette.sh` verifies it. `Package.resolved` is byte-identical to v0.2.0, so dependency licenses are unchanged.
+- No URL or host literal was added or removed in Swift, Objective-C, Web, JSON or shell sources; no new download, eval/new Function or credential handling.
+- Native patch rebased. Upstream now passes the selected device set to `GuestHingeMotor`, `SimctlCapture`, `HostExternalDisplays`, `GuestFrontmost` and `SimctlCameraGuest`, and matches renamed devices by stable device type, so those hunks were dropped. Remaining changes: the read-only HingeControl `monitor` (CoreMotion `CMAngleManager`, before any HID service), `DevicectlHinge` reading it through `simctl --set … spawn` for custom sets (CoreDevice cannot discover them), the new observed-screen sample in `SimulatorKitDisplay` using the same set, and the 0.2.7 version stamp. A DevicectlHinge regression covers the argv. The full upstream suite (2449 tests) passes with the patch. Upstream main #117 (after v0.2.7) implements the same guest read; drop this patch once a release contains it.
+- DefaultsLookups (new): a dylib that swizzles NSUserDefaults getters and writes looked-up keys and registered defaults to `/tmp/BaguetteLookups-<UDID>-<bundle>.plist`; injected only by Baguette's own `simctl launch` (Defaults card relaunch). The new `/simulators/:udid/{defaults,defaults.json,defaults-groups.json,apps.json,relaunch}` routes read or rewrite any app's UserDefaults (which may contain tokens) and ignore the private device set. The plugin does not bundle the dylib, removes the toolbar entry, and its proxy returns 404 for those routes after percent-decoding and slash collapsing; the CLI `defaults --file` import is never invoked.
+- HingeControl adds `frontmost` (read-only AX, adapted from facebook/idb under MIT; `LICENSE.idb` ships beside the binary and in THIRD-PARTY-LICENSES.txt), `--deadline` and `done <status>` replies. On timeout the host kills the helper by its reported guest pid (upstream behavior).
+- Web: new Handheld mode (`localStorage` for button position only) and Defaults card files escape app-controlled strings with `esc()` in double-quoted attributes or text; no new external resources, `window.open` or `postMessage`.
+- VirtualCamera, VirtualMotion and VirtualNetwork sources are unchanged; the existing tracked dylibs (the tagged source's committed builds) are kept byte-for-byte. Models, plugins and the nine USDZ files are byte-identical to the v0.2.7 release; `binary-dependencies.json` now pins that archive.
+- Local smoke (2026-10-19, Xcode 27.1 27A9269, private-set iPhone Duo on iOS 27.1): `--version` 0.2.7, `hinge` read 0° through the guest monitor, `describe-ui`, `screenshot` and `serve` (`/simulators`, device page, `/hinge`) succeeded with the LTO build. Installed-package verification in Cindy Beta remains a separate PR gate.
+
 ## Repository binary-size gate
 
 The unchanged nine USDZ files are portable model data, selected by exact path from the same SHA-pinned official archive through `binary-dependencies.json`. Only these resources use the shared-platform declaration; no native executable or dylib is declared portable. All model bytes remain in the self-contained package, with no runtime download. Native code remains explicitly macOS arm64-only. The stable `vendor/baguette/` path avoids version-directory churn.
 
-The host release binary is built with Swift `-Osize`, stripped with the standard Xcode tool and ad-hoc signed; no feature is removed. `native/build-baguette.sh` records these exact steps. The source tag retains a stale `baguetteVersion` constant (0.1.61); the shipped source patch stamps 0.2.0 so `environment` reports the actual upstream version. The 10 MiB repository gate and six-platform dependency rule are unchanged.
+The host release binary is built with whole-program LTO (`--experimental-lto-mode=full`) and Swift `-Osize`, stripped with the standard Xcode tool and ad-hoc signed; no feature is removed. LTO brings 0.2.7 from 9.86 MB to 7.94 MB, so tracked binaries total about 8.95 MB. `native/build-baguette.sh` records these exact steps. The source tag retains a stale `baguetteVersion` constant (0.1.61); the shipped source patch stamps 0.2.7 so `environment` reports the actual upstream version. The 10 MiB repository gate and six-platform dependency rule are unchanged.
 
 ## Review follow-up
 

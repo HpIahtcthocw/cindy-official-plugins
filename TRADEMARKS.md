@@ -32,6 +32,7 @@ owners:
 | 163 Mail, NetEase (NetEase (Hangzhou) Network Co., Ltd.) | `163-mail/assets/icon.png`, plugin display name |
 | Yahoo Mail, Yahoo (Yahoo Holdings Inc.) | `yahoo-mail/assets/icon.png` — the official Yahoo Mail app icon, unmodified; plugin display name |
 | TapTap (X.D. Network Inc.) | `taptap-maker/assets/icon.png`, plugin display name |
+| Baguette (tddworks) | `baguette-simulator` description and docs — upstream project attribution only |
 | Brave Search (Brave Software, Inc.), Tavily | service names in `cindy-web-search` copy |
 | Mermaid | `cindy-mermaid` plugin display name |
 

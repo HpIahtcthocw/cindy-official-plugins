@@ -2,7 +2,14 @@
 const http=require('node:http');const fs=require('node:fs');const path=require('node:path');
 const html=fs.readFileSync(path.join(__dirname,'control.html'));
 const chineseHtml=fs.readFileSync(path.join(__dirname,'control.zh-CN.html'));
+// Baguette 0.2.7 Defaults routes read/rewrite any app's UserDefaults and relaunch with
+// an injected dylib; they ignore the private device set, so they stay unavailable.
+const BLOCKED_ROUTE=/^\/simulators\/[^/]+\/(?:defaults(?:\.json)?|defaults-groups\.json|apps\.json|relaunch)\/?$/i;
+function blockedRoute(url){
+ try{return BLOCKED_ROUTE.test(decodeURIComponent(String(url).split(/[?#]/,1)[0]).replace(/\/{2,}/g,'/'));}catch{return true;}
+}
 function proxyRequest(req,res,port){
+ if(blockedRoute(req.url)){res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({error:'Not available in Cindy'}));}
  const forwarded={...req.headers};delete forwarded.cookie;delete forwarded['x-cindy-clipboard'];
  const upstream=http.request({hostname:'127.0.0.1',port,path:req.url,method:req.method,headers:{...forwarded,host:`127.0.0.1:${port}`,origin:`http://127.0.0.1:${port}`}},response=>{
   const headers={...response.headers};delete headers['x-frame-options'];
@@ -32,4 +39,4 @@ function attachUpgrade(server,port,sockets,authorized=()=>false){
   request.on('response',()=>socket.destroy());request.on('error',()=>socket.destroy());socket.on('error',()=>request.destroy());socket.on('close',()=>request.destroy());request.end();
  });
 }
-module.exports={html,chineseHtml,proxyRequest,attachUpgrade};
+module.exports={html,chineseHtml,blockedRoute,proxyRequest,attachUpgrade};
