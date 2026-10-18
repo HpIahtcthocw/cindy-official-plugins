@@ -74,12 +74,6 @@
         "emails": []
       }
     },
-    "ios-simulator": {
-      "audience": {
-        "emails": []
-      },
-      "tier": "builtin"
-    },
     "outlook-mail": {
       "audience": {
         "emails": []

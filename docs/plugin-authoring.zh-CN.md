@@ -69,7 +69,7 @@ subscribe）、Cindy 类目/动作与订阅 topics/hooks；旧 v2 slot 名称也
 | `session-context` | `sessionContext: true` | Host 注入的可信会话上下文 |
 | `pick` | `pick: true` | 用户选择目录的入口 |
 | `workspace` | `workspace: true` | 工作区会话入口 |
-| `ios-simulator` | `iosSimulator: true` | Host 内嵌模拟器入口；已有 Skill 等声明同时保留 |
+| `ios-simulator` | `iosSimulator: true` | 已下线的 Host 内嵌模拟器；当前 Host 拒绝新装声明它的插件，仅用于读取旧清单 |
 
 布尔能力出现时必须为 `true`，不用时省略，不能写 `false` 或 `null`。
 `manual`、`setup`、`locales`、`settingsHtml`、`showTaskPreferences`、`command`、`keywords` 等独立字段继续保留；

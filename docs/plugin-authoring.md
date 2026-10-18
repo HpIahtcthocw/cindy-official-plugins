@@ -88,7 +88,7 @@ existing capabilities, not a requirement to add capabilities the plugin never ha
 | `session-context` | `sessionContext: true` | Host-injected trusted session context |
 | `pick` | `pick: true` | User directory picker |
 | `workspace` | `workspace: true` | Workspace session entry |
-| `ios-simulator` | `iosSimulator: true` | Host embedded simulator entry; retain accompanying Skill and other declarations |
+| `ios-simulator` | `iosSimulator: true` | Retired Host embedded simulator; current Hosts reject new installs that declare it. Kept only for reading legacy manifests |
 
 Boolean capabilities must be literal `true` when present; omit unused ones rather
 than setting `false` or `null`. Keep independent fields such as `manual`, `setup`,

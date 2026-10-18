@@ -77,7 +77,7 @@ async function clipboardAction(p) {
     // First release any existing repeat before replacing its clipboard payload.
     await nativeKey(device,null);
     // Xcode 27 simctl pbcopy can report success without changing the guest
-    // clipboard. Match Baguette 0.2.0: prefer CoreDevice, retaining the private
+    // clipboard. Match Baguette 0.2.7: prefer CoreDevice, retaining the private
     // device-set fallback for Xcode 26 or devices CoreDevice does not know.
     try {
       await run('/usr/bin/xcrun',['devicectl','device','pasteboard','copy','--device',device.udid],{input:text,mutation:true});
@@ -111,7 +111,7 @@ async function dispatch(method,p={}) {
     const [version,xcode,runtimes,types]=await Promise.all([
       run(BINARY,['--version']),run('/usr/bin/xcodebuild',['-version']),
       jsonRun('/usr/bin/xcrun',['simctl','list','runtimes','--json']),jsonRun('/usr/bin/xcrun',['simctl','list','devicetypes','--json'])]);
-    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Baguette 0.2.0 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
+    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Baguette 0.2.7 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
   }
   if(method==='close_viewer') return {...await stopViewer(),execution:'executed',note:'Viewer server stopped; simulator and App remain running.'};
   if(method==='devices') return {deviceSet:DEVICE_SET,devices:await listDevices()};

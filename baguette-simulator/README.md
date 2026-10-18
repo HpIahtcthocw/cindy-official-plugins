@@ -1,11 +1,11 @@
-# Baguette Simulator
+# iOS Simulator
 
 [简体中文](README.zh-CN.md)
 
-Opt-in Apple Silicon iOS simulator integration using bundled Baguette 0.2.0.
+Cindy's official iOS simulator for Apple Silicon Macs, using bundled Baguette 0.2.7. It replaces the retired embedded simulator; Cindy shows previous users a one-time migration notice pointing here (plugin id `baguette-simulator`).
 Requires macOS 15.0+, Apple Silicon, Cindy 0.1.83+, full Xcode and an installed iOS runtime. No first-run dependency download. Packaging collects nine portable USDZ model assets from the hash-pinned official release via `binary-dependencies.json`; the native executables remain tracked and macOS-only.
 
-Use only when the user explicitly selects Baguette. Run `environment` and `devices`, reuse a suitable logged-in device, then `boot` if needed. Build the App with the project’s normal Xcode workflow; use `install_app` and `launch_app` for its already-built Simulator `.app`. `launch_app` opens the current session’s sidebar by default. Check `viewer.previewOpened`; a running process does not prove a visible preview. Reopen an existing device with `open_viewer` after changing sessions.
+Use it by default for iOS Simulator tasks. Run `environment` and `devices`, reuse a suitable logged-in device, then `boot` if needed. Build the App with the project’s normal Xcode workflow; use `install_app` and `launch_app` for its already-built Simulator `.app`. `launch_app` opens the current session’s sidebar by default. Check `viewer.previewOpened`; a running process does not prove a visible preview. Reopen an existing device with `open_viewer` after changing sessions.
 
 The controller provides **Recover view** (restart the viewer only) and **Release keys** (key-up events only). Neither operation restarts the simulator or app. Agent recovery uses `press` with `button=release-input`. Unicode paste replaces the simulator clipboard; browser Copy replaces the Mac clipboard. Observe the focused field before input and inspect the result afterwards. Keyboard delivery acknowledgements are not App completion acknowledgements.
 
@@ -15,7 +15,7 @@ Devices live under `~/Library/Application Support/BaguetteCindy/devices`, screen
 
 ## User controls
 
-Open **Plugins → Baguette** to view actual private-device states, start or shut down a device, open its viewer, or stop all Baguette devices. Turning off **Allow simulators to run** first persists the restriction, then shuts down devices and stops the viewer. Failed shutdown remains visible; tools cannot restart a device while the switch is off. Turning it back on never boots a device. Data and login storage are preserved.
+Open **Plugins → iOS Simulator** to view actual private-device states, start or shut down a device, open its viewer, or stop all of its devices. Turning off **Allow simulators to run** first persists the restriction, then shuts down devices and stops the viewer. Failed shutdown remains visible; tools cannot restart a device while the switch is off. Turning it back on never boots a device. Data and login storage are preserved.
 
 The viewer header includes **Shut down device** and **50%–200% view size**. App pinch gestures remain Option-drag or Ctrl-wheel, separate from view size. The idle setting defaults to 15 minutes, with 30 minutes, 1 hour and manual-only options. Device input and actual tool operations renew use; streamed frames, status polling and watching a picture do not. A device shutdown terminates its apps and connections. All private devices share this inactivity clock; changing the idle setting starts a new period.
 
@@ -31,11 +31,13 @@ The Node Worker runs with local user permissions. Executable paths and command s
 
 The viewer’s optional location map requests reach OpenStreetMap through the fixed-endpoint Node proxy; see VENDOR-REVIEW.md. The farm page uses local font fallbacks without remote font requests. These features do not synchronize simulator accounts. No background dependency installation occurs.
 
+Upstream 0.2.7 adds an app UserDefaults editor (Defaults card) that can read or rewrite any installed app's preferences and relaunch apps with an injected dylib. Those routes ignore the private device set, so the plugin hides the card, returns 404 for them at the viewer proxy and does not bundle `DefaultsLookups.dylib`. Handheld mode is unchanged upstream behavior and stays loopback-only.
+
 Known upstream limitation: stream disconnects can SIGABRT on iOS 27. The supervisor restarts at most five times per minute; the independent controller remains available for manual recovery. This is mitigation, not a native crash fix. Worker disable/exit or one hour of tool inactivity stops the controller too; recovery after Worker exit requires Cindy to start it again. Cross-session device data persists, but a browser tab is session-scoped.
 
 ## Build and verification
 
-Run `sh native/build.sh` on an Apple Silicon Mac with Xcode. This compiles the included Objective-C source and ad-hoc signs the helper. No dependency download. Baguette and HingeControl are rebuilt from v0.2.0 with `vendor-native.patch`; use `sh native/build-baguette.sh <verified-source-archive>` to reproduce the build. The release build uses Swift `-Osize`, strips symbols and ad-hoc signs the host executable to keep tracked binary content below the repository limit. The patch preserves the private device set for screen enumeration and hinge control, reads actual guest hinge angles, and matches renamed devices to their original model.
+Run `sh native/build.sh` on an Apple Silicon Mac with Xcode. This compiles the included Objective-C source and ad-hoc signs the helper. No dependency download. Baguette and HingeControl are rebuilt from v0.2.7 with `vendor-native.patch`; use `sh native/build-baguette.sh <verified-source-archive>` to reproduce the build. The release build uses whole-program LTO and Swift `-Osize`, strips symbols and ad-hoc signs the host executable to keep tracked binary content below the repository limit. The patch reads the iPhone Duo hinge angle inside the guest for the private device set, which CoreDevice cannot discover; upstream already routes screen enumeration, hinge control and renamed-model matching through the selected set.
 
 Run the repository contracts and `.tests/baguette-simulator.test.mjs`. Review VENDOR-REVIEW.md, THIRD-PARTY-LICENSES.txt and the proposal [#119](https://github.com/makecindy/cindy-official-plugins/issues/119). Initial provisioning is an empty targeted audience, not all users. Final package installation in eligible Cindy must be recorded separately from direct Node/native tests.
 
@@ -48,5 +50,9 @@ The viewer proxy requires a capability session for HTTP and WebSocket access. Th
 Ordinary devices retain the Xcode 26/27 paths. iPhone Duo requires the selected Xcode 27.1 and an installed iOS 27.1 runtime. The upstream viewer includes the Duo 3D model, inner/outer displays, pose buttons and hinge slider; changing the pose changes the simulated device and foreground app layout. The model is read from Xcode, not downloaded by this plugin. The plugin uses the selected Xcode; it does not install, switch or downgrade Xcode automatically. Clipboard writes prefer CoreDevice and fall back to private-set simctl on older or unsupported environments.
 
 Duo preview, closed/open poses, touch and Unicode input were exercised on iOS 27.1 in Cindy 0.1.93 Beta. Xcode 26 integration remains unverified; See VERIFICATION.json for the exact boundary.
+
+## Upstream and license
+
+This plugin is built on [Baguette](https://github.com/tddworks/baguette) by tddworks, licensed under Apache-2.0. Cindy maintains the integration, the Node Worker and the local patches documented in VENDOR-REVIEW.md (`vendor-native.patch`, `vendor-web.patch`). It is not affiliated with or endorsed by tddworks. The bundled HingeControl includes code adapted from Meta's idb (MIT). Full license texts are in THIRD-PARTY-LICENSES.txt and `HingeControl/LICENSE.idb`; the icon is Cindy's own iOS Simulator icon.
 
 If settings cannot be read, device status and shutdown remain available while startup and settings edits stay blocked. Restore the settings file before enabling operation. Device switching may replace an existing target app with the same bundleId when the source app bundle is installed; source app data and login credentials are not copied.

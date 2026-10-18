@@ -2,10 +2,10 @@
   "schemaVersion": 3,
   "minCindyVersion": "0.1.83",
   "id": "baguette-simulator",
-  "name": "Baguette 模拟器",
-  "description": "用 Baguette 操作独立 iOS 模拟器；侧栏预览可添加、改名和切换测试设备，支持缩放与手动关闭。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。",
-  "whenToUse": "仅在用户明确选择 Baguette 时使用独立 iOS 模拟器。先 environment 和 devices；复用已登录设备，跨 session 用 open_viewer 恢复预览。只控制本插件设备，不接管 Cindy 内置设备，也不自动替代内置方案。输入异常先 press(release-input)，heal 会终止 App，须用户接受影响。 运行许可由用户在插件设置中控制，不得替用户重新开启。使用结束调用 shutdown；关闭预览不代表关机。",
-  "version": "0.1.23",
+  "name": "iOS 模拟器",
+  "description": "独立的 iOS 模拟器；侧栏预览可添加、改名和切换测试设备，支持缩放与手动关闭。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。基于开源项目 Baguette（tddworks，Apache-2.0）。",
+  "whenToUse": "iOS 模拟器任务默认使用：安装、启动和操作已构建的模拟器 App，查看实时画面。先 environment 和 devices；复用已登录设备，跨 session 用 open_viewer 恢复预览。只控制本插件独立设备。输入异常先 press(release-input)，heal 会终止 App，须用户接受影响。运行许可由用户在插件设置中控制，不得替用户重新开启。使用结束调用 shutdown；关闭预览不代表关机。",
+  "version": "0.1.24",
   "kind": "chip",
   "entry": "main.js",
   "icon": "assets/icon.png",
@@ -22,7 +22,7 @@
     },
     {
       "name": "devices",
-      "description": "列出 Baguette 插件独立设备集合中的设备和状态，不列出或控制 Cindy 默认设备。首次使用先调用。",
+      "description": "列出本插件独立设备集合中的设备和状态，不列出或控制 Cindy 默认设备。首次使用先调用。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -76,7 +76,7 @@
     },
     {
       "name": "shutdown",
-      "description": "关闭指定 Baguette 设备，终止其中运行的 App，但保留设备和数据。",
+      "description": "关闭指定独立设备，终止其中运行的 App，但保留设备和数据。",
       "parameters": {
         "type": "object",
         "properties": {

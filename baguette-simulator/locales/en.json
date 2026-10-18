@@ -1,7 +1,7 @@
 {
-  "name": "Baguette Simulator",
-  "description": "Private iOS simulators with sidebar device creation, renaming, switching, zoom and shutdown. Includes a persistent run switch and 15-minute idle shutdown that preserves data. Requires macOS 15+, Apple Silicon, full Xcode and an iOS runtime.",
-  "whenToUse": "Only when explicitly requested. Run environment/devices; reuse private devices, never Cindy embedded ones. Reopen with open_viewer. Stuck keys: press(release-input); heal ends apps and needs consent. User controls the run switch; do not re-enable it. Finish with shutdown, not just close_viewer.",
+  "name": "iOS Simulator",
+  "description": "Private iOS simulators with sidebar device creation, renaming, switching, zoom and shutdown. Persistent run switch; 15-minute idle shutdown keeps data. Requires macOS 15+, Apple Silicon, full Xcode and an iOS runtime. Built on open-source Baguette (tddworks, Apache-2.0).",
+  "whenToUse": "Default for iOS Simulator tasks: install, launch and drive built apps with a live view. Run environment/devices; reuse private devices; reopen with open_viewer. Stuck keys: press(release-input); heal ends apps, needs consent. Never re-enable the user run switch. End with shutdown, not close_viewer.",
   "tools": {
     "environment": {
       "description": "First reject systems older than macOS 15.0. Read bundled Baguette, Xcode, available iOS runtimes and device types. Call first. Does not download dependencies."
