@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const { updateRichDraft, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
+const { updateRichDraft, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
 const SERVICE = 'gmail';
 const root = path.resolve(__dirname, '..');
 const binaries = require('../vendor/gog/binaries.json');
@@ -17,16 +17,22 @@ let runtime;
 let schemaPromise;
 
 function failure(message, execution = 'not_executed') { return { ok: false, execution, message }; }
+function commandFailure(error, state) {
+  return failure(draftBodyErrorMessage(error) || (error?.code === 'GOG_BINARY_MISSING' ? error.message
+    : 'Unable to execute command; check its schema and workspace paths'), state?.started ? 'unknown' : 'not_executed');
+}
 // Only the write phase may consume a transport execution receipt. A failed
 // pre-write GET, even with HTTP 200, does not mean the draft was saved.
 function draftWriteFailure(error, state) {
   const outcome = !state.started ? 'not_executed'
     : ['not_executed', 'executed', 'unknown'].includes(error?.execution) ? error.execution : 'unknown';
-  return failure({
+  const message = {
     not_executed: '草稿未保存，邮件尚未发送。请检查附件、正文和 Gmail 插件详情页中的账号授权后重试。',
     executed: '草稿已保存但未发送：无法完整核对 Gmail 回执，请先重新读取或到 Gmail 检查，不要重复创建、保存或发送。',
     unknown: '无法确认草稿保存结果，邮件尚未发送。请先核对 Gmail 草稿，不要重复创建或保存。',
-  }[outcome], outcome);
+  }[outcome];
+  const detail = draftBodyErrorMessage(error);
+  return failure(detail ? (outcome === 'not_executed' ? detail : message + ' ' + detail) : message, outcome);
 }
 function cleanup(directory, result) {
   try { fs.rmSync(directory, { recursive: true, force: true }); }
@@ -600,8 +606,8 @@ async function handle(message, execution) {
       argv.push('--raw-file=' + rawPath);
     }
     result = await execute(argv, token, cwd, MAX_OUTPUT, execution);
-  } catch (_) {
-    result = failure('Unable to execute command; check its schema and workspace paths', execution && execution.started ? 'unknown' : 'not_executed');
+  } catch (error) {
+    result = commandFailure(error, execution);
   } finally {
     if (temporaryDirectory) result = cleanup(temporaryDirectory, result);
   }
@@ -616,7 +622,7 @@ input.on('line', (line) => {
   try { message = JSON.parse(line); } catch (_) { return; }
   if (message.id === undefined) return;
   const execution = { started: false };
-  void handle(message, execution).catch((error) => failure(error.code === 'GOG_BINARY_MISSING' ? error.message : 'Unable to execute command; check its schema and workspace paths', execution.started ? 'unknown' : 'not_executed')).then((result) => {
+  void handle(message, execution).catch((error) => commandFailure(error, execution)).then((result) => {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\n');
   });
 });

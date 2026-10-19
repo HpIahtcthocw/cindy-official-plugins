@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { createContext, runInContext } from 'node:vm';
 import test from 'node:test';
@@ -12,7 +13,11 @@ const source = fs.readFileSync(new URL('../google-gmail/node/gog.cjs', import.me
 function fixture(t, inline = true) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mail-rich-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const ctx = createContext({ Buffer, __dirname: '/fixture', require: name => name === '../vendor/gog/binaries.json' ? {} : name === './mailMime.cjs' ? require('../google-gmail/node/mailMime.cjs') : require(name) });
+  const input = new EventEmitter();
+  let receive, listening = false;
+  const ctx = createContext({ Buffer, __dirname: '/fixture',
+    process: { env: {}, stdin: {}, on() {}, stdout: { write(line) { receive(JSON.parse(line)); } } },
+    require: name => name === 'node:readline' ? { createInterface: () => input } : name === '../vendor/gog/binaries.json' ? {} : name === './mailMime.cjs' ? require('../google-gmail/node/mailMime.cjs') : require(name) });
   runInContext(source.split('const input = readline.createInterface')[0], ctx);
   const image = Buffer.from([137,80,78,71,13,10,26,10,1,2,3]);
   const part = { partId: '1', filename: '图.png', mimeType: 'image/png', headers: inline ? [{ name: 'Content-ID', value: '<photo@example.test>' }] : [], body: { size: image.length, data: image.toString('base64url') } };
@@ -36,6 +41,13 @@ function fixture(t, inline = true) {
     return new Response(JSON.stringify(draft), { headers: { 'Content-Type': 'application/json' } });
   });
   return { ctx, before, draft, fields, p, calls, dir, image,
+    rpc(message) {
+      if (!listening) { runInContext(source.slice(source.indexOf('const input = readline.createInterface')), ctx); listening = true; }
+      return new Promise(resolve => {
+        receive = response => { assert.equal(response.id, 'encoding-test'); resolve(response.result); };
+        input.emit('line', JSON.stringify({ ...message, id: 'encoding-test' }));
+      });
+    },
     run: (execution = {}) => updateRichDraft(p, 'fixture-token', before, ctx, execution) };
 }
 test('HTML, existing CID bytes, new attachment and reply context survive a single draft PUT', async t => {
@@ -582,5 +594,76 @@ test('unsupported or malformed body encodings cannot produce editable snapshots 
     for (const send of [false, true]) await assert.rejects(f.ctx.handle({ method: 'compose', cindy,
       params: { draftId: f.draft.id, fingerprint: f.before.fingerprint, fields: f.fields, send } }, {}), /字符编码|无损解码/);
     assert.equal(f.calls.some(c => ['PUT', 'POST'].includes(c.init.method)), false);
+  }
+});
+
+// Exercise the production JSON-RPC dispatcher, not just handle() rejection.
+// Both pre-write decoding passes and post-write verification retain safe guidance
+// without forwarding a raw exception or weakening the execution receipt.
+test('worker JSON-RPC preserves safe encoding guidance across draft entry points', async t => {
+  for (const mimeType of ['text/plain', 'text/html']) for (const charset of ['x-unknown-charset', '', 'UTF-8', 'Shift_JIS']) {
+    const f = workerFixture(t), part = f.draft.message.payload.parts.find(p => p.mimeType === mimeType);
+    part.headers = [{ name: 'Content-Type', value: mimeType + '; charset="' + charset + '"' }];
+    part.body = { data: Buffer.from([0xff]).toString('base64url'), size: 1 };
+    const cindy = { secrets: { gog_access_token: 'fixture-token' } };
+    const requests = ['get', 'update'].map(operation => ({ method: 'run', cindy,
+      params: { command: ['drafts', operation], arguments: [f.draft.id], readOnly: false, options: {} } }));
+    for (const send of [false, true]) requests.push({ method: 'compose', cindy,
+      params: { draftId: f.draft.id, fingerprint: f.before.fingerprint, fields: f.fields, send } });
+    for (const message of requests) {
+      const result = await f.rpc(message);
+      assert.equal(result.ok, false);
+      assert.equal(result.execution, 'not_executed');
+      assert.match(result.message, /字符编码|无损解码/);
+      assert.match(result.message, /请在邮箱中编辑此草稿/);
+      assert.doesNotMatch(result.message, /fixture-token|x-unknown-charset|workspace paths/);
+    }
+    assert.equal(f.calls.some(c => ['PUT', 'POST'].includes(c.init.method)), false);
+  }
+  // The second GET can change independently after the initial valid snapshot.
+  for (const charset of ['x-unknown-charset', 'UTF-8']) {
+    const f = workerFixture(t), remote = structuredClone(f.draft);
+    remote.message.payload.parts[0].headers = [{ name: 'Content-Type', value: 'text/plain; charset=' + charset }];
+    remote.message.payload.parts[0].body = { data: Buffer.from([0xff]).toString('base64url'), size: 1 };
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      assert.equal(init.method === 'PUT' || init.method === 'POST', false);
+      return new Response(JSON.stringify(remote));
+    });
+    const result = await f.rpc({ method: 'compose', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { draftId: f.draft.id, fingerprint: f.before.fingerprint, fields: f.fields, send: true } });
+    assert.equal(result.execution, 'not_executed'); // Failed pre-write GET.
+    assert.match(result.message, /字符编码|无损解码/);
+    assert.match(result.message, /请在邮箱中编辑/);
+    assert.doesNotMatch(result.message, /private path|token|raw body|重试/);
+  }
+  // Once PUT succeeds, a failed read-back must retain the successful receipt
+  // and forbid replay rather than claiming the draft was never changed.
+  const f = workerFixture(t), fetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    const response = await fetch(url, init);
+    if (init.method === 'PUT') f.draft.message.payload.parts[0].body.data = Buffer.from([0xff]).toString('base64url');
+    return response;
+  });
+  const result = await f.rpc({ method: 'compose', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+    params: { draftId: f.draft.id, fingerprint: f.before.fingerprint, fields: f.fields, send: true } });
+  assert.equal(result.execution, 'executed');
+  assert.match(result.message, /草稿已保存但未发送.*Gmail.*不要重复/);
+  assert.equal(f.calls.filter(c => c.init.method === 'PUT').length, 1);
+  assert.equal(f.calls.some(c => c.url.endsWith('/send')), false);
+});
+
+test('worker JSON-RPC hides unrecognized errors and preserves uncertain command outcomes', async t => {
+  for (const entry of ['schema', 'execute']) for (const code of ['DRAFT_BODY_DECODE', 'DRAFT_BODY_CHARSET', 'UNRECOGNIZED', 'toString']) for (const started of [false, true]) {
+    const f = workerFixture(t);
+    f.ctx[entry] = async () => { throw Object.assign(new Error('private path / fixture-token / raw body'), { code }); };
+    // Simulate a command that failed before/after launch at the actual outlet.
+    const handle = f.ctx.handle;
+    f.ctx.handle = (message, state) => { state.started = started; return handle(message, state); };
+    const result = await f.rpc({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { command: ['drafts', 'get'], arguments: [f.draft.id] } });
+    assert.equal(result.execution, started ? 'unknown' : 'not_executed');
+    assert.doesNotMatch(result.message, /private path|fixture-token|raw body/);
+    if (code.startsWith('DRAFT_BODY_')) assert.match(result.message, /请在邮箱中编辑此草稿/);
+    else assert.match(result.message, /check its schema and workspace paths/);
   }
 });

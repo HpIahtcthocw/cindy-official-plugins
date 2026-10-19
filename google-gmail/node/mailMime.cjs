@@ -17,13 +17,22 @@ function isAttachmentPart(part) {
   const bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
   return Boolean(part.filename || /^attachment\b/i.test(disposition) || !bodyPart);
 }
+// Return only fixed, safe guidance across worker boundaries; never forward an
+// arbitrary decoder/provider exception (which may contain private input).
+function draftBodyErrorMessage(error) {
+  switch (error?.code) {
+    case 'DRAFT_BODY_CHARSET': return '不支持草稿正文的字符编码，请在邮箱中编辑此草稿。';
+    case 'DRAFT_BODY_DECODE': return '无法无损解码草稿正文，请在邮箱中编辑此草稿。';
+    default: return '';
+  }
+}
 function decodeMimeBody(part) {
   const match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(header(part, 'content-type'));
   let decoder;
   try { decoder = new TextDecoder(match ? (match[1] ?? match[2] ?? match[3]) : 'utf-8', { fatal: true }); }
-  catch (_) { throw new Error('不支持草稿正文的字符编码，请在邮箱中编辑此草稿。'); }
+  catch (_) { throw Object.assign(new Error(draftBodyErrorMessage({ code: 'DRAFT_BODY_CHARSET' })), { code: 'DRAFT_BODY_CHARSET' }); }
   try { return decoder.decode(Buffer.from(part.body.data, 'base64url')); }
-  catch (_) { throw new Error('无法无损解码草稿正文，请在邮箱中编辑此草稿。'); }
+  catch (_) { throw Object.assign(new Error(draftBodyErrorMessage({ code: 'DRAFT_BODY_DECODE' })), { code: 'DRAFT_BODY_DECODE' }); }
 }
 function imageType(data) {
   if (data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';
@@ -192,4 +201,4 @@ async function verifyDraftAttachmentBytes(token, saved, expected) {
   const facts = files => JSON.stringify(files.map(f => [f.filename, f.mimeType, f.bytes, (f.contentId || '').replace(/^<|>$/g, ''), f.sha256]).sort());
   return facts(actual) === facts(expected);
 }
-module.exports = { updateRichDraft, buildMime, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes };
+module.exports = { updateRichDraft, buildMime, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes };
