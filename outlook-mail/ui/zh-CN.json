@@ -67,5 +67,6 @@
   "builtIn": "内置应用",
   "accountActions": "邮箱操作",
   "loading": "正在加载邮箱设置…",
-  "retry": "重新加载"
+  "retry": "重新加载",
+  "connectAnother": "连接另一个账户"
 }

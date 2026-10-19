@@ -11,7 +11,7 @@ export function Icon({ name, ...props }) {
     check: 'm5 12 4 4L19 6',
     plus: 'M12 5v14M5 12h14',
     copy: 'M9 9h11v11H9zM15 5V3H3v12h2',
-    mail: 'M3 5h18v14H3zM3 5l9 7 9-7',
+    user: 'M22 12a10 10 0 1 0-20 0 10 10 0 0 0 20 0M16 10a4 4 0 1 0-8 0 4 4 0 0 0 8 0M6 20a6 6 0 0 1 12 0',
     more: 'M5 12h.01M12 12h.01M19 12h.01',
   };
   return (

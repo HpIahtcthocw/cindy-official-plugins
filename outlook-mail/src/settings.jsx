@@ -15,8 +15,16 @@ import {
 } from './components/ui.jsx';
 
 const clouds = {
-  global: { key: 'outlook_global', port: 53687, portal: 'https://portal.azure.com' },
-  china: { key: 'outlook_china', port: 53688, portal: 'https://portal.azure.cn' },
+  global: {
+    key: 'outlook_global',
+    port: 53687,
+    portal: 'https://portal.azure.com',
+  },
+  china: {
+    key: 'outlook_china',
+    port: 53688,
+    portal: 'https://portal.azure.cn',
+  },
 };
 async function request(path, init) {
   const response = await fetch(
@@ -126,7 +134,9 @@ function Settings({ strings }) {
       return;
     }
     setMessage(t('connecting'));
-    const r = await request('/oauth/' + clouds[cloud].key + '/connect', { method: 'POST' });
+    const r = await request('/oauth/' + clouds[cloud].key + '/connect', {
+      method: 'POST',
+    });
     if (!r.ok) {
       setMessage(strings[r.error] || t('connectFailed'));
       return;
@@ -155,10 +165,12 @@ function Settings({ strings }) {
   }
   const application = (
     <form id="application-form" onSubmit={saveApplication}>
-      {required && <h3>{t('setupTitle')}</h3>}
-      <p id="application-help" className="hint">
-        {t(required ? 'requiredHelp' : 'setupHelp')}
-      </p>
+      <div className="application-intro">
+        {required && <h3>{t('setupTitle')}</h3>}
+        <p id="application-help" className="hint">
+          {t(required ? 'requiredHelp' : 'setupHelp')}
+        </p>
+      </div>
       <div className="field">
         <label htmlFor="client-id">Client ID</label>
         <Input
@@ -228,7 +240,9 @@ function Settings({ strings }) {
           disabled={disabled}
           onClick={() =>
             void perform(async () => {
-              await request('/oauth/' + clouds[selected].key + '/client', { method: 'DELETE' });
+              await request('/oauth/' + clouds[selected].key + '/client', {
+                method: 'DELETE',
+              });
               setClientId('');
               setMessage(t('clientCleared'));
             })
@@ -342,16 +356,6 @@ function Settings({ strings }) {
             </Button>
           )}
         </div>
-        <Button
-          id="connect"
-          variant="primary"
-          disabled={disabled || !current?.clientConfigured}
-          hidden={required}
-          onClick={() => void perform(() => connect())}
-        >
-          <Icon name="plus" />
-          {t('connect')}
-        </Button>
         {!loaded && attempted && (
           <Button
             id="retry"
@@ -381,24 +385,16 @@ function Settings({ strings }) {
           {loaded && !accounts.length && <p className="hint empty">{t('noAccounts')}</p>}
           {accounts.map(({ cloud, cfg, account: a }) => (
             <div key={cloud + a.id} className="account" data-cloud={cloud} data-account-id={a.id}>
-              <span className="mail-icon">
-                <Icon name="mail" />
+              <span className="account-avatar">
+                <Icon name="user" />
               </span>
               <div className="identity">
-                <span className="account-name">{a.label || a.id}</span>
-                <div className="account-meta">
-                  <span>{t(cloud)}</span>
-                  {a.isDefault && <span className="default-badge">{t('defaultAccount')}</span>}
-                </div>
-                <p className="hint account-status">
-                  {t(
-                    a.status !== 'connected'
-                      ? 'expired'
-                      : a.scopeStale
-                        ? 'scopeStale'
-                        : 'connected',
-                  )}
-                </p>
+                <span className="account-name">{(a.label || a.id).replace(/^\s*·\s*/, '')}</span>
+                {(a.status !== 'connected' || a.scopeStale) && (
+                  <p className="hint account-status">
+                    {t(a.status !== 'connected' ? 'expired' : 'scopeStale')}
+                  </p>
+                )}
               </div>
               <div className="account-controls">
                 {(a.status !== 'connected' || a.scopeStale) && (
@@ -434,6 +430,20 @@ function Settings({ strings }) {
                       }
                     }}
                   >
+                    <div className="account-details hint">
+                      <p>{t(cloud)}</p>
+                      <p>
+                        {t(
+                          a.status !== 'connected'
+                            ? 'expired'
+                            : a.scopeStale
+                              ? 'scopeStale'
+                              : 'connected',
+                        )}
+                      </p>
+                      {a.isDefault && <span className="default-badge">{t('defaultAccount')}</span>}
+                    </div>
+                    <DropdownMenuSeparator />
                     {!a.isDefault && a.status === 'connected' && (
                       <DropdownMenuItem
                         disabled={disabled}
@@ -469,6 +479,19 @@ function Settings({ strings }) {
               </div>
             </div>
           ))}
+          <Button
+            id="connect"
+            variant="ghost"
+            className="account-connect"
+            disabled={disabled || !current?.clientConfigured}
+            hidden={required}
+            onClick={() => void perform(() => connect())}
+          >
+            <span className="account-avatar">
+              <Icon name="plus" />
+            </span>
+            <span>{t(accounts.length ? 'connectAnother' : 'connect')}</span>
+          </Button>
         </div>
       </section>
       <Disclosure

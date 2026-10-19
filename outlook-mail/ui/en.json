@@ -67,5 +67,6 @@
   "builtIn": "Built-in application",
   "accountActions": "Mailbox actions",
   "loading": "Loading mailbox settings…",
-  "retry": "Reload"
+  "retry": "Reload",
+  "connectAnother": "Connect another account"
 }

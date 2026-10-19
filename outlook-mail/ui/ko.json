@@ -67,5 +67,6 @@
   "builtIn": "내장 앱",
   "accountActions": "메일함 작업",
   "loading": "메일함 설정을 불러오는 중…",
-  "retry": "새로 고침"
+  "retry": "새로 고침",
+  "connectAnother": "다른 계정 연결"
 }

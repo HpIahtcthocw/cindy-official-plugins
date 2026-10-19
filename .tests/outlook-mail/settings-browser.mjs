@@ -110,6 +110,15 @@ try {
   assert.equal(calls.at(-1).path,'/oauth/outlook_global/connect');assert.equal(await page.locator('#accounts img').count(),0);
   assert.equal(calls.at(-1).body,null);
   const row=(cloud,id)=>page.locator('.account[data-cloud="'+cloud+'"][data-account-id="'+id+'"]');
+  assert.equal(await page.locator('#accounts > #connect').count(),1,'connect belongs to the account card footer');
+  assert.equal(await page.locator('#connect').textContent(),'连接另一个账户');
+  entries[0].accounts[0].label='  · g1@example.test';
+  await page.reload();await settled();
+  assert.equal(await row('global','g1').locator('.account-name').textContent(),'g1@example.test');
+  assert.equal(await row('global','g1').locator('.account-status').count(),0,'healthy rows stay compact');
+  await openActions('global','g1');
+  assert.match(await page.locator('.account-details').textContent(),/Outlook.*已连接.*此服务默认账号/);
+  await page.keyboard.press('Escape');
   nextAccount='g2';await page.locator('#connect').click();await settled();
   await selectCloud('china');await settled();assert(await page.locator('#connect').isDisabled());
   assert.equal(await page.locator('#redirect').inputValue(),registeredRedirect('outlook_china'));
@@ -222,6 +231,11 @@ try {
     entries[0].accounts[0].label='a-very-long-mailbox-name.without-spaces@example.test';
     entries[0].accounts[0].status='expired';
     await page.setViewportSize({width,height:160});await page.reload();await settled();await fitHost(width);await assertBounds();
+    if(width===720){
+      const selector=await page.locator('#cloud').boundingBox();
+      assert(selector.width<width/2,'service trigger uses content width, not 62% of the header');
+      if(lang==='zh-CN')await page.screenshot({path:fileURLToPath(new URL(`outlook-${testMode}-720-accounts.png`,screenshots)),fullPage:true});
+    }
     const rowBefore=await row('global','g1').boundingBox();
     await openActions('global','g1');await page.getByRole('menuitem',{name:stringsFor(lang,'disconnect'),exact:true}).waitFor();
     await assertBounds();
@@ -234,6 +248,10 @@ try {
     assert(menu.y>=-1&&menu.y+menu.height<=page.viewportSize().height+1,'service menu clipped by auto-height webview');
     if(lang==='zh-CN'&&[320,720].includes(width))await page.screenshot({path:fileURLToPath(new URL(`outlook-${testMode}-${width}-menu.png`,screenshots)),fullPage:true});
     await page.locator('#service-menu [data-cloud="china"]').click();await settled();await fitHost(width);await assertBounds();
+    if(width===720&&lang==='zh-CN'){
+      const title=await page.locator('.application-intro h3').boundingBox(),help=await page.locator('#application-help').boundingBox();
+      assert(Math.abs(title.y-help.y)<4,'setup title and explanation share a line when space permits');
+    }
     assert.equal(await page.locator('#portal').getAttribute('target'),null,'Forge links must use same-page navigation');
     assert(await page.locator('#required-application').isVisible());
     if(lang==='zh-CN'&&[320,720].includes(width))await page.screenshot({path:fileURLToPath(new URL(`outlook-${testMode}-${width}-china.png`,screenshots)),fullPage:true});
@@ -247,5 +265,5 @@ try {
     assert.equal(call.method,'POST');assert.equal(call.body,null);
   }
   assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);
-  console.log('PASS Host OAuth settings: service selection vs persisted default, keyboard navigation/Escape, failed default save, failed application save preserves input, cancel, clear application fallback, missing-app reconnect setup, narrow dropdown, reload recovery; bundled application sign-in without custom setup, administrator-only hints, app setup, missing-config gate, connect/disconnect, failed disconnect, four simultaneous accounts across both clouds, per-cloud defaults, reconnect deduplication and row isolation, disconnect isolation, legacy state ignored, XSS, four locales + fallback, 320px layout, load failure; fixture screenshots in both themes; 40 Host-constrained layout combinations (280/320/360/460/720px × four locales × two themes), menu/trigger width, vertical clipping, account menu without row reflow and same-page links under CSP.');
+  console.log('PASS Host OAuth settings: service selection vs persisted default, keyboard navigation/Escape, failed default save, failed application save preserves input, cancel, clear application fallback, missing-app reconnect setup, narrow dropdown, reload recovery; bundled application sign-in without custom setup, administrator-only hints, app setup, missing-config gate, connect/disconnect, failed disconnect, four simultaneous accounts across both clouds, per-cloud defaults, reconnect deduplication and row isolation, disconnect isolation, legacy state ignored, XSS, four locales + fallback, 320px layout, load failure; fixture screenshots in both themes; 40 Host-constrained layout combinations (280/320/360/460/720px × four locales × two themes), compact trigger, inline setup explanation, account card footer and metadata menu, menu/trigger width, vertical clipping, account menu without row reflow and same-page links under CSP.');
 } finally {await browser.close();}

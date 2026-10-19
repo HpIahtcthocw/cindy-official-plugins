@@ -67,5 +67,6 @@
   "builtIn": "内蔵アプリ",
   "accountActions": "メールボックスの操作",
   "loading": "メールボックス設定を読み込み中…",
-  "retry": "再読み込み"
+  "retry": "再読み込み",
+  "connectAnother": "別のアカウントを接続"
 }
