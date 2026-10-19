@@ -77,12 +77,6 @@ Native helper update: releaseKeys submits HID usages 4–231 before waiting once
 - `control-model.js` holds the pure view logic (presence, overlay priority, idle countdown, device rows without UDIDs, newest-iPhone default) and is unit-tested; `control-page.test.cjs` drives `control.js` against a minimal fake DOM for load-once, recovery, start-after-shutdown, idle card and device switching.
 - Settings page follows Cindy's settings-row layout, adds a one-tap first-device creation (`catalog` / `create` over the settings channel → `viewer_catalog` / `create_device`), and shortens copy.
 
-## Docked panel (2026-10-19)
-
-- `panel.html` / `panel.css` / `panel.js` make the live controller a docked Cindy panel instead of a sidebar-browser tab. The panel embeds the plugin's own loopback controller page in an `<iframe>`; when no viewer is up it lists devices (open, or one-tap first iPhone). `main.js` pushes controller URLs over `BroadcastChannel('baguette-panel')` and reports `previewOpened` only on the panel's acknowledgement; `cindy.preview` is no longer called. The panel channel serves `current` / `boot` / `viewer` / `shutdown` / `catalog` / `create` only; settings writes stay on the settings channel.
-- Host side (makecindy/cindy, `ghostPanelLoopbackEmbedAllowed`): a plugin that declares `panel`, `node` and a loopback `preview.hosts` entry gets `frame-src 'self' http://127.0.0.1:* http://localhost:*` and the partition gate admits the panel's loopback sub-frame plus that frame's same host:port requests (scripts, XHR, WebSocket). The panel page itself still cannot reach the network. `minCindyVersion` is raised to 1.0.1 for this reason.
-- Worker adds the read-only `viewer_current` query (controller URL of the last opened device while the viewer runs).
-
 ## Repository binary-size gate
 
 The unchanged nine USDZ files are portable model data, selected by exact path from the same SHA-pinned official archive through `binary-dependencies.json`. Only these resources use the shared-platform declaration; no native executable or dylib is declared portable. All model bytes remain in the self-contained package, with no runtime download. Native code remains explicitly macOS arm64-only. The stable `vendor/baguette/` path avoids version-directory churn.

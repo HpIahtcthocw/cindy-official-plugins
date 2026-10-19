@@ -51,8 +51,5 @@
     "close_viewer": {
       "description": "Stop streaming only; the device and apps keep running, subject to idle settings. Use shutdown to end device connections; users can also shut down devices in plugin settings."
     }
-  },
-  "panel": {
-    "title": "iOS Simulator"
   }
 }

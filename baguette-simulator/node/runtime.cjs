@@ -77,7 +77,6 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
     if (method === 'settings_status') return status();
     if (method === 'viewer_switch') return manager.start(params);
     if (method === 'viewer_catalog') return dispatch('environment');
-    if (method === 'viewer_current') return {...await status(), viewer: require('./viewer.cjs').currentViewer()};
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);

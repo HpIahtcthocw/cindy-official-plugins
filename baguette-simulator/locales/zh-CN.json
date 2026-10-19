@@ -51,8 +51,5 @@
     "close_viewer": {
       "description": "仅停止画面服务，设备和 App 仍运行，继续受闲置设置控制。要结束设备连接请用 shutdown；用户也可在插件设置中关闭设备。"
     }
-  },
-  "panel": {
-    "title": "iOS 模拟器"
   }
 }

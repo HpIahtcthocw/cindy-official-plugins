@@ -13,7 +13,6 @@
     "Settings page variants (devices, empty with one-tap creation, paused, English, dark) rendered in headless Chrome against a mocked host channel"
   ],
   "notVerified": [
-    "Docked panel end-to-end (panel embedding the loopback controller) requires a Cindy build with the loopback-embed gate; verified only in the local dev build noted in the PR, not in a released Cindy",
     "0.1.24 package has not yet been installed in a production or Beta Cindy; the PR device-verification gate remains open",
     "Xcode 26 integration remains unverified",
     "Controller interactions (device menu, More menu, dialogs, confirm shutdown) were exercised only through the fake-DOM tests, not clicked in a real browser",
