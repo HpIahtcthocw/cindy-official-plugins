@@ -175,6 +175,55 @@ function workerFixture(t, inline = true) {
   });
   return f;
 }
+// The actual worker and HTTP transport must preserve provider receipts across
+// both raw POST creation and rich PUT updates (unit, synthetic responses).
+test('draft writes distinguish rejection, successful unusable receipts and transport uncertainty', async t => {
+  for (const operation of ['create', 'update']) for (const responseCase of [
+    { status: 403, body: '{', execution: 'not_executed', cancelThrows: true },
+    { status: 429, body: '{}', execution: 'not_executed' },
+    { status: 500, body: '{}', execution: 'unknown' },
+    { status: 408, body: '{}', execution: 'unknown' },
+    { status: 200, body: '{', execution: 'executed' },
+    { status: 200, oversized: true, execution: 'executed' },
+    { status: 200, brokenStream: true, execution: 'executed' },
+    { network: true, execution: 'unknown' },
+    ...(operation === 'create' ? [{ status: 200, body: '{}', execution: 'executed' }] : []),
+    ...(operation === 'update' ? [{ status: 200, body: '{', execution: 'not_executed', prewrite: true }] : []),
+  ]) {
+    const f = workerFixture(t), originalFetch = globalThis.fetch;
+    const method = operation === 'create' ? 'POST' : 'PUT';
+    let writes = 0;
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      if (responseCase.prewrite ? init.method === method : init.method !== method) return originalFetch(url, init);
+      if (init.method === method) writes++;
+      if (responseCase.network) throw new Error('transport lost');
+      const response = new Response(responseCase.oversized ? 'x'.repeat(300 * 1024 + 1) : responseCase.body ?? '{}', { status: responseCase.status });
+      if (responseCase.cancelThrows) response.body.cancel = async () => { throw new Error('cancel failed'); };
+      if (responseCase.brokenStream) return { ok: true, status: 200, body: { async *[Symbol.asyncIterator]() { throw new Error('receipt stream lost'); } } };
+      return response;
+    });
+    let request;
+    if (operation === 'create') {
+      fs.writeFileSync(path.join(f.dir, 'photo.png'), f.image);
+      f.ctx.schema = async () => ({ subcommands: [{ name: 'drafts', subcommands: [{ name: 'create', subcommands: [], flags: [] }] }] });
+      request = { method: 'run', params: { command: ['drafts', 'create'], arguments: [], readOnly: false, workdir: f.dir,
+        accountEmail: 'self@example.test', options: { to: 'person@example.test', subject: 'Hello', body: 'Photo',
+          'body-html': '<img src="cid:img1@cindy.local">', 'inline-images': [{ path: 'photo.png',
+            hash: createHash('sha256').update(f.image).digest('hex'), contentType: 'image/png' }] } } };
+    } else {
+      const before = f.ctx.draftReadBack({ draft: f.draft }, f.draft.id);
+      request = { method: 'compose', params: { draftId: f.draft.id, fingerprint: before.fingerprint,
+        fields: { ...f.fields, subject: 'Hello' }, send: true } };
+    }
+    request.cindy = { secrets: { gog_access_token: 'fixture-token' } };
+    const result = await f.ctx.handle(request, {});
+    assert.equal(result.ok, false, operation + JSON.stringify(responseCase));
+    assert.equal(result.execution, responseCase.execution, operation + JSON.stringify(responseCase));
+    if (result.execution === 'executed') assert.match(result.message, /已保存.*(?:未发送|尚未发送)/);
+    assert.equal(writes, responseCase.prewrite ? 0 : 1);
+    assert.equal(f.calls.some(c => /\/send(?:\?|$)/.test(c.url)), false);
+  }
+});
 // The shared Host formatter supplies corrected names; the adapter must transport
 // them even when HTML/CID/bytes are otherwise unchanged (unit, no real requests).
 test('Host attachment rename is saved and read back without changing image bytes or CID', async t => {

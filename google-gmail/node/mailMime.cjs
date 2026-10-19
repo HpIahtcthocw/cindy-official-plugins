@@ -37,10 +37,22 @@ async function gmailJson(token, resource, init = {}, maxBytes = MAX_BYTES * 2) {
     ...init, redirect: 'error', signal: AbortSignal.timeout(60000),
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
   });
-  if (!response.ok) { await response.body?.cancel(); throw new Error('Gmail HTTP ' + response.status); }
-  const chunks = []; let size = 0;
-  for await (const chunk of response.body) { size += chunk.length; if (size > maxBytes) throw new Error('邮件内容超过大小上限'); chunks.push(chunk); }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  if (!response.ok) {
+    // A received rejection is authoritative even if discarding its body fails.
+    // Request timeout/client-close and server errors cannot exclude a write.
+    const execution = response.status >= 400 && response.status < 500 && ![408, 499].includes(response.status)
+      ? 'not_executed' : 'unknown';
+    try { await response.body?.cancel(); } catch (_) { /* Keep the HTTP receipt. */ }
+    throw Object.assign(new Error('Gmail HTTP ' + response.status), { execution, status: response.status });
+  }
+  try {
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) { size += chunk.length; if (size > maxBytes) throw new Error('邮件内容超过大小上限'); chunks.push(chunk); }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (error) {
+    // The successful status survives parse/size/stream failure of its receipt.
+    throw Object.assign(error, { execution: 'executed', status: response.status });
+  }
 }
 
 function collectAttachments(payload) {
@@ -153,7 +165,7 @@ async function updateRichDraft(p, token, before, helpers, execution) {
   if (cids.size !== files.filter(f => f.contentId).length) throw new Error('图片引用重复，请重新读取草稿');
   for (const match of (fields.bodyHtml + fields.quoteHtml).matchAll(/\bcid:([^\s"'<>]+)/g)) if (!cids.has(match[1])) throw new Error('正文仍引用已移除的图片，请先在正文中删除图片');
   const raw = buildMime({ fields, headers: before.headers, files }, helpers);
-  // A failed PUT is unknown: never replay it automatically.
+  // The transport preserves a received write status; without one, do not replay.
   execution.started = true;
   await gmailJson(token, 'drafts/' + encodeURIComponent(p.draftId), { method: 'PUT', body: JSON.stringify({ id: p.draftId, message: { raw: Buffer.from(raw).toString('base64url'), ...(before.threadId ? { threadId: before.threadId } : {}) } }) }, 300 * 1024);
   return { ok: true, files: files.map(f => ({ filename: f.filename, mimeType: f.mimeType, bytes: f.data.length,

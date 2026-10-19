@@ -17,6 +17,17 @@ let runtime;
 let schemaPromise;
 
 function failure(message, execution = 'not_executed') { return { ok: false, execution, message }; }
+// Only the write phase may consume a transport execution receipt. A failed
+// pre-write GET, even with HTTP 200, does not mean the draft was saved.
+function draftWriteFailure(error, state) {
+  const outcome = !state.started ? 'not_executed'
+    : ['not_executed', 'executed', 'unknown'].includes(error?.execution) ? error.execution : 'unknown';
+  return failure({
+    not_executed: '草稿未保存，邮件尚未发送。请检查附件、正文和 Gmail 插件详情页中的账号授权后重试。',
+    executed: '草稿已保存但未发送：无法完整核对 Gmail 回执，请先重新读取或到 Gmail 检查，不要重复创建、保存或发送。',
+    unknown: '无法确认草稿保存结果，邮件尚未发送。请先核对 Gmail 草稿，不要重复创建或保存。',
+  }[outcome], outcome);
+}
 function cleanup(directory, result) {
   try { fs.rmSync(directory, { recursive: true, force: true }); }
   catch (_) {
@@ -286,7 +297,7 @@ async function composeDraft(message, execution) {
         richReceipt = await updateRichDraft({ ...p, fields: { ...fields, bodyHtml, quoteHtml } }, message.cindy?.secrets?.gog_access_token, before,
           { draftReadBack, addressHeader, encodeWords, encodeHeader, wrap }, execution);
         if (!richReceipt.ok) return richReceipt;
-      } catch (_) { return failure(execution.started ? '无法确认草稿保存结果，请先重新读取核对，邮件尚未发送。' : '草稿未修改：附件或正文无法完整保存，请检查文件和图片引用后重试。', execution.started ? 'unknown' : 'not_executed'); }
+      } catch (error) { return draftWriteFailure(error, execution); }
     }
     const savedButUnverified = () => failure('草稿已保存但未发送：无法完整核对读回内容或附件，请先重新读取或到 Gmail 检查，不要重复保存或发送。', 'executed');
     let updated;
@@ -536,15 +547,16 @@ async function handle(message, execution) {
     // The pinned CLI has no drafts create --raw-file. Use the same fixed Gmail
     // API transport as rich draft updates, then read the exact saved draft back.
     if (Buffer.byteLength(inlineMessage) > 35 * 1024 * 1024) return failure('邮件内容超过大小上限');
+    const requestBody = JSON.stringify({ message: {
+      raw: Buffer.from(inlineMessage).toString('base64url'),
+      ...(options['thread-id'] ? { threadId: encodeHeader(options['thread-id']) } : {}),
+    } });
     try {
       execution.started = true;
-      const created = await gmailJson(token, 'drafts', { method: 'POST', body: JSON.stringify({ message: {
-        raw: Buffer.from(inlineMessage).toString('base64url'),
-        ...(options['thread-id'] ? { threadId: encodeHeader(options['thread-id']) } : {}),
-      } }) }, MAX_OUTPUT);
-      if (typeof created.id !== 'string' || !created.id) throw new Error('Missing draft receipt');
+      const created = await gmailJson(token, 'drafts', { method: 'POST', body: requestBody }, MAX_OUTPUT);
+      if (typeof created?.id !== 'string' || !created.id) throw Object.assign(new Error('Missing draft receipt'), { execution: 'executed' });
       return readSavedDraft({ ok: true, execution: 'executed', data: { draftId: created.id } }, command, token, cwd);
-    } catch (_) { return failure('图文草稿保存结果未知，请先核对 Gmail 草稿，不要重复创建。', 'unknown'); }
+    } catch (error) { return draftWriteFailure(error, execution); }
   }
   const positionals = [...values];
   if ((SERVICE === 'drive' && command[0] === 'upload') || (SERVICE === 'gmail' && command[0] === 'import')) positionals[0] = localPath(positionals[0], cwd);
