@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const { updateRichDraft, keyFor, gmailJson } = require('./mailMime.cjs');
+const { updateRichDraft, keyFor, gmailJson, decodeMimeBody, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
 const SERVICE = 'gmail';
 const root = path.resolve(__dirname, '..');
 const binaries = require('../vendor/gog/binaries.json');
@@ -177,9 +177,10 @@ function draftReadBack(data, draftId) {
     const contentId = header(part, 'content-id');
     if (part.filename || /^(attachment|inline)\b/i.test(disposition) || contentId) {
       attachments.push({ key: keyFor(part), filename: part.filename || '', mimeType: part.mimeType, bytes: body.size,
-        attachmentId: body.attachmentId || null, disposition, contentId });
+        attachmentId: body.attachmentId || null, disposition, contentId,
+        ...(typeof body.data === 'string' ? { sha256: digest(Buffer.from(body.data, 'base64url')) } : {}) });
     } else if (bodies[part.mimeType] && typeof body.data === 'string') {
-      bodies[part.mimeType].push(Buffer.from(body.data, 'base64url').toString('utf8'));
+      bodies[part.mimeType].push(decodeMimeBody(part));
     }
     for (const child of part.parts || []) walk(child);
   }
@@ -271,29 +272,38 @@ async function composeDraft(message, execution) {
         if (!richReceipt.ok) return richReceipt;
       } catch (_) { return failure(execution.started ? '无法确认草稿保存结果，请先重新读取核对，邮件尚未发送。' : '草稿未修改：附件或正文无法完整保存，请检查文件和图片引用后重试。', execution.started ? 'unknown' : 'not_executed'); }
     }
-    const updated = rich ? await run(['drafts', 'get']) : await run(['drafts', 'update'], { to: fields.to, cc: fields.cc, bcc: fields.bcc, subject: fields.subject,
+    const savedButUnverified = () => failure('草稿已保存但未发送：无法完整核对读回内容或附件，请先重新读取或到 Gmail 检查，不要重复保存或发送。', 'executed');
+    let updated;
+    try { updated = rich ? await run(['drafts', 'get']) : await run(['drafts', 'update'], { to: fields.to, cc: fields.cc, bcc: fields.bcc, subject: fields.subject,
       ...(before.headers.from ? { from: from ? from[1] : before.headers.from } : {}),
       ...(before.headers['reply-to'] ? { 'reply-to': before.headers['reply-to'] } : {}),
-      body: fields.body + fields.quote, 'body-html': bodyHtml + quoteHtml }, execution);
-    if (!updated.ok) return updated;
-    saved = updated.data.readBack;
+      body: fields.body + fields.quote, 'body-html': bodyHtml + quoteHtml }, execution); }
+    catch (_) {
+      if (rich) return savedButUnverified(); // The preceding PUT has a successful receipt.
+      return failure('无法确认草稿保存结果，请先重新读取核对，邮件尚未发送。', execution.started ? 'unknown' : 'not_executed');
+    }
+    if (!updated.ok) return rich ? savedButUnverified() : updated;
+    saved = updated.data?.readBack;
     if (!saved || saved.status !== 'read_back') return { ok: false, execution: 'executed',
       message: '草稿已保存但未发送：无法读回确认，请先到 Gmail 检查。' };
     // Verify the saved content before sending. Keep reply
     // headers and attachments via gog update's existing preservation behavior.
-    const normalized = text => text.replace(/\r\n?/g, '\n');
-    const addresses = text => text.trim() ? addressHeader(text).split(',\r\n ').map(value => {
-      const match = /<([^<>]+)>$/.exec(value);
-      return (match ? match[1] : value).toLowerCase();
-    }).sort().join(',') : '';
-    const attachmentFacts = items => JSON.stringify(items.map(a => [a.filename, a.mimeType, a.bytes, (a.contentId || '').replace(/^<|>$/g, '')]).sort());
-    if (normalized(saved.bodyText) !== normalized(fields.body + fields.quote) || normalized(saved.bodyHtml) !== normalized(bodyHtml + quoteHtml)
-      || ['to', 'cc', 'bcc'].some(name => addresses(saved.headers[name]) !== addresses(fields[name]))
-      || saved.headers.subject !== fields.subject.trim() || addresses(saved.headers.from) !== addresses(before.headers.from)
-      || addresses(saved.headers['reply-to']) !== addresses(before.headers['reply-to'])
-      || saved.threadId !== before.threadId || saved.headers['in-reply-to'] !== before.headers['in-reply-to']
-      || saved.headers.references !== before.headers.references || attachmentFacts(saved.attachments) !== attachmentFacts(richReceipt ? richReceipt.files : before.attachments))
-      return { ok: false, execution: 'executed', message: '草稿已保存但未发送：读回内容、收件人或附件不一致，请先到 Gmail 检查。' };
+    try {
+      const normalized = text => text.replace(/\r\n?/g, '\n');
+      const addresses = text => text.trim() ? addressHeader(text).split(',\r\n ').map(value => {
+        const match = /<([^<>]+)>$/.exec(value);
+        return (match ? match[1] : value).toLowerCase();
+      }).sort().join(',') : '';
+      const attachmentFacts = items => JSON.stringify(items.map(a => [a.filename, a.mimeType, a.bytes, (a.contentId || '').replace(/^<|>$/g, '')]).sort());
+      if (normalized(saved.bodyText) !== normalized(fields.body + fields.quote) || normalized(saved.bodyHtml) !== normalized(bodyHtml + quoteHtml)
+        || ['to', 'cc', 'bcc'].some(name => addresses(saved.headers[name]) !== addresses(fields[name]))
+        || saved.headers.subject !== fields.subject.trim() || addresses(saved.headers.from) !== addresses(before.headers.from)
+        || addresses(saved.headers['reply-to']) !== addresses(before.headers['reply-to'])
+        || saved.threadId !== before.threadId || saved.headers['in-reply-to'] !== before.headers['in-reply-to']
+        || saved.headers.references !== before.headers.references || attachmentFacts(saved.attachments) !== attachmentFacts(richReceipt ? richReceipt.files : before.attachments))
+        return { ok: false, execution: 'executed', message: '草稿已保存但未发送：读回内容、收件人或附件不一致，请先到 Gmail 检查。' };
+      if (richReceipt && !await verifyDraftAttachmentBytes(message.cindy?.secrets?.gog_access_token, saved, richReceipt.files)) return savedButUnverified();
+    } catch (_) { return savedButUnverified(); }
   }
   if (!p.send) return { ok: true, execution: 'executed', data: { draftId: p.draftId, readBack: saved } };
   const sent = await run(['drafts', 'send'], {}, execution);
@@ -465,9 +475,17 @@ async function handle(message, execution) {
       const htmlChanged = options['body-html'] !== undefined || options['body-html-file'] !== undefined;
       if (bodyChanged !== htmlChanged) return failure('更新此图文草稿时，请同时提供 body 和 body-html（或对应文件），以保留图片和纯文本版本。');
       const fields = Object.fromEntries(['to', 'cc', 'bcc', 'subject'].map(name => [name, textOption(name, checked.headers[name])]));
+      const html = textOption('body-html', checked.editor.bodyHtml) + checked.editor.quoteHtml;
+      // attach replaces ordinary files. Only inline parts still referenced by
+      // the replacement body survive implicitly; omission preserves all files.
+      const retained = options['clear-attachments'] === true ? [] : options.attach === undefined ? checked.attachments
+        : checked.attachments.filter(a => {
+          const cid = (a.contentId || '').replace(/^<|>$/g, '');
+          return cid && [...html.matchAll(/\bcid:([^\s"'<>]+)/g)].some(m => m[1] === cid);
+        });
       Object.assign(fields, { body: textOption('body', checked.editor.body), bodyHtml: textOption('body-html', checked.editor.bodyHtml),
         quote: checked.editor.quote, quoteHtml: checked.editor.quoteHtml,
-        attachmentItems: JSON.stringify(options['clear-attachments'] === true ? [] : checked.attachments.map(a => ({ key: a.key, filename: a.filename, bytes: a.bytes, contentId: a.contentId || '' }))) });
+        attachmentItems: JSON.stringify(retained.map(a => ({ key: a.key, filename: a.filename, bytes: a.bytes, contentId: a.contentId || '' }))) });
       const inputs = options.attach === undefined ? [] : Array.isArray(options.attach) ? options.attach : [options.attach];
       if (inputs.length > 20) return failure('附件过多，草稿未修改。');
       const attachments = inputs.map(input => {

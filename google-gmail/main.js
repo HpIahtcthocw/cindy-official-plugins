@@ -304,7 +304,13 @@ async function readMailMessageLink(args) {
     } catch (_) { conversationUnavailable = true; }
   }
   function header(part, name) { return (part.headers || []).filter(function (h) { return h.name.toLowerCase() === name; }).map(function (h) { return h.value; }).join(', '); }
-  function decode(data) { return new TextDecoder().decode(Uint8Array.from(atob(data.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); })); }
+  function decode(part) {
+    var match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(header(part, 'content-type'));
+    var decoder;
+    try { decoder = new TextDecoder(match && (match[1] || match[2] || match[3]) || 'utf-8'); }
+    catch (_) { decoder = new TextDecoder('utf-8'); }
+    return decoder.decode(Uint8Array.from(atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); }));
+  }
   var bodies = { 'text/plain': [], 'text/html': [] }, attachments = [];
   function walk(part) {
     var body = part.body || {}, cid = header(part, 'content-id').replace(/^<|>$/g, '');
@@ -313,15 +319,17 @@ async function readMailMessageLink(args) {
         bytes: body.size, contentId: cid, attachmentId: body.attachmentId, inlineData: body.data });
       return; // Attached .eml messages must never become the outer email body.
     }
-    if (bodies[part.mimeType] && typeof body.data === 'string') bodies[part.mimeType].push(decode(body.data));
+    if (bodies[part.mimeType] && typeof body.data === 'string') bodies[part.mimeType].push(decode(part));
     (part.parts || []).forEach(walk);
   }
   walk(message.payload);
   var preview = await mailImagePreviews({ messageId: message.id, attachments: attachments }, selected.accountId);
   for (var file of preview.attachments) {
     if (file.inlineData && /^image\/(png|jpeg|gif|webp)$/.test(file.mimeType) && file.inlineData.length <= 22000000) {
-      var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: file.inlineData.replace(/-/g, '+').replace(/_/g, '/'), label: file.filename });
-      if (deposited.ok) file.previewUrl = deposited.url;
+      try {
+        var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: file.inlineData.replace(/-/g, '+').replace(/_/g, '/'), label: file.filename });
+        if (deposited.ok) file.previewUrl = deposited.url;
+      } catch (_) { /* A failed image preview must not hide the readable message. */ }
     }
   }
   var markReadFailed = false;

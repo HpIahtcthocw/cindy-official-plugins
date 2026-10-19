@@ -54,6 +54,37 @@ test('native reader preserves HTML/CID and UTF-8, excludes attached mail body, o
   assert.equal(f.calls[0].url, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/12345678?format=full');
   assert.equal(f.calls[0].method, undefined);
 });
+// Reader regressions: MIME encodings belong to each body part; a failed image
+// deposit must not discard a successfully fetched body (unit, synthetic bytes).
+test('native reader decodes each declared body charset, including legacy encodings', async () => {
+  const f = fixture();
+  const text = f.msg.payload.parts[0], html = f.msg.payload.parts[1];
+  text.headers = [{ name: 'Content-Type', value: 'text/plain; charset="ISO-8859-1"' }];
+  text.body.data = Buffer.from([0x63, 0x61, 0x66, 0xe9]).toString('base64url');
+  html.headers = [{ name: 'Content-Type', value: "text/html; charset='Shift_JIS'" }];
+  html.body.data = Buffer.from([0x3c, 0x70, 0x3e, 0x93, 0xfa, 0x96, 0x7b, 0x3c, 0x2f, 0x70, 0x3e]).toString('base64url');
+  const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+  assert.equal(mail.bodyText, 'café');
+  assert.equal(mail.bodyHtml, '<p>日本</p>');
+});
+test('one failed inline image deposit preserves body, conversation and other previews', async () => {
+  const f = fixture();
+  f.msg.threadId = 'abcdef00';
+  f.msg.messages = [{ id: f.msg.id }];
+  const image = f.msg.payload.parts.at(-1);
+  f.msg.payload.parts.push({ ...image, partId: '4', filename: 'other.png' });
+  let deposits = 0;
+  f.ctx.cindy.send = async () => {
+    if (++deposits === 1) throw new Error('media unavailable');
+    return { ok: true, url: 'cindy-media://blobs/' + 'b'.repeat(64) + '.png' };
+  };
+  const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+  assert.equal(mail.bodyText, '中文');
+  assert.equal(mail.conversation.messages.length, 1);
+  assert.equal(mail.attachments[1].previewUrl, undefined);
+  assert.match(mail.attachments[2].previewUrl, /^cindy-media:/);
+  assert.equal(deposits, 2);
+});
 test('ambiguous accounts and foreign URLs never trigger mailbox requests', async () => {
   const f = fixture([{ id: 'a', email: 'a@example.com', status: 'connected' }, { id: 'b', email: 'b@example.com', status: 'connected' }]);
   for (const url of ['https://evil.com/mail/#all/12345678', 'https://mail.google.com.evil.com/mail/#all/12345678', 'https://mail.google.com/mail/#all/12345678', 'https://mail.google.com/mail/?authuser=missing@example.com#all/12345678'])

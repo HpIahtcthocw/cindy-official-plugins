@@ -131,11 +131,13 @@ function workerFixture(t, inline = true) {
         assert.ok(match, part.mimeType);
         part.body.data = Buffer.from(match[1], 'base64').toString('base64url');
       }
-      const cid = /Content-ID: <([^>]+)>/.exec(raw)?.[1];
-      const image = f.draft.message.payload.parts.find(p => p.filename);
-      if (image && cid) image.headers = [{ name: 'Content-ID', value: '<' + cid + '>' }];
-      const filename = /filename\*=UTF-8''([^\r\n]+)/.exec(raw)?.[1];
-      if (image && filename) image.filename = decodeURIComponent(filename);
+      const files = [...raw.matchAll(/Content-Type: ([^\r\n]+)\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: (?:inline|attachment); filename\*=UTF-8''([^\r\n]+)\r\n(?:Content-ID: <([^>]+)>\r\n)?\r\n([A-Za-z0-9+/=\r\n]+?)(?=\r\n--)/g)].map((m, index) => {
+        const data = Buffer.from(m[4], 'base64');
+        return { partId: String(index + 1), filename: decodeURIComponent(m[2]), mimeType: m[1],
+          headers: m[3] ? [{ name: 'Content-ID', value: '<' + m[3] + '>' }] : [],
+          body: { size: data.length, data: data.toString('base64url') } };
+      });
+      f.draft.message.payload.parts = f.draft.message.payload.parts.filter(p => !p.filename).concat(files);
     }
     return original(url, init);
   });
@@ -249,4 +251,102 @@ test('plain card edits regenerate the HTML alternative instead of sending stale 
   assert.equal(result.data.readBack.bodyText, 'User edited');
   assert.equal(result.data.readBack.bodyHtml, f.ctx.mailBodyHtml('User edited'));
   assert.equal(result.data.readBack.editor.format, 'text');
+});
+
+// Side-effect tri-state rule: a read failure after successful PUT is a saved,
+// unsent draft, never a failed write to replay. Cover both read error shapes.
+test('a successful rich save survives read-back failure without reporting not_executed or sending', async t => {
+  for (const mode of ['not_executed', 'unknown', 'throw']) {
+    const f = workerFixture(t), execute = f.ctx.execute;
+    f.ctx.execute = async (...args) => {
+      if (f.calls.some(c => c.init.method === 'PUT')) {
+        if (mode === 'throw') throw new Error('read failed');
+        return { ok: false, execution: mode, message: 'read failed' };
+      }
+      return execute(...args);
+    };
+    const result = await f.ctx.handle({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { command: ['drafts', 'update'], arguments: ['draft-test'], readOnly: false, options: { body: 'Edited', 'body-html': '<p>Edited</p><img src="cid:photo@example.test">' } } }, {});
+    assert.equal(result.ok, false);
+    assert.equal(result.execution, 'executed');
+    assert.match(result.message, /已保存.*未发送/);
+    assert.equal(f.calls.filter(c => c.init.method === 'PUT').length, 1);
+    assert.equal(f.calls.some(c => /send/.test(c.url)), false);
+  }
+});
+test('AI attach replaces ordinary files while preserving only CID images still referenced by the body', async t => {
+  const f = workerFixture(t), file = path.join(f.dir, 'new.pdf');
+  fs.writeFileSync(file, 'new-file');
+  f.draft.message.payload.parts.push({ partId: 'old', filename: 'old.pdf', mimeType: 'application/pdf', body: { size: 8, data: Buffer.from('old-file').toString('base64url') } });
+  const result = await f.ctx.handle({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+    params: { command: ['drafts', 'update'], arguments: [f.draft.id], workdir: f.dir, readOnly: false, options: { attach: ['new.pdf'] } } }, {});
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(Array.from(result.data.readBack.attachments, a => a.filename), ['图.png', 'new.pdf']);
+  assert.equal(result.data.readBack.attachments[0].contentId, '<photo@example.test>');
+  const raw = Buffer.from(JSON.parse(f.calls.find(c => c.init.method === 'PUT').init.body).message.raw, 'base64url').toString();
+  assert.ok(raw.includes(f.image.toString('base64')));
+  assert.equal(raw.includes(Buffer.from('old-file').toString('base64')), false);
+});
+test('same-length changed attachment bytes after PUT prevent sending or claiming verified sync', async t => {
+  const f = workerFixture(t), execute = f.ctx.execute;
+  f.ctx.execute = async (...args) => {
+    if (f.calls.some(c => c.init.method === 'PUT')) {
+      const part = f.draft.message.payload.parts.find(p => p.filename);
+      const changed = Buffer.from(f.image); changed[changed.length - 1] ^= 1;
+      part.body.data = changed.toString('base64url');
+    }
+    return execute(...args);
+  };
+  const before = f.ctx.draftReadBack({ draft: f.draft }, f.draft.id);
+  const result = await f.ctx.handle({ method: 'compose', cindy: { secrets: { gog_access_token: 'fixture-token' } }, params: {
+    draftId: f.draft.id, fingerprint: before.fingerprint, fields: { ...f.fields, subject: 'Hello' }, send: true,
+  } }, {});
+  assert.equal(result.ok, false);
+  assert.equal(result.execution, 'executed');
+  assert.match(result.message, /附件/);
+  assert.equal(f.calls.some(c => /send/.test(c.url)), false);
+});
+test('attachment read-back downloads server-only bytes and treats missing or changed bytes as saved but unverified', async t => {
+  for (const mode of ['matching', 'changed', 'offline']) {
+    const f = workerFixture(t), execute = f.ctx.execute, fetch = globalThis.fetch;
+    let downloads = 0;
+    f.ctx.execute = async (...args) => {
+      if (f.calls.some(c => c.init.method === 'PUT')) {
+        const part = f.draft.message.payload.parts.find(p => p.filename);
+        delete part.body.data;
+        part.body.attachmentId = 'stored-part';
+      }
+      return execute(...args);
+    };
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      if (url.endsWith('/attachments/stored-part')) {
+        downloads++;
+        assert.equal(init.headers.Authorization, 'Bearer fixture-token');
+        if (mode === 'offline') throw new Error('offline');
+        const data = Buffer.from(f.image);
+        if (mode === 'changed') data[data.length - 1] ^= 1;
+        return new Response(JSON.stringify({ data: data.toString('base64url') }));
+      }
+      return fetch(url, init);
+    });
+    const result = await f.ctx.handle({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { command: ['drafts', 'update'], arguments: ['draft-test'], readOnly: false,
+        options: { body: 'Edited', 'body-html': '<p>Edited</p><img src="cid:photo@example.test">' } } }, {});
+    assert.equal(downloads, 1);
+    assert.equal(result.ok, mode === 'matching', result.message);
+    assert.equal(result.execution, 'executed');
+    if (mode !== 'matching') assert.match(result.message, /已保存.*未发送/);
+    assert.equal(f.calls.filter(c => c.init.method === 'PUT').length, 1);
+    assert.equal(f.calls.some(c => /send/.test(c.url)), false);
+  }
+});
+test('draft read-back decodes the declared charset before editing either body alternative', t => {
+  const f = fixture(t), text = f.draft.message.payload.parts[0], html = f.draft.message.payload.parts[1];
+  text.headers = [{ name: 'Content-Type', value: 'text/plain; charset=ISO-8859-1' }];
+  text.body.data = Buffer.from([0x63, 0x61, 0x66, 0xe9]).toString('base64url');
+  html.headers = [{ name: 'Content-Type', value: 'text/html; charset="Shift_JIS"' }];
+  html.body.data = Buffer.from([0x3c, 0x70, 0x3e, 0x93, 0xfa, 0x96, 0x7b, 0x3c, 0x2f, 0x70, 0x3e]).toString('base64url');
+  const saved = f.ctx.draftReadBack({ draft: f.draft }, f.draft.id);
+  assert.equal(saved.bodyText, 'café');
+  assert.equal(saved.editor.bodyHtml, '<p>日本</p>');
 });

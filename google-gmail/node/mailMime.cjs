@@ -3,10 +3,18 @@
 // drafts only; sending remains owned by cindyMail's confirmation/countdown.
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { TextDecoder } = require('node:util');
 const MAX_BYTES = 25 * 1024 * 1024;
 const header = (part, name) => (part.headers || []).filter(h => h.name.toLowerCase() === name).map(h => h.value).join('\n');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const keyFor = part => hash(JSON.stringify([part.partId || '', part.filename || '', part.mimeType, part.body?.size, header(part, 'content-id')]));
+function decodeMimeBody(part) {
+  const match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(header(part, 'content-type'));
+  let decoder;
+  try { decoder = new TextDecoder(match && (match[1] || match[2] || match[3]) || 'utf-8'); }
+  catch (_) { decoder = new TextDecoder('utf-8'); }
+  return decoder.decode(Buffer.from(part.body.data, 'base64url'));
+}
 function imageType(data) {
   if (data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';
   if (data[0] === 255 && data[1] === 216 && data[2] === 255) return 'image/jpeg';
@@ -118,6 +126,27 @@ async function updateRichDraft(p, token, before, helpers, execution) {
   // A failed PUT is unknown: never replay it automatically.
   execution.started = true;
   await gmailJson(token, 'drafts/' + encodeURIComponent(p.draftId), { method: 'PUT', body: JSON.stringify({ id: p.draftId, message: { raw: Buffer.from(raw).toString('base64url'), ...(before.threadId ? { threadId: before.threadId } : {}) } }) }, 300 * 1024);
-  return { ok: true, files: files.map(f => ({ filename: f.filename, mimeType: f.mimeType, bytes: f.data.length, contentId: f.contentId.replace(/^<|>$/g, '') })) };
+  return { ok: true, files: files.map(f => ({ filename: f.filename, mimeType: f.mimeType, bytes: f.data.length,
+    contentId: f.contentId.replace(/^<|>$/g, ''), sha256: hash(f.data) })) };
 }
-module.exports = { updateRichDraft, buildMime, keyFor, gmailJson };
+async function verifyDraftAttachmentBytes(token, saved, expected) {
+  const actual = [];
+  let total = 0;
+  for (const file of saved.attachments) {
+    let sha256 = file.sha256;
+    if (!sha256) {
+      if (!file.attachmentId) throw new Error('附件内容无法核对');
+      const part = await gmailJson(token, 'messages/' + encodeURIComponent(saved.messageId) + '/attachments/' + encodeURIComponent(file.attachmentId));
+      if (typeof part.data !== 'string') throw new Error('附件内容无法核对');
+      const data = Buffer.from(part.data, 'base64url');
+      if (data.length !== file.bytes) throw new Error('附件大小不一致');
+      sha256 = hash(data);
+    }
+    total += file.bytes;
+    if (total > MAX_BYTES) throw new Error('附件内容超过大小上限');
+    actual.push({ ...file, sha256 });
+  }
+  const facts = files => JSON.stringify(files.map(f => [f.filename, f.mimeType, f.bytes, (f.contentId || '').replace(/^<|>$/g, ''), f.sha256]).sort());
+  return facts(actual) === facts(expected);
+}
+module.exports = { updateRichDraft, buildMime, keyFor, gmailJson, decodeMimeBody, verifyDraftAttachmentBytes };
