@@ -137,6 +137,8 @@ async function prepareMailAttachments(args, callId) {
   var inlineSet = new Set(inline || []);
   var embedded = (inline || []).map(function (hash) { return files.find(function (file) { return file.hash === hash; }); });
   if (embedded.some(function (file) { return !file; })) throw new Error('Every inline image must also be a granted chat attachment.');
+  if (embedded.some(function (file) { return !/\.(png|jpe?g|gif|webp)$/i.test(file.path); }))
+    throw new Error('inline-images 仅支持 PNG、JPEG、GIF 或 WebP 图片；其他媒体请作为普通附件。');
   var regular = files.filter(function (file) { return !inlineSet.has(file.hash); });
   options.attach = inputs.filter(function (item) { return !refs.includes(item); }).concat(regular.map(function (file) { return file.path; }));
   delete options['inline-images'];
@@ -339,8 +341,8 @@ async function readMailMessageLink(args, beginOperation) {
     // containers and text alternatives are still body, not attached files.
     var disposition = header(part, 'content-disposition');
     var bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
-    if (part.filename || /^attachment\b/i.test(disposition) || (!bodyPart && (/^inline\b/i.test(disposition) || cid))) {
-      attachments.push({ key: part.partId || 'root', filename: part.filename || 'image', mimeType: part.mimeType,
+    if (part.filename || /^attachment\b/i.test(disposition) || !bodyPart) {
+      attachments.push({ key: part.partId || 'root', filename: part.filename || (/^message\//i.test(part.mimeType) ? 'message.eml' : 'attachment'), mimeType: part.mimeType,
         bytes: body.size, contentId: cid, attachmentId: body.attachmentId, inlineData: body.data });
       return; // Attached .eml messages must never become the outer email body.
     }
@@ -400,9 +402,14 @@ async function mailToolDraft(args, sourceCallId, beginOperation) {
     return { ok: false, execution: 'not_executed', message: '发送现有草稿只接受草稿 ID；修改请先更新该草稿。' };
   if (args.command[1] === 'send' && cindyMail.sendGraceMs !== 10000)
     return { ok: false, execution: 'not_executed', message: '当前 Cindy 尚不支持发送前的 10 秒撤销窗口，请更新 Cindy 后再发送。草稿已保留。' };
+  // An unregistered draft has no card edits to flush. Use the existing Host
+  // lookup to bypass beforeTool for these reads/updates/deletes; ordinary worker
+  // failures must retain their actionable not_executed result. Send still goes
+  // through Host policy even when no card exists.
+  if (args.command[1] !== 'send' && !await gmailCompose.resolveDraft(args.account, args.arguments[0])) return null;
   // beforeTool may flush edits even for get/update. null only means the caller
   // can continue; it does not prove that no earlier draft write took place.
-  var finish = beginOperation();
+  var finish = args.session_context.workdir_is_read_only === false ? beginOperation() : function () {};
   var result = await gmailCompose.beforeTool({ operation: args.command[1], account: args.account,
     draftId: args.arguments[0], readOnly: args.session_context.workdir_is_read_only !== false, sourceCallId });
   if (result) finish(result.execution);

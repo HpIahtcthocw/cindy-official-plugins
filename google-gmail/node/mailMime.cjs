@@ -10,19 +10,20 @@ const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const keyFor = part => hash(JSON.stringify([part.partId || '', part.filename || '', part.mimeType, part.body?.size, header(part, 'content-id')]));
 // Inline/CID are presentation metadata, not proof of an attached file. Body
 // containers (and their text alternatives) still need traversal. Explicit file
-// names/attachment disposition, including attached messages, stop traversal.
+// names/attachment disposition stop traversal. Every other MIME type is an
+// opaque file, even when Gmail omits its filename/disposition (notably .eml).
 function isAttachmentPart(part) {
   const disposition = header(part, 'content-disposition');
   const bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
-  return Boolean(part.filename || /^attachment\b/i.test(disposition)
-    || (!bodyPart && (/^inline\b/i.test(disposition) || header(part, 'content-id'))));
+  return Boolean(part.filename || /^attachment\b/i.test(disposition) || !bodyPart);
 }
 function decodeMimeBody(part) {
   const match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(header(part, 'content-type'));
   let decoder;
-  try { decoder = new TextDecoder(match && (match[1] || match[2] || match[3]) || 'utf-8'); }
-  catch (_) { decoder = new TextDecoder('utf-8'); }
-  return decoder.decode(Buffer.from(part.body.data, 'base64url'));
+  try { decoder = new TextDecoder(match ? (match[1] ?? match[2] ?? match[3]) : 'utf-8', { fatal: true }); }
+  catch (_) { throw new Error('不支持草稿正文的字符编码，请在邮箱中编辑此草稿。'); }
+  try { return decoder.decode(Buffer.from(part.body.data, 'base64url')); }
+  catch (_) { throw new Error('无法无损解码草稿正文，请在邮箱中编辑此草稿。'); }
 }
 function imageType(data) {
   if (data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';

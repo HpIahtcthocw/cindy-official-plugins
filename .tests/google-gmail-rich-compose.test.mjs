@@ -539,3 +539,48 @@ test('inline and CID containers retain external bodies and real attachments thro
     assert.equal(f.calls.filter(c => c.init.method === 'PUT').length, 1);
   }
 });
+
+// The same opaque-file rule must hold for hydration, editable snapshots and
+// saving, including parts without names/CID/disposition and external bytes.
+test('unnamed non-body MIME parts preserve their own bytes instead of flattening children', async t => {
+  for (const mimeType of ['message/rfc822', 'application/pdf', 'image/png']) for (const external of [false, true]) {
+    const f = fixture(t), bytes = Buffer.from('Opaque attached file');
+    const attached = { partId: 'opaque', mimeType,
+      body: { size: bytes.length, ...(external ? { attachmentId: 'opaque-bytes' } : { data: bytes.toString('base64url') }) },
+      parts: [{ mimeType: 'text/plain', body: { attachmentId: 'never-load', size: 999 } }] };
+    f.draft.message.payload.parts.push(attached);
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      assert.equal(url.includes('never-load'), false);
+      if (url.endsWith('/attachments/opaque-bytes')) return new Response(JSON.stringify({ data: bytes.toString('base64url'), size: bytes.length }));
+      return fetch(url, init);
+    });
+    const before = await f.ctx.readDraft({ draft: f.draft }, f.draft.id, 'fixture-token');
+    assert.equal(before.bodyText, 'Original'); assert.equal(before.attachments.length, 2);
+    Object.assign(f.before, before);
+    f.fields.attachmentItems = JSON.stringify(before.attachments);
+    const result = await f.run();
+    assert.equal(result.ok, true); assert.equal(result.files.length, 2);
+    const file = result.files.find(file => file.mimeType === mimeType && file.sha256 === createHash('sha256').update(bytes).digest('hex'));
+    assert.ok(file, mimeType + ':' + external);
+    const raw = Buffer.from(JSON.parse(f.calls.at(-1).init.body).message.raw, 'base64url').toString();
+    assert.ok(raw.includes('Content-Type: ' + mimeType)); assert.ok(raw.includes(bytes.toString('base64')));
+  }
+});
+
+// Reject lossy decode on every editable entry, before any remote save/send.
+// Existing ISO-8859-1/Shift_JIS positives prove supported legacy mail still works.
+test('unsupported or malformed body encodings cannot produce editable snapshots or writes', async t => {
+  for (const mimeType of ['text/plain', 'text/html']) for (const charset of ['x-unknown-charset', '', 'UTF-8', 'Shift_JIS']) {
+    const f = workerFixture(t), part = f.draft.message.payload.parts.find(p => p.mimeType === mimeType);
+    part.headers = [{ name: 'Content-Type', value: mimeType + '; charset="' + charset + '"' }];
+    part.body = { data: Buffer.from([0xff]).toString('base64url'), size: 1 };
+    assert.throws(() => f.ctx.draftReadBack({ draft: f.draft }, f.draft.id), /字符编码|无损解码/);
+    const cindy = { secrets: { gog_access_token: 'fixture-token' } };
+    for (const operation of ['get', 'update']) await assert.rejects(f.ctx.handle({ method: 'run', cindy,
+      params: { command: ['drafts', operation], arguments: [f.draft.id], readOnly: false, options: {} } }, {}), /字符编码|无损解码/);
+    for (const send of [false, true]) await assert.rejects(f.ctx.handle({ method: 'compose', cindy,
+      params: { draftId: f.draft.id, fingerprint: f.before.fingerprint, fields: f.fields, send } }, {}), /字符编码|无损解码/);
+    assert.equal(f.calls.some(c => ['PUT', 'POST'].includes(c.init.method)), false);
+  }
+});

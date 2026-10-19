@@ -26,7 +26,7 @@ test('result delivery failure preserves card and worker execution receipts', asy
       const f = fixture(), replies = [];
       let operations = 0, deliveries = 0;
       const run = async () => { operations++; return { ok: execution === 'executed', execution, data: { saved: true }, message: 'Fixture outcome' }; };
-      f.ctx.gmailCompose = { beforeTool: run };
+      f.ctx.gmailCompose = { beforeTool: run, resolveDraft: async () => ({}) };
       f.ctx.cindyMail = { sendGraceMs: 10000 };
       f.ctx.cindy.node = { request: async () => ({ ok: true, result: await run() }) };
       f.ctx.cindy.send = async reply => {
@@ -75,7 +75,7 @@ test('continuing after card autosave cannot erase an earlier uncertain write', a
   for (const resultDeliveryFails of [false, true]) {
     const f = fixture(), replies = [];
     let preparations = 0, requests = 0, deliveries = 0;
-    f.ctx.gmailCompose = { beforeTool: async () => { preparations++; return null; } };
+    f.ctx.gmailCompose = { beforeTool: async () => { preparations++; return null; }, resolveDraft: async () => ({}) };
     f.ctx.cindy.node = { request: async () => {
       requests++;
       return { ok: true, result: { ok: false, execution: 'not_executed', message: 'Command rejected' } };
@@ -90,6 +90,31 @@ test('continuing after card autosave cannot erase an earlier uncertain write', a
     assert.equal(preparations, 1); assert.equal(requests, 1);
     assert.match(replies[0].message, /^\[unknown\]/);
   }
+});
+// Cross managed/unmanaged and writable/read-only preparation with rejection
+// and result-transport failure. Only a writable, managed card can have autosaved.
+test('side-effect-free draft preparation preserves actionable worker rejections', async () => {
+  for (const managed of [false, true]) for (const readOnly of [false, true])
+    for (const operation of ['get', 'update', 'delete']) for (const deliveryFails of [false, true]) {
+      const f = fixture(), replies = [];
+      let preparations = 0, deliveries = 0;
+      f.ctx.gmailCompose = { resolveDraft: async () => managed ? {} : null,
+        beforeTool: async () => { preparations++; return null; } };
+      f.ctx.cindy.node = { request: async () => ({ ok: true, result: {
+        ok: false, execution: 'not_executed', message: 'Missing bundled executable; reinstall plugin',
+      } }) };
+      f.ctx.cindy.send = async reply => {
+        if (++deliveries === 1 && deliveryFails) throw new Error('delivery failed');
+        replies.push(reply);
+      };
+      await f.invoke({ type: 'tool-call', tool: 'gmail_run', callId: 'read-only-receipt', args: {
+        command: ['drafts', operation], arguments: ['12345678'], session_context: { workdir_is_read_only: readOnly },
+      } });
+      const uncertain = managed && !readOnly;
+      assert.equal(preparations, managed ? 1 : 0);
+      assert.match(replies[0].message, uncertain ? /^\[unknown\]/ : /^\[not_executed\]/);
+      if (!uncertain && !deliveryFails) assert.match(replies[0].message, /reinstall plugin/);
+    }
 });
 test('message, fallback conversation and external body authorization failures explain how to reconnect', async () => {
   for (const stage of ['message', 'conversation', 'body']) for (const status of [401, 403]) {
@@ -302,6 +327,7 @@ test('reader traverses inline and CID body containers while keeping attached mes
   ]) {
     const f = fixture();
     const [plain, html, attached, image] = f.msg.payload.parts;
+    delete attached.filename; // MIME alone identifies an opaque attached message.
     plain.headers = headers;
     html.body = { attachmentId: 'html-body', size: 10 };
     f.msg.payload.parts = [{ mimeType: 'multipart/related', headers, parts: [plain, html, image] }, attached];

@@ -336,6 +336,25 @@ test('draft commands reject new inline images before any Gmail write', async t =
   assert.equal(f.calls.length, 0);
 });
 
+// Host grants include non-image media too. Inline placement restricts that
+// existing import path without removing support for ordinary media attachments.
+test('non-image grants remain ordinary attachments but cannot become inline images', async t => {
+  for (const extension of ['mp4', 'mp3', 'glb']) for (const inline of [false, true]) {
+    const f = fixture(t, { media: async resource => new Response(
+      resource === `/media/${hash}.${extension}` ? image : null,
+      { status: resource === `/media/${hash}.${extension}` ? 200 : 404 }) });
+    const result = await f.run({ command: ['drafts', 'create'], arguments: [], attachments: [hash], options: {
+      to: 'person@example.test', subject: 'Media', body: 'See attachment',
+      ...(inline ? { 'inline-images': [hash], 'body-html': '<img src="cid:img1@cindy.local">' } : {}),
+    } });
+    assert.equal(result.ok, !inline, result.message);
+    if (inline) {
+      assert.match(result.message, /^\[not_executed\].*inline-images/);
+      assert.equal(f.requests.length, 0); assert.equal(f.calls.length, 0); assert.equal(f.httpCalls.length, 0);
+    } else assert.ok(f.calls[0][0].some(arg => arg.endsWith('.' + extension)));
+  }
+});
+
 test('missing grants, unavailable media, corrupt bytes, size limits and denied file writes cannot create mail', async t => {
   const cases = [
     [{}, { options: { attach: [url] } }],
