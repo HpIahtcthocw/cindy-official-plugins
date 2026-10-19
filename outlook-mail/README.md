@@ -28,6 +28,12 @@ Requests are capped at approximately 250 KB, 100 recipients and 50 results per p
 
 2.0.0 replaces the SDK authentication route. Former SDK sessions and saved SDK account metadata are not reused; reconnect through Host OAuth. Other local Microsoft tools' credential caches are not read or cleared. There is no automatic login restoration from legacy plugin KV.
 
-Run `node --test .tests/outlook-mail.test.mjs` and the repository contract/localization/provisioning/publish-workflow tests. Package with `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail-2.1.4.cindy` after committing. Browser tests use mocked Host endpoints and synthetic accounts, not real OAuth evidence; see `.tests/outlook-mail/settings-browser.mjs`.
+Run `node --test .tests/outlook-mail.test.mjs` and the repository contract/localization/provisioning/publish-workflow tests. Package with `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail-2.1.5.cindy` after committing. Browser tests use mocked Host endpoints and synthetic accounts, not real OAuth evidence; see `.tests/outlook-mail/settings-browser.mjs`.
 
 The administrator supplied the global public application ID on 2026-09-09. Real Host OAuth sign-in and single-account read operations have been verified on Cindy Beta; the PR records the exact package, build, and current coverage. Sending, drafts, marking and moving still require authorized real-mailbox verification; multi-account and China scenarios remain unverified. Earlier SDK development-package results do not validate this implementation. New-plugin admission and final device verification remain maintainer review items. Provisioning is an empty targeted audience, with no automatic distribution. Tests and package limits are not weakened.
+
+## Settings UI development
+
+The settings page bundles React and the shadcn/ui Radix DropdownMenu composition locally. Shared Button, Input and Collapsible wrappers use Cindy semantic theme tokens, pill controls and 12px menu panels. Menus stay inside the settings webview; the service menu matches its trigger width and reserves its measured height for Host auto-sizing. Narrow cards stack controls without reducing font size. External links use ordinary same-page HTTPS anchors as required by Forge §4.8. No CDN, host component import, runtime network dependency or credential flow is added.
+
+Run `cd outlook-mail && npm ci && npm run build` after editing `src/`. Commit `settings.js`, the lockfile and the generated `THIRD-PARTY-LICENSES.txt` together; do not edit the bundle directly. The missing npm license for react-remove-scroll-bar 2.3.8 is retained from upstream commit `8ca9ba5ea52de03308fe8ced94f7b159a44d28ff` in `src/licenses/`.

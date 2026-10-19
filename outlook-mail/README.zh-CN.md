@@ -28,6 +28,12 @@
 
 2.0.0 替换 SDK 授权路径，旧 SDK 会话与保存的账号元数据不再使用，需要通过 Host OAuth 重新连接。不会读取或清理其他微软工具的凭据缓存，也不会从旧 KV 自动恢复登录。
 
-运行 `node --test .tests/outlook-mail.test.mjs` 和仓库规定的契约、本地化、provisioning、发布流程检查。提交后使用 `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail-2.1.4.cindy` 打包。浏览器测试使用模拟 Host 接口与虚构账号，不作为真实 OAuth 证据；见 `.tests/outlook-mail/settings-browser.mjs`。
+运行 `node --test .tests/outlook-mail.test.mjs` 和仓库规定的契约、本地化、provisioning、发布流程检查。提交后使用 `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail-2.1.5.cindy` 打包。浏览器测试使用模拟 Host 接口与虚构账号，不作为真实 OAuth 证据；见 `.tests/outlook-mail/settings-browser.mjs`。
 
 管理员于 2026-09-09 提供了全球版公共应用 ID。已在 Cindy Beta 验证真实 Host OAuth 登录及单账号只读操作；确切包、客户端版本和当前覆盖范围记录于 PR。发送、草稿、标记和移动仍需获授权的真实邮箱验收；多账号与中国区保持未验证。早期 SDK 开发包结果不能替代本实现的验收。新插件准入和最终实机验收仍需维护者审查。provisioning 是空定向名单，不自动分发；测试及打包限制不作放宽。
+
+## 配置页开发
+
+配置页将 React 与 shadcn/ui 的 Radix DropdownMenu 组合随包编译；Button、Input、Collapsible 统一封装，遵循 Cindy 语义主题变量、胶囊控件和 12px 菜单容器。服务菜单与触发器等宽，并为宿主自动高度测量预留真实展开高度；窄卡片自然换行，不缩字号。外链按 Forge §4.8 使用普通同页 HTTPS 链接。不引入 CDN、宿主组件引用、运行时依赖下载或新的凭证路径。
+
+修改 `src/` 后运行 `cd outlook-mail && npm ci && npm run build`，同时提交 `settings.js`、锁文件和生成的 `THIRD-PARTY-LICENSES.txt`，不要直接修改构建产物。react-remove-scroll-bar 2.3.8 的 npm 包缺少许可文件，已从上游提交 `8ca9ba5ea52de03308fe8ced94f7b159a44d28ff` 留存到 `src/licenses/`。

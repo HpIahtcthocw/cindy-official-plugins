@@ -1,55 +1,12 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/settings.css"></head>
-<body>
-  <header class="connection-header">
-    <h1 data-i18n="title">Connect your mailbox</h1>
-    <button id="cloud" class="service-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="service-menu" disabled><span id="service-name"></span><span aria-hidden="true">⌄</span></button>
-    <div id="service-menu" class="service-menu" role="menu" aria-labelledby="cloud" hidden>
-      <button type="button" role="menuitemradio" aria-checked="true" data-cloud="global" tabindex="-1"><span class="selection" aria-hidden="true">✓</span><span data-i18n="global">Outlook / Microsoft 365</span><span class="default-badge" data-i18n="defaultBadge">Default</span></button>
-      <button type="button" role="menuitemradio" aria-checked="false" data-cloud="china" tabindex="-1"><span class="selection" aria-hidden="true">✓</span><span data-i18n="china">Microsoft 365 China (21Vianet)</span><span class="default-badge" data-i18n="defaultBadge" hidden>Default</span></button>
-      <div role="separator" class="menu-divider"></div>
-      <button id="default-cloud" type="button" role="menuitem" tabindex="-1" aria-describedby="default-help" disabled></button>
-      <p id="default-help" class="hint" data-i18n="defaultHelp">Used when no mailbox or service is specified.</p>
-    </div>
-  </header>
-  <section class="connection-content" aria-labelledby="setup-note">
-    <div class="connection-note"><p id="setup-note" class="hint"></p><button id="edit-client" class="text-button" type="button" data-i18n="edit" hidden>Edit</button></div>
-    <button id="connect" class="primary" type="button" disabled><span aria-hidden="true">＋</span> <span data-i18n="connect">Add mailbox</span></button>
-    <button id="retry" type="button" data-i18n="retry" hidden>Reload</button>
-    <div id="required-application" hidden></div>
-  </section>
-  <section class="accounts-section" aria-labelledby="accounts-title">
-    <h2 id="accounts-title" tabindex="-1" data-i18n="accountsTitle">Connected mailboxes</h2>
-    <div id="accounts"></div>
-  </section>
-  <details id="more" class="more-settings">
-    <summary data-i18n="more">More settings</summary>
-    <details id="advanced" class="setting-section">
-      <summary><span data-i18n="application">Connection application</span><span id="application-state" class="hint"></span></summary>
-      <div id="optional-application">
-        <form id="application-form">
-          <h3 id="application-title" data-i18n="setupTitle">Set up a connection application</h3>
-          <p id="application-help" class="hint"></p>
-          <a id="portal" href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" data-i18n="portal">Register a Microsoft application ↗</a>
-          <label for="client-id">Client ID</label>
-          <input id="client-id" type="text" autocomplete="off" spellcheck="false" required aria-describedby="application-help">
-          <label for="redirect" data-i18n="redirect">Registered redirect URI</label>
-          <div class="redirect-field"><input id="redirect" type="text" readonly><button id="copy-redirect" type="button" data-i18n="copy">Copy</button></div>
-          <p class="hint" data-i18n="noSecret">No Client Secret is needed.</p>
-          <div class="actions"><button id="save-client" class="primary" type="submit" data-i18n="save">Save application</button><button id="cancel-client" type="button" data-i18n="cancel">Cancel</button></div>
-          <button id="reset-client" class="text-button reset-client" type="button" data-i18n="reset" hidden>Clear custom application</button>
-        </form>
-      </div>
-    </details>
-    <details class="setting-section">
-      <summary data-i18n="permissionsTitle">About authorization</summary>
-      <p class="hint" data-i18n="permissions">Account identity, email read/write, sending and offline access. Enterprise policies may require administrator approval.</p>
-      <p class="hint" data-i18n="boundary"></p>
-      <p class="hint" data-i18n="multiAccountHelp"></p>
-    </details>
-  </details>
-  <p id="status" class="hint" role="status" aria-live="polite"></p>
-  <script src="/settings.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="/settings.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/settings.js"></script>
+  </body>
 </html>
