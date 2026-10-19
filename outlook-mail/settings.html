@@ -1,26 +1,55 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/settings.css"></head>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/settings.css"></head>
 <body>
-  <h1 data-i18n="title">Connect your mailbox</h1>
-  <p class="hint" data-i18n="intro">Sign in with Microsoft. Cindy manages authorization and tokens.</p>
-  <label for="cloud" data-i18n="region">Email service</label>
-  <select id="cloud"><option value="global" data-i18n="global">Outlook / Microsoft 365</option><option value="china" data-i18n="china">Microsoft 365 China (21Vianet)</option></select>
-  <p class="hint" data-i18n="boundary">The region belongs to your email service, independently of your Cindy region. Other providers and on-premises Exchange are not supported.</p>
-  <p id="default-label" class="hint"></p>
-  <button id="default-cloud" type="button" data-i18n="defaultCloud">Use this service by default</button>
-  <button id="connect" class="primary" type="button" data-i18n="connect" disabled>Connect account</button>
-  <p id="setup-note" class="hint"></p>
-  <details id="advanced"><summary data-i18n="advanced">Administrator settings (optional)</summary>
-    <p class="hint" data-i18n="setupHelp">The global service includes a dedicated Cindy application. Users can select Add account without registering an application or entering a Client ID. The settings below are only for plugin maintainers or enterprise IT who need a custom application. No client secret is needed. Changing the application requires reconnecting existing accounts.</p>
-    <p class="hint"><span data-i18n="redirect">Registered redirect URI</span><br><code id="redirect"></code></p>
-    <label for="client-id">Client ID</label><input id="client-id" type="text" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-    <div class="actions"><button id="save-client" type="button" data-i18n="save">Save application</button><button id="reset-client" type="button" data-i18n="reset">Clear custom application</button></div>
-    <p class="hint"><a id="portal" href="https://portal.azure.com" data-i18n="portal">Microsoft application registration</a></p>
+  <header class="connection-header">
+    <h1 data-i18n="title">Connect your mailbox</h1>
+    <button id="cloud" class="service-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="service-menu" disabled><span id="service-name"></span><span aria-hidden="true">⌄</span></button>
+    <div id="service-menu" class="service-menu" role="menu" aria-labelledby="cloud" hidden>
+      <button type="button" role="menuitemradio" aria-checked="true" data-cloud="global" tabindex="-1"><span class="selection" aria-hidden="true">✓</span><span data-i18n="global">Outlook / Microsoft 365</span><span class="default-badge" data-i18n="defaultBadge">Default</span></button>
+      <button type="button" role="menuitemradio" aria-checked="false" data-cloud="china" tabindex="-1"><span class="selection" aria-hidden="true">✓</span><span data-i18n="china">Microsoft 365 China (21Vianet)</span><span class="default-badge" data-i18n="defaultBadge" hidden>Default</span></button>
+      <div role="separator" class="menu-divider"></div>
+      <button id="default-cloud" type="button" role="menuitem" tabindex="-1" aria-describedby="default-help" disabled></button>
+      <p id="default-help" class="hint" data-i18n="defaultHelp">Used when no mailbox or service is specified.</p>
+    </div>
+  </header>
+  <section class="connection-content" aria-labelledby="setup-note">
+    <div class="connection-note"><p id="setup-note" class="hint"></p><button id="edit-client" class="text-button" type="button" data-i18n="edit" hidden>Edit</button></div>
+    <button id="connect" class="primary" type="button" disabled><span aria-hidden="true">＋</span> <span data-i18n="connect">Add mailbox</span></button>
+    <button id="retry" type="button" data-i18n="retry" hidden>Reload</button>
+    <div id="required-application" hidden></div>
+  </section>
+  <section class="accounts-section" aria-labelledby="accounts-title">
+    <h2 id="accounts-title" tabindex="-1" data-i18n="accountsTitle">Connected mailboxes</h2>
+    <div id="accounts"></div>
+  </section>
+  <details id="more" class="more-settings">
+    <summary data-i18n="more">More settings</summary>
+    <details id="advanced" class="setting-section">
+      <summary><span data-i18n="application">Connection application</span><span id="application-state" class="hint"></span></summary>
+      <div id="optional-application">
+        <form id="application-form">
+          <h3 id="application-title" data-i18n="setupTitle">Set up a connection application</h3>
+          <p id="application-help" class="hint"></p>
+          <a id="portal" href="https://portal.azure.com" target="_blank" rel="noopener noreferrer" data-i18n="portal">Register a Microsoft application ↗</a>
+          <label for="client-id">Client ID</label>
+          <input id="client-id" type="text" autocomplete="off" spellcheck="false" required aria-describedby="application-help">
+          <label for="redirect" data-i18n="redirect">Registered redirect URI</label>
+          <div class="redirect-field"><input id="redirect" type="text" readonly><button id="copy-redirect" type="button" data-i18n="copy">Copy</button></div>
+          <p class="hint" data-i18n="noSecret">No Client Secret is needed.</p>
+          <div class="actions"><button id="save-client" class="primary" type="submit" data-i18n="save">Save application</button><button id="cancel-client" type="button" data-i18n="cancel">Cancel</button></div>
+          <button id="reset-client" class="text-button reset-client" type="button" data-i18n="reset" hidden>Clear custom application</button>
+        </form>
+      </div>
+    </details>
+    <details class="setting-section">
+      <summary data-i18n="permissionsTitle">About authorization</summary>
+      <p class="hint" data-i18n="permissions">Account identity, email read/write, sending and offline access. Enterprise policies may require administrator approval.</p>
+      <p class="hint" data-i18n="boundary"></p>
+      <p class="hint" data-i18n="multiAccountHelp"></p>
+    </details>
   </details>
-  <h2 class="accounts-title" data-i18n="accountsTitle">All mail accounts</h2>
-  <p class="hint" data-i18n="multiAccountHelp">Global and China accounts stay connected together. Choose a service above to add another account.</p>
-  <div id="accounts" aria-live="polite"></div>
-  <p class="hint" data-i18n="permissions">Permissions: account identity, email read/write and sending, and offline access. Enterprise policies may require administrator approval.</p>
-  <p id="status" role="status" aria-live="polite"></p>
+  <p id="status" class="hint" role="status" aria-live="polite"></p>
   <script src="/settings.js"></script>
-</body></html>
+</body>
+</html>
