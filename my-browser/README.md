@@ -298,6 +298,14 @@ A lost creation acknowledgement reuses the original creation key. Archived, dele
 Network verification survives extension service-worker restarts for the same document using browser-session storage. Reloads and other documents still require fresh public-address evidence. Chrome Web Store domains are protected by Chrome itself; the extension reports this restriction directly rather than suggesting a refresh. The Chrome store item ID and published install link are registered in `distribution.json`; the 0.4.13 update supersedes the previously submitted 0.4.12 package.
 
 
+## Model switches no longer stop translation (0.4.33 / Chrome 0.4.20)
+
+Switching the model during translation (the plugin's model card or the task's own model menu) made the in-flight passage fail or hit a revision conflict, and the whole video stopped at "retry". The passage is now resent with the current settings only after the Host has rejected the old request or the old run is terminal and the task configuration revision actually changed, at most twice per passage. Runs the user cancelled or interrupted from the task, video switches and uncertain deliveries keep their existing rules and are never sent twice. Failures without a configuration change are still reported; the subtitle loop retries them twice with the existing backoff before stopping.
+
+Following the plugin model setting before each new input requires a Cindy host that declares `pluginDefaultModel` (Cindy releases after 0.1.110). On those hosts the plugin setting is authoritative: a temporary switch in the task menu is synced back to the plugin setting before the next input (including the resend above), so change the plugin setting to switch models for good. Older hosts keep the task's existing model (including task-menu switches); the plugin never guesses or reads private preferences.
+
+When YouTube's caption endpoint returns an empty body, the fallback "Show transcript" entry is only rendered inside the expanded description. Earlier versions reported `SUBTITLE_EMPTY`; the description is now expanded temporarily, the transcript read, and the description collapsed again unless the user interacted, along with the transcript panel the plugin opened. Videos without a transcript entry still return an empty result.
+
 ## Trusted automatic binding (0.4.32 / Chrome 0.4.19)
 
 New installations require both the Cindy plugin and Chrome extension update; the extension declares `nativeMessaging`. Enabling the plugin installs a user-level native host automatically. Users need no Go/Node installation or pairing button; existing saved bindings remain valid. Any browser-mandated permission confirmation remains browser-managed and is not bypassed. Signed Chrome, Edge and Brave releases support binding; Linux supports system-installed Chrome/Chromium/Edge/Brave at the listed trusted paths. Nonstandard installations fail closed. Safari continues to restore existing bindings only.

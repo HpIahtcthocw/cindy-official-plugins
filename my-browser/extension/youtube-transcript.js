@@ -5,8 +5,9 @@
   async function read(expectedURL) {
     const panelSelector='ytd-engagement-panel-section-list-renderer[target-id*="transcript"]';
     const expanded=p=>p?.getAttribute('visibility')==='ENGAGEMENT_PANEL_VISIBILITY_EXPANDED';
+    const visible=selector=>[...document.querySelectorAll(selector)].find(n=>n.getClientRects().length);
     const existing=[...document.querySelectorAll(panelSelector)].find(expanded);
-    let opened=false,interacted=false;
+    let opened=false,expandedDescription=false,interacted=false;
     const interaction=e=>{if(e.isTrusted)interacted=true;};
     const current=()=>{
       if(location.href!==expectedURL)throw Error('PAGE_CHANGED');
@@ -16,11 +17,23 @@
     };
     document.addEventListener('pointerdown',interaction,true);
     document.addEventListener('keydown',interaction,true);
+    document.addEventListener('wheel',interaction,{capture:true,passive:true});
     try {
       current();
       if(!existing){
-        const button=document.querySelector('ytd-video-description-transcript-section-renderer button');
-        if(!button)return {ok:true,cues:[]};
+        // YouTube renders the transcript entry only inside the expanded
+        // description. Expand it temporarily instead of reporting no captions.
+        let button=document.querySelector('ytd-video-description-transcript-section-renderer button');
+        if(!button){
+          const expand=visible('ytd-watch-metadata #description-inline-expander #expand, #description-inline-expander #expand');
+          if(!expand)return {ok:true,cues:[]};
+          expand.click();expandedDescription=true;
+          const shown=Date.now()+3000;
+          while(!(button=document.querySelector('ytd-video-description-transcript-section-renderer button'))&&Date.now()<shown){
+            await new Promise(resolve=>setTimeout(resolve,100));current();
+          }
+          if(!button)return {ok:true,cues:[]};
+        }
         button.click();opened=true;
       }
       const deadline=Date.now()+12000;let signature='',stable=0;
@@ -65,9 +78,12 @@
     finally{
       document.removeEventListener('pointerdown',interaction,true);
       document.removeEventListener('keydown',interaction,true);
+      document.removeEventListener('wheel',interaction,{capture:true});
       // Close only the panel we opened, and only if the user has not taken over.
       if(opened&&!interacted&&location.href===expectedURL)
         [...document.querySelectorAll(panelSelector)].find(expanded)?.querySelector('#visibility-button button')?.click();
+      if(expandedDescription&&!interacted&&location.href===expectedURL)
+        visible('ytd-watch-metadata tp-yt-paper-button#collapse, #description-inline-expander #collapse')?.click();
     }
   }
   const api={read};

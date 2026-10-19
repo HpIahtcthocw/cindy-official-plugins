@@ -347,7 +347,7 @@
           }catch(e){
             if(!current())return;
             chunk.progress={...chunk.progress,...(e.stage?{stage:e.stage}:{}),finishedAt:Date.now()};
-            if(['TIMEOUT','BUSY','BRIDGE_REQUEST_FAILED','SESSION_CHANGED'].includes(e.message)){
+            if(['TIMEOUT','BUSY','BRIDGE_REQUEST_FAILED','SESSION_CHANGED','TASK_FAILED'].includes(e.message)){
               chunk.retries=(chunk.retries||0)+1;
               if(chunk.retries<=2){
                 if(e.message==='TIMEOUT'&&chunk.retries===1){

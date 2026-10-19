@@ -37,3 +37,38 @@ test('native transcript fallback reads full timed text, restores UI and rejects 
  await page.evaluate(()=>history.replaceState({},'', '/watch?v=changed'));
  assert.equal((await read()).error,'PAGE_CHANGED');
 });
+test('collapsed description is expanded for the transcript entry and restored afterwards',{
+ skip:!process.env.PLAYWRIGHT_CORE,timeout:30000,
+},async t=>{
+ const {chromium}=require(process.env.PLAYWRIGHT_CORE);
+ const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});t.after(()=>browser.close());
+ const page=await browser.newPage();const url='https://www.youtube.com/watch?v=fixture';
+ await page.route('https://www.youtube.com/**',route=>route.fulfill({contentType:'text/html',body:`
+ <ytd-watch-flexy video-id="fixture"></ytd-watch-flexy><video></video>
+ <ytd-watch-metadata><ytd-text-inline-expander id="description-inline-expander"><div id="content"></div><tp-yt-paper-button id="expand">...more</tp-yt-paper-button></ytd-text-inline-expander><div id="tail"></div></ytd-watch-metadata>
+ <ytd-engagement-panel-section-list-renderer target-id="engagement-panel-searchable-transcript" visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"><div id="visibility-button"><button>Close</button></div><div id="rows"></div></ytd-engagement-panel-section-list-renderer>
+ <script>
+ const panel=document.querySelector('ytd-engagement-panel-section-list-renderer'),expand=document.querySelector('#expand');window.expands=0;window.collapses=0;
+ Object.defineProperty(document.querySelector('video'),'duration',{value:10});
+ // Like YouTube, the transcript section and Show less exist only while expanded.
+ expand.onclick=()=>{expands++;expand.hidden=true;setTimeout(()=>{
+  document.querySelector('#content').innerHTML='<ytd-video-description-transcript-section-renderer><button>Show transcript</button></ytd-video-description-transcript-section-renderer>';
+  document.querySelector('#tail').innerHTML='<tp-yt-paper-button id="collapse">Show less</tp-yt-paper-button>';
+  document.querySelector('ytd-video-description-transcript-section-renderer button').onclick=()=>{panel.setAttribute('visibility','ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');document.querySelector('#rows').innerHTML='<ytd-transcript-segment-renderer><div class="segment-timestamp">0:00</div><div class="segment-text">Only sentence.</div></ytd-transcript-segment-renderer>';};
+  document.querySelector('#collapse').onclick=()=>{collapses++;document.querySelector('#content').innerHTML='';document.querySelector('#tail').innerHTML='';expand.hidden=false;};
+ },60);};
+ document.querySelector('#visibility-button button').onclick=()=>panel.setAttribute('visibility','ENGAGEMENT_PANEL_VISIBILITY_HIDDEN');
+ </script>`}));
+ await page.goto(url);await page.addScriptTag({path:source});
+ const result=await page.evaluate(url=>CindyYoutubeTranscript.read(url),url);
+ assert.equal(result.ok,true);assert.deepEqual(result.cues,[{start:0,end:10,text:'Only sentence.'}]);
+ assert.deepEqual(await page.evaluate(()=>[expands,collapses,document.querySelector('ytd-engagement-panel-section-list-renderer').getAttribute('visibility')]),[1,1,'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN']);
+ // A user scrolling the expanded description takes over; it is not collapsed.
+ const reading=page.evaluate(url=>CindyYoutubeTranscript.read(url),url);
+ await page.waitForSelector('#collapse');await page.mouse.move(10,10);await page.mouse.wheel(0,40);
+ assert.equal((await reading).ok,true);
+ assert.deepEqual(await page.evaluate(()=>[expands,collapses]),[2,1]);
+ assert.equal(await page.evaluate(()=>document.querySelector('ytd-engagement-panel-section-list-renderer').getAttribute('visibility')),'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED','panel stays open for the user');
+ await page.evaluate(()=>{document.querySelector('#visibility-button button').click();document.querySelector('#collapse').click();document.querySelector('#expand').remove();});
+ assert.deepEqual(await page.evaluate(url=>CindyYoutubeTranscript.read(url),url),{ok:true,cues:[]},'no transcript entry stays an empty result');
+});

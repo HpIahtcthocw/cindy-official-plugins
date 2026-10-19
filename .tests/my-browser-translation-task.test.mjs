@@ -238,3 +238,40 @@ test('prefetched slow passages share a budget that includes serial queueing and 
  // Both editorial validation attempts may queue behind another 240s model run.
  assert.ok(deadline>4*(core.learningTiming.model+core.learningTiming.cancel)+2*core.learningTiming.queue);
 });
+
+test('switching the task model during a passage resubmits it with the new model instead of stopping',async()=>{
+  const f=fixture();f.auto(false);const model=f.make();
+  const pending=model({prompt:'in flight'});
+  while(!f.sends.length)await wait(1);
+  // The task model menu changes the config revision and the Host fails the old run.
+  f.task.revision=4;f.runs.get('r1').status='failed';f.auto(true);
+  const result=await pending;
+  assert.equal(result.text,'{"translation":"result 2"}');
+  assert.deepEqual(f.sends.map(s=>s.expectedRevision),[3,4]);assert.notEqual(f.sends[0].requestKey,f.sends[1].requestKey);
+  assert.deepEqual(f.cancelled,[]);assert.equal(f.stats().state.pending,undefined);assert.equal(f.stats().creates,1);
+});
+test('a failed run without a configuration change is reported, never silently resubmitted',async()=>{
+  const f=fixture();f.auto(false);const pending=f.make()({prompt:'x'});
+  while(!f.sends.length)await wait(1);
+  f.runs.get('r1').status='failed';f.auto(true);
+  await assert.rejects(pending,/TASK_FAILED/);assert.equal(f.sends.length,1);assert.equal(f.stats().state.pending,undefined);
+});
+test('a one-off revision conflict or concurrent setting change retries with the current settings',async()=>{
+  const f=fixture(),send=f.tasks.send;let conflicts=1;
+  f.tasks.send=async req=>{if(conflicts-->0){f.task.revision=4;throw Object.assign(Error('settings changed'),{code:'REVISION_CONFLICT'});}return send(req);};
+  const result=await f.make()({prompt:'x'});
+  assert.equal(result.text,'{"translation":"result 1"}');assert.deepEqual(f.sends.map(s=>s.expectedRevision),[4]);
+  const g=fixture(),defaults=withPluginDefaults(g),setModel=g.tasks.setModel;let stale=1;
+  g.tasks.setModel=async req=>{if(stale-->0){defaults.select('grok-new');throw Object.assign(Error('plugin setting changed'),{code:'STALE_REVISION'});}return setModel(req);};
+  defaults.select('grok');await g.make()({prompt:'y'});
+  assert.equal(g.task.resolvedConfig.model,'grok-new');assert.equal(g.sends.length,1);assert.equal(g.stats().state.pending,undefined);
+});
+test('a run the user cancelled from the task is not resent even if the model changed',async()=>{
+  for(const status of ['cancelled','interrupted']){
+    const f=fixture();f.auto(false);const pending=f.make()({prompt:'x'});
+    while(!f.sends.length)await wait(1);
+    f.task.revision=4;f.runs.get('r1').status=status;f.auto(true);
+    await assert.rejects(pending,status==='cancelled'?/REQUEST_CANCELLED/:/TASK_INTERRUPTED/);
+    assert.equal(f.sends.length,1,status);assert.equal(f.stats().state.pending,undefined,status);
+  }
+});
