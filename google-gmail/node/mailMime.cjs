@@ -8,6 +8,15 @@ const MAX_BYTES = 25 * 1024 * 1024;
 const header = (part, name) => (part.headers || []).filter(h => h.name.toLowerCase() === name).map(h => h.value).join('\n');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const keyFor = part => hash(JSON.stringify([part.partId || '', part.filename || '', part.mimeType, part.body?.size, header(part, 'content-id')]));
+// Inline/CID are presentation metadata, not proof of an attached file. Body
+// containers (and their text alternatives) still need traversal. Explicit file
+// names/attachment disposition, including attached messages, stop traversal.
+function isAttachmentPart(part) {
+  const disposition = header(part, 'content-disposition');
+  const bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
+  return Boolean(part.filename || /^attachment\b/i.test(disposition)
+    || (!bodyPart && (/^inline\b/i.test(disposition) || header(part, 'content-id'))));
+}
 function decodeMimeBody(part) {
   const match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(header(part, 'content-type'));
   let decoder;
@@ -37,7 +46,7 @@ async function gmailJson(token, resource, init = {}, maxBytes = MAX_BYTES * 2) {
 function collectAttachments(payload) {
   const result = [];
   function walk(part) {
-    if (part.filename || /^(attachment|inline)\b/i.test(header(part, 'content-disposition')) || header(part, 'content-id')) result.push(part);
+    if (isAttachmentPart(part)) result.push(part);
     else for (const child of part.parts || []) walk(child);
   }
   walk(payload); return result;
@@ -48,7 +57,7 @@ function collectAttachments(payload) {
 async function loadMessageBodies(message, token) {
   let total = 0;
   async function walk(part) {
-    if (part.filename || /^(attachment|inline)\b/i.test(header(part, 'content-disposition')) || header(part, 'content-id')) return;
+    if (isAttachmentPart(part)) return;
     const body = part.body || {};
     if (['text/plain', 'text/html'].includes(part.mimeType) && body.attachmentId && !body.data) {
       if (!Number.isSafeInteger(body.size) || body.size < 0 || total + body.size > MAX_BYTES) throw new Error('无法完整读取邮件正文');
@@ -170,4 +179,4 @@ async function verifyDraftAttachmentBytes(token, saved, expected) {
   const facts = files => JSON.stringify(files.map(f => [f.filename, f.mimeType, f.bytes, (f.contentId || '').replace(/^<|>$/g, ''), f.sha256]).sort());
   return facts(actual) === facts(expected);
 }
-module.exports = { updateRichDraft, buildMime, keyFor, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes };
+module.exports = { updateRichDraft, buildMime, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes };

@@ -5,7 +5,7 @@
   "name": "Gmail",
   "description": "搜索和阅读 Gmail、下载附件到当前任务、创建草稿和发送邮件。账号授权由 Cindy 托管。",
   "whenToUse": "用于 Gmail 邮件、附件、草稿和发送。先用 gmail_accounts 选择账号，再用 gmail_schema 查询命令、gmail_run 执行。分析附件前，先下载到明确指定的本地任务目录路径。",
-  "version": "1.5.15",
+  "version": "1.5.16",
   "cindy": { "media": ["deposit"] },
   "agent": {},
   "locales": {
@@ -68,13 +68,13 @@
   "tools": [
     {
       "name": "gmail_read_message",
-      "description": "Read a Gmail message and chronological conversation summaries for Cindy's native preview. Read-only by default. Only markRead:true for an explicit user opening or mark-read request removes UNREAD from the selected message; never mark during AI/background reads. Never changes drafts or sends. Input: Gmail HTTPS message/conversation link (hex ID), with authuser=email to bind the account. A missing conversation root resolves the latest non-draft message. Returns the selected body plus optional conversation {threadId,messages:[{messageId,url,from,date,subject,snippet}]}; drafts are excluded except a selected draft. Read a member URL to expand its body. conversationUnavailable means only the selected mail could be read. Include account-qualified links in answers; Cindy owns HTML, inline images and collapsed history.",
+      "description": "Read a Gmail message and chronological conversation summaries for Cindy's native preview. Read-only by default. Mark-read returns markReadResult.execution (not_executed/executed/unknown); unknown requires checking mailbox state, never a blind retry. Only markRead:true for an explicit user opening or mark-read request removes UNREAD from the selected message; never mark during AI/background reads. Never changes drafts or sends. Input: Gmail HTTPS message/conversation link (hex ID), with authuser=email to bind the account. A missing conversation root resolves the latest non-draft message. Returns the selected body plus optional conversation {threadId,messages:[{messageId,url,from,date,subject,snippet}]}; drafts are excluded except a selected draft. Read a member URL to expand its body. conversationUnavailable means only the selected mail could be read. Include account-qualified links in answers; Cindy owns HTML, inline images and collapsed history.",
       "parameters": {
         "type": "object",
         "properties": {
           "url": { "type": "string", "description": "https://mail.google.com/mail/?authuser=email#all/messageOrThreadId" },
           "account": { "type": "string", "description": "Optional opaque connected account ID; otherwise derived from authuser=email or a sole account." },
-          "markRead": { "type": "boolean", "description": "Only true for a user's explicit opening in Cindy, or an explicit request to mark read. Omit for AI reading, searches, summaries and neighboring preloads. Marks only the resolved selected message after a successful read; failures retain the body with markReadFailed:true." }
+            "markRead": { "type": "boolean", "description": "Only true for a user's explicit opening or mark-read request. Omit for AI reads and neighboring preloads. After a successful read, marks only the selected message. Returns markReadResult.execution: not_executed/executed/unknown. Rejections also set markReadFailed:true; unknown outcomes retain the body and require checking the mailbox, never a blind retry." }
         },
         "required": ["url"],
         "additionalProperties": false

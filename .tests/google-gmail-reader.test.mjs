@@ -162,15 +162,39 @@ test('marks only the selected unread message in its resolved account on explicit
   }
   assert.equal(f.calls.filter(r => r.method === 'POST').length, 1);
 });
-test('mark-read errors preserve the body and expose a partial failure without retrying', async () => {
-  for (const transportFailure of [false, true]) {
+test('mark-read results distinguish rejection from unknown and confirmed writes without retrying', async () => {
+  for (const status of [200, 400, 401, 403, 404, 429, 500, 503, 0, 'timeout']) {
     const f = fixture(); let writes = 0;
     f.ctx.cindy.fetch = async r => {
-      if (r.method === 'POST') { writes++; if (transportFailure) throw new Error('offline'); return { ok: false, status: 403 }; }
+      if (r.method === 'POST') { writes++; if (status === 'timeout') throw new Error('response lost after write'); return { ok: status === 200, status, truncated: true }; }
       return { ok: true, status: 200, body: JSON.stringify({ ...f.msg, labelIds: ['UNREAD'] }) };
     };
     const mail = await f.read('https://mail.google.com/mail/#all/12345678', { markRead: true });
-    assert.equal(mail.bodyText, '中文'); assert.equal(mail.markReadFailed, true); assert.equal(writes, 1);
+    const expected = status === 200 ? 'executed' : typeof status === 'number' && status >= 400 && status < 500 ? 'not_executed' : 'unknown';
+    assert.equal(mail.bodyText, '中文'); assert.equal(writes, 1);
+    assert.equal(mail.markReadResult.execution, expected);
+    assert.equal(mail.markReadFailed, expected === 'not_executed' ? true : undefined);
+    if (expected === 'unknown') assert.match(mail.markReadResult.message, /核对.*不要盲目重试/);
+  }
+});
+
+test('reader traverses inline and CID body containers while keeping attached messages opaque', async () => {
+  for (const headers of [
+    [{ name: 'Content-Disposition', value: 'inline' }],
+    [{ name: 'Content-ID', value: '<body@example.test>' }],
+  ]) {
+    const f = fixture();
+    const [plain, html, attached, image] = f.msg.payload.parts;
+    plain.headers = headers;
+    html.body = { attachmentId: 'html-body', size: 10 };
+    f.msg.payload.parts = [{ mimeType: 'multipart/related', headers, parts: [plain, html, image] }, attached];
+    const fetch = f.ctx.cindy.fetch;
+    f.ctx.cindy.fetch = async r => r.url.endsWith('/attachments/html-body')
+      ? { ok: true, status: 200, body: JSON.stringify({ data: Buffer.from('<p>new</p>').toString('base64url'), size: 10 }) }
+      : fetch(r);
+    const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+    assert.equal(mail.bodyText, '中文'); assert.equal(mail.bodyHtml, '<p>new</p>');
+    assert.deepEqual(Array.from(mail.attachments, a => a.mimeType), ['image/png', 'message/rfc822']);
   }
 });
 test('an explicit conversation opening marks the resolved member, never the thread or replaced draft', async () => {

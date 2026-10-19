@@ -317,7 +317,11 @@ async function readMailMessageLink(args) {
   var bodyBytes = 0;
   async function walk(part) {
     var body = part.body || {}, cid = header(part, 'content-id').replace(/^<|>$/g, '');
-    if (part.filename || /^attachment\b/i.test(header(part, 'content-disposition')) || (cid && /^image\//.test(part.mimeType))) {
+    // Match mailMime.isAttachmentPart in the Node adapter: inline/CID body
+    // containers and text alternatives are still body, not attached files.
+    var disposition = header(part, 'content-disposition');
+    var bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
+    if (part.filename || /^attachment\b/i.test(disposition) || (!bodyPart && (/^inline\b/i.test(disposition) || cid))) {
       attachments.push({ key: part.partId || 'root', filename: part.filename || 'image', mimeType: part.mimeType,
         bytes: body.size, contentId: cid, attachmentId: body.attachmentId, inlineData: body.data });
       return; // Attached .eml messages must never become the outer email body.
@@ -349,14 +353,19 @@ async function readMailMessageLink(args) {
       } catch (_) { /* A failed image preview must not hide the readable message. */ }
     }
   }
-  var markReadFailed = false;
+  var markReadResult;
   if (args.markRead === true && (message.labelIds || []).includes('UNREAD') && !(message.labelIds || []).includes('DRAFT')) {
     try {
       var marked = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/modify',
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ removeLabelIds: ['UNREAD'] }),
         authAccount: selected.accountId, timeoutMs: 20000 });
-      markReadFailed = !marked.ok || marked.status !== 200;
-    } catch (_) { markReadFailed = true; }
+      // A received 200 confirms the label change even if its body was cut off.
+      // A rejection is definite; a transport/server error may follow a write.
+      if (marked.ok && marked.status === 200) markReadResult = { execution: 'executed' };
+      else if ([400, 401, 403, 404, 405, 413, 415, 422, 429].includes(marked.status))
+        markReadResult = { execution: 'not_executed', message: '未能标记已读，请检查邮箱授权和邮件状态后再操作。' };
+      else markReadResult = { execution: 'unknown', message: '无法确认已读状态，请先在邮箱中核对，不要盲目重试。' };
+    } catch (_) { markReadResult = { execution: 'unknown', message: '无法确认已读状态，请先在邮箱中核对，不要盲目重试。' }; }
   }
   return { accountId: selected.accountId, messageId: message.id, from: header(message.payload, 'from'),
     to: header(message.payload, 'to'), cc: header(message.payload, 'cc'), bcc: header(message.payload, 'bcc'),
@@ -364,7 +373,8 @@ async function readMailMessageLink(args) {
     bodyText: bodies['text/plain'].join('\n'), bodyHtml: bodies['text/html'].join('\n'),
     ...(conversation ? { conversation: conversation } : {}),
     ...(conversationUnavailable ? { conversationUnavailable: true } : {}),
-    ...(markReadFailed ? { markReadFailed: true } : {}),
+    ...(markReadResult ? { markReadResult: markReadResult } : {}),
+    ...(markReadResult && markReadResult.execution === 'not_executed' ? { markReadFailed: true } : {}),
     attachments: preview.attachments.map(function (a) { var clean = { ...a }; delete clean.inlineData; delete clean.attachmentId; return clean; }) };
 }
 async function mailToolDraft(args, sourceCallId) {

@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const { updateRichDraft, keyFor, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
+const { updateRichDraft, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
 const SERVICE = 'gmail';
 const root = path.resolve(__dirname, '..');
 const binaries = require('../vendor/gog/binaries.json');
@@ -175,7 +175,7 @@ function draftReadBack(data, draftId) {
     const body = part.body || {};
     const disposition = header(part, 'content-disposition');
     const contentId = header(part, 'content-id');
-    if (part.filename || /^(attachment|inline)\b/i.test(disposition) || contentId) {
+    if (isAttachmentPart(part)) {
       attachments.push({ key: keyFor(part), filename: part.filename || '', mimeType: part.mimeType, bytes: body.size,
         attachmentId: body.attachmentId || null, disposition, contentId,
         ...(typeof body.data === 'string' ? { sha256: digest(Buffer.from(body.data, 'base64url')) } : {}) });
@@ -268,7 +268,9 @@ async function composeDraft(message, execution) {
       return { ...failure('草稿包含内嵌图片，当前编辑器无法完整保留图片引用。请在 Gmail 修改后重新读取；原草稿未更改。'), readBack: before };
     const bodyHtml = rich && (before.editor.format === 'html' || fields.bodyHtml !== original.bodyHtml || fields.body === original.body) ? fields.bodyHtml
       : fields.body === original.body ? before.editor.bodyHtml : mailBodyHtml(fields.body);
-    const quoteHtml = rich && (before.editor.format === 'html' || fields.quoteHtml !== original.quoteHtml || fields.quote === original.quote) ? fields.quoteHtml
+    // The quote is a separately editable plain field, even in an HTML draft.
+    // Only an explicit HTML quote edit or unchanged plain quote keeps its HTML.
+    const quoteHtml = rich && (fields.quoteHtml !== original.quoteHtml || fields.quote === original.quote) ? fields.quoteHtml
       : fields.quote === original.quote ? before.editor.quoteHtml : fields.quote
       ? '<br><br><div class="gmail_quote"><blockquote style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">' + mailBodyHtml(fields.quote) + '</blockquote></div>' : '';
     const from = /<([^<>]+)>$/.exec(before.headers.from);
