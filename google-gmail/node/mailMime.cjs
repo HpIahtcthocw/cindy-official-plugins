@@ -17,13 +17,57 @@ function isAttachmentPart(part) {
   const bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
   return Boolean(part.filename || /^attachment\b/i.test(disposition) || !bodyPart);
 }
-// URI schemes are case-insensitive; Content-ID values are not. Decode URI
-// escapes once, without changing the MIME identifier or the authored HTML.
+// Inspect URL positions, never visible text, comments or code samples. All
+// create/update/retention paths share this extractor; it does not rewrite HTML.
 function referencedContentIds(html) {
   const ids = new Set();
-  for (const match of html.matchAll(/\bcid:([^\s"'<>\(\)]+)/gi)) {
+  const add = value => {
+    const match = /^cid:(.+)$/i.exec(value.trim());
+    if (!match) return;
     try { ids.add(decodeURIComponent(match[1])); }
     catch (_) { throw new Error('正文图片引用无效，请检查 CID 地址后再保存。'); }
+  };
+  const entities = value => value.replace(/&(?:#(x[0-9a-f]+|\d+);?|([a-z]+);)/gi, (all, number, name) => {
+    if (!number) return ({ amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', colon: ':', commat: '@' })[name] ?? all;
+    const point = number[0].toLowerCase() === 'x' ? parseInt(number.slice(1), 16) : Number(number);
+    return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : '\ufffd';
+  });
+  const css = value => {
+    // Consume strings/comments as tokens so content:"url(cid:example)" is text.
+    for (const m of value.matchAll(/\/\*[\s\S]*?(?:\*\/|$)|\burl\(\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s)'"\\]+))\s*\)|"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'/gi)) {
+      if (m[1] !== undefined || m[2] !== undefined || m[3] !== undefined) add(m[1] ?? m[2] ?? m[3]);
+    }
+  };
+  // Keep quoted '>' inside a tag, and consume raw-text elements as a whole so
+  // example markup in textarea/script cannot create phantom references.
+  const tokens = /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title)\b((?:[^"'<>]|"[^"]*"|'[^']*')*)>([\s\S]*?)(?:<\/\1\s*>|$)|<[a-z][\w:-]*\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi;
+  for (const token of html.matchAll(tokens)) {
+    if (token[0].startsWith('<!--')) continue;
+    if (token[1]?.toLowerCase() === 'style') css(token[3]);
+    const opening = token[1] ? token[2] : token[0].replace(/^<[\w:-]+|>$/g, '');
+    for (const attr of opening.matchAll(/([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+      const name = attr[1].toLowerCase(), value = entities(attr[2] ?? attr[3] ?? attr[4] ?? '');
+      if (name === 'style') css(value);
+      else if (name === 'srcset') {
+        // URLs end at whitespace, not at every comma (data URLs contain commas).
+        let cursor = 0;
+        while (cursor < value.length) {
+          while (/[\s,]/.test(value[cursor] || '') && cursor < value.length) cursor++;
+          const start = cursor;
+          while (cursor < value.length && !/\s/.test(value[cursor])) cursor++;
+          const url = value.slice(start, cursor);
+          add(url.replace(/,+$/, ''));
+          if (url.endsWith(',')) continue;
+          let depth = 0;
+          while (cursor < value.length) {
+            const ch = value[cursor++];
+            if (ch === '(') depth++;
+            else if (ch === ')') depth = Math.max(0, depth - 1);
+            else if (ch === ',' && !depth) break;
+          }
+        }
+      } else if (['src', 'href', 'xlink:href', 'background', 'poster', 'data'].includes(name)) add(value);
+    }
   }
   return ids;
 }

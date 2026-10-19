@@ -702,3 +702,39 @@ test('inline creation and CSS references use the same CID normalization', async 
   f.fields.bodyHtml = '<div style="background-image:url(CID:photo%40example.test)">Photo</div>';
   assert.equal((await f.run()).ok, true);
 });
+
+// Cross the real save/create boundary: literal CID examples must neither block
+// an ordinary edit nor count as a reference authorizing an inline attachment.
+test('CID examples in text, comments and non-URL fields do not block saving or satisfy inline creation', async t => {
+  const f = fixture(t);
+  const examples = '<p>CID:12345 and cid:bad%ZZ</p><!-- <img src="cid:hidden"> -->'
+    + '<code>&lt;img src="cid:example"&gt;</code><div title="cid:title > src=cid:fake" data-example="cid:data">Text</div>'
+    + '<textarea><img src="cid:textarea"></textarea><script>"<img src=cid:script>"</script>'
+    + '<style>/* url(cid:comment) */ .x::after { content:"url(cid:content)" }</style>'
+    + '<img srcset="data:image/svg+xml,cid:bad%ZZ 1x">';
+  f.fields.bodyHtml = examples; f.fields.attachmentItems = '[]';
+  assert.equal((await f.run()).ok, true);
+  assert.equal(f.calls.filter(c => c.init.method === 'PUT').length, 1);
+  fs.writeFileSync(path.join(f.dir, 'photo.png'), f.image);
+  assert.throws(() => f.ctx.buildInlineMessage({ from: 'self@example.test', to: 'person@example.test', subject: 'Example', body: 'Example',
+    'body-html': examples + '<p>cid:img1@cindy.local</p>',
+    'inline-images': [{ path: 'photo.png', hash: createHash('sha256').update(f.image).digest('hex') }] }, f.dir, true), /must reference/);
+});
+test('all supported URL locations retain inline bytes while attachment lists are replaced', async t => {
+  for (const markup of ['<img SRC="CiD:photo%40example.test">', "<img src='cid:photo@example.test'>",
+    '<table background=cid:photo@example.test>', '<img srcset="https://example.test/normal.png 1x, CID:photo%40example.test 2x">',
+    '<img srcset="data:image/png;base64,YQ== 1x, CID:photo%40example.test 2x">',
+    '<div title="a > b" style="background:url(&quot;cid:photo&#64;example.test&quot;)">Photo</div>',
+    '<style>.photo{background:url(\'CID:photo@example.test\')}</style>', '<a href="cid:photo@example.test">Photo</a>']) {
+    const f = workerFixture(t), file = path.join(f.dir, 'new.pdf');
+    fs.writeFileSync(file, 'new-file');
+    f.draft.message.payload.parts[1].body.data = Buffer.from(markup).toString('base64url');
+    const result = await f.ctx.handle({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { command: ['drafts', 'update'], arguments: [f.draft.id], workdir: f.dir, readOnly: false, options: { attach: ['new.pdf'] } } }, {});
+    assert.equal(result.ok, true, markup + ': ' + result.message);
+    assert.deepEqual(Array.from(result.data.readBack.attachments, a => a.filename), ['图.png', 'new.pdf']);
+    assert.equal(result.data.readBack.bodyHtml, markup);
+    const raw = Buffer.from(JSON.parse(f.calls.find(c => c.init.method === 'PUT').init.body).message.raw, 'base64url').toString();
+    assert.ok(raw.includes(f.image.toString('base64')));
+  }
+});
