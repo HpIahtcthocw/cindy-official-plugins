@@ -8,7 +8,10 @@ Cindy 匹配 HTTPS 链接后传入 `{url}`；返回字符串字段 `accountId`�
 插件负责账号定位和 HTTP/IMAP/MIME 读取，默认不能标记已读、编辑、删除、发送或创建草稿卡。
 支持自动已读的插件可声明 `mailReader.markRead:true`，同一个工具接受可选 `markRead:true`。
 Cindy 仅在用户主动打开时传入此参数，AI 读取和邻近预加载不传。成功读取后只标记当前选中的那封邮件，不标记整个会话或草稿。
-标记失败仍返回正文，并附 `markReadFailed:true` 显示非阻塞提示；旧主机不传参数，旧插件仍按只读工作。
+尝试标记已读后，返回 `markReadResult: {execution: 'not_executed'|'executed'|'unknown', message?}`。
+执行状态以插件收到的写入回执为准：确认成功为 `executed`，明确拒绝为 `not_executed`，未获确认的超时、连接中断或服务端错误为 `unknown`；三种结果都保留可读正文。
+仅 `not_executed` 可额外附带兼容字段 `markReadFailed:true`，不能用它表示未知结果。`unknown` 提示先在邮箱核对状态，不提示盲目重试，也不自动重试。
+没有尝试写入时省略结果，包括后台读取、已读邮件和草稿；旧主机不传请求参数，旧插件仍按只读工作。
 新增 OAuth scope 不能禁用已有的阅读和发送授权；仅缺少新权限的操作提示重新连接。
 多账号不默认选第一个；AI 答案提供带账号信息的原邮件链接。电脑侧边预览，手机全屏阅读；不支持的主机沿用浏览器打开。
 Gmail 支持十六进制邮件和会话 ID；网页专用的不透明 ID 仍需在 Gmail 打开。非图片附件展示元数据，下载仍可在邮箱中完成。

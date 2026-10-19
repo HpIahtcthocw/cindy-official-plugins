@@ -13,8 +13,17 @@ a draft card. Providers supporting automatic read status may add `markRead:true`
 `mailReader` and accept optional `markRead:true` in the same tool. Cindy sends it
 only for a user's explicit opening, never AI reads or neighboring preloads. After
 successfully reading, mark only the selected message, never the thread or drafts.
-If marking fails, keep the body and return `markReadFailed:true`. Older hosts omit
-the flag and older providers remain read-only. New OAuth scopes must not disable
+Report an attempted mark-read operation as
+`markReadResult: {execution: 'not_executed'|'executed'|'unknown', message?}`.
+The provider's write receipt is the source of truth: confirmed success is
+`executed`, explicit rejection is `not_executed`, and a timeout, connection loss
+or server error without confirmation is `unknown`. Keep the readable body for
+all three outcomes. Only `not_executed` may additionally set the compatibility
+field `markReadFailed:true`; never use it for an unknown result. For `unknown`,
+instruct the caller to check the mailbox state first, without blind or automatic
+retries. Omit the result when no write was attempted (including background reads,
+already-read mail and drafts). Older hosts omit the request flag and older
+providers remain read-only. New OAuth scopes must not disable
 already granted read/compose operations; ask for reconnection only for missing
 permissions. Keep provider HTTP/IMAP/MIME operations in the adapter; UI stays in
 Cindy. Include the original account-qualified link in AI answers. Desktop opens a
