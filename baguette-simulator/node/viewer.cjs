@@ -5,6 +5,14 @@ const http=require('node:http');
 const {createClipboard}=require('./clipboard.cjs');
 let active=null;
 let controls=null;
+// A window counts as open while its live stream is connected, plus a short
+// grace after opening (before the stream attaches) and after it disconnects.
+const VIEWER_GRACE_MS=60000;
+let lastViewerSeen=0;
+function viewing(now=Date.now()){
+ if((active?.clipboard?.viewers?.()||0)>0)lastViewerSeen=now;
+ return now-lastViewerSeen<=VIEWER_GRACE_MS;
+}
 function configureControls(value){controls=value;}
 function freePort(){return new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(error=>error?reject(error):resolve(port));});});}
 function probe(url){return new Promise((resolve,reject)=>{const request=http.get(url,{timeout:1500},response=>{response.resume();response.on('end',()=>response.statusCode===200?resolve():reject(Error('Viewer HTTP '+response.statusCode)));});request.once('timeout',()=>request.destroy(Error('Viewer timed out')));request.once('error',reject);});}
@@ -91,7 +99,8 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
   touch:()=>controls?.touch()
  });
  server.clipboard.devices.add(udid);
+ lastViewerSeen=Date.now();
  const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;
- return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Device idle shutdown follows plugin settings (15 minutes by default); status polling does not renew use. close_viewer only stops streaming. Use shutdown when finished.'};
+ return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Devices are not shut down for idleness while a viewer window is open or another tool or script is operating them; otherwise idle shutdown follows plugin settings (15 minutes by default). close_viewer only stops streaming. Use shutdown when finished.'};
 }
-module.exports={openViewer,stopViewer,configureControls};
+module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS};

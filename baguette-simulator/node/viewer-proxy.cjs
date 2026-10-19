@@ -55,21 +55,25 @@ function proxyRequest(req,res,port){
  upstream.on('error',()=>{if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'});res.end('<p data-viewer-unavailable>画面连接中断，请点击上方“恢复画面”。</p>');}else res.destroy();});
  upstream.setTimeout(15000,()=>upstream.destroy());req.on('aborted',()=>upstream.destroy());req.pipe(upstream);
 }
-function attachUpgrade(server,port,sockets,authorized=()=>false){
+// `clients` holds the live browser-side stream sockets: an open viewer window.
+function attachUpgrade(server,port,sockets,authorized=()=>false,clients=new Set()){
  server.on('upgrade',(req,socket,head)=>{
   const own=`127.0.0.1:${server.address().port}`;
   if(!authorized(req)||req.headers.host!==own||req.headers.origin!==`http://${own}`||typeof req.headers['sec-websocket-key']!=='string'){socket.destroy();return;}
   // Native HTTP/1 upgrade requires a fresh connection, never a pooled HTTP socket.
   const request=http.request({agent:false,hostname:'127.0.0.1',port,path:req.url,headers:{host:`127.0.0.1:${port}`,connection:'upgrade',upgrade:'websocket','sec-websocket-key':req.headers['sec-websocket-key'],'sec-websocket-version':'13','sec-fetch-mode':'websocket'}});
   request.on('upgrade',(response,upstream,upHead)=>{
-   sockets.add(upstream);sockets.add(socket);
+   sockets.add(upstream);sockets.add(socket);clients.add(socket);
    socket.write('HTTP/1.1 101 Switching Protocols\r\n'+Object.entries(response.headers).map(([k,v])=>`${k}: ${v}`).join('\r\n')+'\r\n\r\n');
    if(head.length)upstream.write(head);if(upHead.length)socket.write(upHead);
    socket.pipe(upstream);upstream.pipe(socket);
    // WebSocket traffic includes automatic pong and stream negotiation.
    // The controller reports trusted pointer/key/wheel input separately;
    // network traffic alone must never postpone idle shutdown.
-   for(const [a,b] of [[socket,upstream],[upstream,socket]]){a.on('error',()=>b.destroy());a.on('close',()=>{sockets.delete(a);b.destroy();});}
+   for(const [a,b] of [[socket,upstream],[upstream,socket]]){a.on('error',()=>b.destroy());a.on('close',()=>{sockets.delete(a);clients.delete(a);b.destroy();});}
+   // A tab that is closed or crashes may half-close without a WebSocket close
+   // frame; the server side would stay open and count as a viewer forever.
+   socket.once('end',()=>socket.destroy());
   });
   request.on('response',()=>socket.destroy());request.on('error',()=>socket.destroy());socket.on('error',()=>request.destroy());socket.on('close',()=>request.destroy());request.end();
  });

@@ -1,3 +1,20 @@
+// The host recycles this on-demand worker after an hour without requests, and
+// the worker shuts every device down on exit. While any device is running,
+// keep one request in flight so the plugin's own idle rule (open window or
+// active script keeps a device on) decides instead. Ends when all are off.
+let holding = null;
+function holdWhileRunning() {
+  if (holding) return;
+  holding = (async () => {
+    try {
+      for (;;) {
+        const response = await cindy.node.request({method:'device_hold', params:{}, timeoutMs:115000});
+        if (!response.ok || response.result?.running !== true) break;
+      }
+    } catch {} finally { holding = null; }
+  })();
+}
+
 cindy.onHostMessage(async function (msg) {
   if (msg.type !== 'tool-call') return;
   try {
@@ -21,6 +38,7 @@ cindy.onHostMessage(async function (msg) {
       } catch(error) {viewer.previewOpened=false;viewer.previewError=String(error.message || error);}
     }
     await cindy.send(result.ok ? {type:'tool-result',callId:msg.callId,ok:true,result:result} : {type:'tool-result',callId:msg.callId,ok:false,errorCode:result.errorCode,message:result.message+' (execution: '+result.execution+')'});
+    holdWhileRunning();
   } catch (error) {
     await cindy.send({type:'tool-result',callId:msg.callId,ok:false,errorCode:'BRIDGE_FAILED',message:String(error.message || error)+'; execution unknown, inspect before retrying.'});
   }
@@ -50,5 +68,6 @@ if (typeof BroadcastChannel !== 'undefined') {
       }
     } catch { result = {ok:false,errorCode:'SETTINGS_UNAVAILABLE',execution:'unknown'}; }
     settings.postMessage({type:'response',id:msg.id,result});
+    if (msg.action === 'boot' || msg.action === 'viewer') holdWhileRunning();
   };
 }

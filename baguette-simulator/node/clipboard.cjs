@@ -4,7 +4,7 @@ const {randomBytes}=require('node:crypto');
 // An unguessable capability plus exact viewer Origin: other local pages cannot
 // use the bridge. No clipboard contents, tokens, or request bodies are logged.
 async function createClipboard(origin,perform,control){
- const token=randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set();
+ const token=randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
  const authorized=req=>req.headers.cookie?.split(';').some(part=>part.trim()===`cindy_viewer_${server.address().port}=${token}`)===true;
  const server=http.createServer(async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
@@ -57,9 +57,9 @@ async function createClipboard(origin,perform,control){
    finally{busy=false;}
   }catch{if(!res.headersSent)reply(400,{error:'Invalid request',execution:'not_executed'});}
  });
- if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized);
+ if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized,clients);
  server.requestTimeout=10000;server.headersTimeout=10000;
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
- return {devices,base:`http://127.0.0.1:${server.address().port}`,fragment:`cindyClipboard=${server.address().port}.${token}`,close(){for(const socket of sockets)socket.destroy();server.close();server.closeAllConnections();}};
+ return {devices,viewers:()=>clients.size,base:`http://127.0.0.1:${server.address().port}`,fragment:`cindyClipboard=${server.address().port}.${token}`,close(){for(const socket of sockets)socket.destroy();server.close();server.closeAllConnections();}};
 }
 module.exports={createClipboard};

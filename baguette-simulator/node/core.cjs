@@ -228,7 +228,13 @@ async function dispatch(method,p={}) {
 function reply(value){process.stdout.write(JSON.stringify(value)+'\n');}
 function shutdown(){ for(const child of children) child.kill('SIGKILL'); process.exit(0); }
 function startWorker() {
-  const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json')});
+  // In use = a viewer window is open, or another process names a running device.
+  const inUse=async()=>{
+    if(require('./viewer.cjs').viewing())return true;
+    const running=(await dispatch('devices')).devices.filter(d=>d.state!=='Shutdown').map(d=>d.udid);
+    return (await require('./activity.cjs').externalUse(running)).length>0;
+  };
+  const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json'),inUse,viewing:()=>require('./viewer.cjs').viewing()});
   configureControls(runtime);
   const timer=setInterval(()=>runtime.checkIdle().catch(error=>process.stderr.write('[baguette-idle] '+(error.code||'FAILED')+'\n')),15000);
   timer.unref();

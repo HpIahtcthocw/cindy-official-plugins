@@ -4,7 +4,13 @@ const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
 // One owner for tools, settings and viewer actions. Polling never renews use.
-function createRuntime({dispatch, settingsFile, now = Date.now}) {
+// Idle shutdown skips devices still in use: an open viewer window, or another
+// tool or script operating a device (`inUse`). `device_hold` keeps this worker
+// alive while any device is running, so that rule outlives the host's idle
+// recycling of on-demand workers.
+const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
+function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
   let config, busy = false, lastActivity = now(), lastStop = null, closing = false;
   let idleHandled = false;
   const assertEnabled=async()=>{if(!(await load()).enabled||closing)throw failure('RUNTIME_DISABLED','Baguette is paused. Open plugin settings.');};
@@ -77,6 +83,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
     if (method === 'settings_status') return status();
     if (method === 'viewer_switch') return manager.start(params);
     if (method === 'viewer_catalog') return dispatch('environment');
+    if (method === 'device_hold') return hold();
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
@@ -105,11 +112,26 @@ function createRuntime({dispatch, settingsFile, now = Date.now}) {
       return result;
     });
   }
+  // Returns once no device is running and no viewer window is open (or at the
+  // hold limit). A window can start a device itself, so it counts too. Never
+  // renews use.
+  async function hold() {
+    const deadline = now() + holdMs;
+    for (;;) {
+      let running = false;
+      try { running = viewing() || (await dispatch('devices')).devices.some(d => d.state !== 'Shutdown'); } catch {}
+      if (!running || closing) return {running:false};
+      if (now() >= deadline) return {running:true};
+      await sleep(Math.min(holdPollMs, deadline - now()));
+    }
+  }
   async function checkIdle() {
     if (busy || closing || idleHandled) return;
     return exclusive(async () => {
       const settings = await load();
       if (settings.enabled && (!settings.idleMinutes || now() - lastActivity < settings.idleMinutes * 60000)) return;
+      // Someone is still watching or operating a device: start a new idle period.
+      if (settings.enabled && await inUse().catch(() => false)) { touch(); return; }
       const result = await stopAll(settings.enabled ? 'idle' : 'disabled');
       // Incomplete shutdown stays visible; do not silently retry forever.
       idleHandled = true;
