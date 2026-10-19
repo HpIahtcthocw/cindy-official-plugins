@@ -667,3 +667,38 @@ test('worker JSON-RPC hides unrecognized errors and preserves uncertain command 
     else assert.match(result.message, /check its schema and workspace paths/);
   }
 });
+
+// Same CID interpretation for retention, validation and initial inline creation.
+test('AI attachment replacement retains CID scheme variants and percent-encoded identifiers', async t => {
+  for (const reference of ['CID:photo@example.test', 'CiD:photo%40example.test']) {
+    const f = workerFixture(t), file = path.join(f.dir, 'new.pdf');
+    fs.writeFileSync(file, 'new-file');
+    f.draft.message.payload.parts[1].body.data = Buffer.from('<img src="' + reference + '">').toString('base64url');
+    const result = await f.ctx.handle({ method: 'run', cindy: { secrets: { gog_access_token: 'fixture-token' } },
+      params: { command: ['drafts', 'update'], arguments: [f.draft.id], workdir: f.dir, readOnly: false, options: { attach: ['new.pdf'] } } }, {});
+    assert.equal(result.ok, true, result.message);
+    assert.deepEqual(Array.from(result.data.readBack.attachments, a => a.filename), ['图.png', 'new.pdf']);
+    const raw = Buffer.from(JSON.parse(f.calls.find(c => c.init.method === 'PUT').init.body).message.raw, 'base64url').toString();
+    assert.ok(raw.includes('Content-ID: <photo@example.test>'));
+    assert.ok(raw.includes(f.image.toString('base64')));
+  }
+});
+test('CID validation rejects missing variants, case-mismatched IDs and malformed escapes before PUT', async t => {
+  for (const reference of ['CID:missing@example.test', 'CiD:Photo@example.test', 'cid:photo%ZZexample.test']) {
+    const f = fixture(t);
+    f.fields.bodyHtml = '<img src="' + reference + '">';
+    await assert.rejects(f.run(), /图片/);
+    assert.equal(f.calls.some(c => c.init.method === 'PUT'), false, reference);
+  }
+});
+test('inline creation and CSS references use the same CID normalization', async t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.dir, 'photo.png'), f.image);
+  const html = '<div style="background-image:url(CID:img1%40cindy.local)">Photo</div>';
+  const raw = f.ctx.buildInlineMessage({ from: 'self@example.test', to: 'person@example.test', subject: 'Photo', body: 'Photo',
+    'body-html': html, 'inline-images': [{ path: 'photo.png', hash: createHash('sha256').update(f.image).digest('hex') }] }, f.dir, true);
+  assert.ok(raw.includes('Content-ID: <img1@cindy.local>'));
+  assert.ok(raw.includes(f.image.toString('base64')));
+  f.fields.bodyHtml = '<div style="background-image:url(CID:photo%40example.test)">Photo</div>';
+  assert.equal((await f.run()).ok, true);
+});

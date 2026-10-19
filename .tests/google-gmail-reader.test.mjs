@@ -391,3 +391,42 @@ test('external body failures never return partial mail or mark it read', async (
     assert.equal(f.calls.filter(r => r.url.includes('/attachments/')).length, mode === 'oversized' ? 0 : 1);
   }
 });
+
+// Exercise the actual tool boundary: parser errors must not echo provider data.
+test('reader JSON and body decoding failures return fixed guidance before marking read', async () => {
+  for (const stage of ['message', 'thread-fallback', 'external-body', 'inline-body']) {
+    const f = fixture(), replies = [], secret = 'PRIVATE_MAIL_FRAGMENT';
+    f.msg.labelIds = ['UNREAD'];
+    if (stage === 'external-body') f.msg.payload.parts[1].body = { attachmentId: 'html-body', size: 3 };
+    if (stage === 'inline-body') f.msg.payload.parts[1].body.data = '*' + secret;
+    const fetch = f.ctx.cindy.fetch;
+    f.ctx.cindy.fetch = async r => {
+      f.calls.push(r);
+      if (stage === 'thread-fallback' && r.url.includes('/messages/')) return { ok: false, status: 404 };
+      if (stage === 'message' || stage === 'thread-fallback' || (stage === 'external-body' && r.url.includes('/attachments/')))
+        return { ok: true, status: 200, body: '{"' + secret + '":' };
+      return fetch(r);
+    };
+    f.ctx.cindy.send = async reply => { replies.push(reply); };
+    await f.invoke({ type: 'tool-call', tool: 'gmail_read_message', callId: 'parse-test',
+      args: { url: 'https://mail.google.com/mail/#all/12345678', markRead: true } });
+    assert.equal(replies.length, 1, stage);
+    assert.equal(replies[0].ok, false, stage);
+    assert.match(replies[0].message, /无法解析.*请.*重新打开/, stage);
+    assert.equal(JSON.stringify(replies).includes(secret), false, stage);
+    assert.equal(f.calls.some(r => r.method === 'POST'), false, stage);
+  }
+});
+test('malformed optional conversation and image JSON only omit optional presentation', async () => {
+  const f = fixture(); f.msg.threadId = 'abcdef01';
+  const image = f.msg.payload.parts.at(-1);
+  image.body = { attachmentId: 'image-bytes', size: 3 };
+  const fetch = f.ctx.cindy.fetch;
+  f.ctx.cindy.fetch = async r => /\/(threads|attachments)\//.test(r.url)
+    ? { ok: true, status: 200, body: '{"PRIVATE_MAIL_FRAGMENT":' } : fetch(r);
+  const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+  assert.equal(mail.bodyText, '中文');
+  assert.equal(mail.conversationUnavailable, true);
+  assert.equal(mail.attachments.at(-1).previewUrl, undefined);
+  assert.equal(JSON.stringify(mail).includes('PRIVATE_MAIL_FRAGMENT'), false);
+});

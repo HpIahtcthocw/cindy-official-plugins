@@ -217,7 +217,7 @@ async function mailImagePreviews(readBack, accountId, previous) {
         if (!attachment.attachmentId || typeof cindy.fetch !== 'function') continue;
         var response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(readBack.messageId) + '/attachments/' + encodeURIComponent(attachment.attachmentId), authAccount: accountId, timeoutMs: 5000 });
         if (!response.ok || response.status !== 200 || response.truncated) continue;
-        data = JSON.parse(response.body).data;
+        data = parseMailReadJson(response.body).data;
       }
       if (typeof data !== 'string' || data.length > 4 * Math.ceil(maxImageBytes / 3)
         || !/^[A-Za-z0-9_-]*={0,2}$/.test(data)) continue;
@@ -260,6 +260,19 @@ var gmailCompose = typeof cindyMail !== 'undefined' && cindyMail.version === 1 ?
 }) : null;
 
 // Native reader adapter; only an explicit opening may remove the selected UNREAD label.
+function parseMailReadJson(body) {
+  try {
+    var value = JSON.parse(body);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    return value;
+  } catch (_) {
+    throw new Error('无法解析 Gmail 邮件数据，请检查网络连接后重新打开邮件，或在邮箱中查看。');
+  }
+}
+function decodeMailReadBytes(data) {
+  try { return atob(data.replace(/-/g, '+').replace(/_/g, '/')); }
+  catch (_) { throw new Error('无法解析 Gmail 邮件正文，请重新打开邮件，或在邮箱中查看。'); }
+}
 function assertMailReadResponse(response, fallback) {
   if (response.status === 401) throw new Error('Gmail 账号授权已失效，请到插件详情页重新连接此账号后再打开邮件。');
   if (response.status === 403) throw new Error('Gmail 拒绝读取，请检查此账号的邮件读取权限，并到插件详情页重新连接或授权。');
@@ -292,7 +305,7 @@ async function readMailMessageLink(args, beginOperation) {
   if (response.status === 404 && !url.searchParams.has('permmsgid')) {
     var threadResponse = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + encodeURIComponent(id) + '?format=metadata', authAccount: selected.accountId, timeoutMs: 20000 });
     assertMailReadResponse(threadResponse, '无法读取 Gmail 会话，请检查网络连接后重新打开。');
-    var thread = JSON.parse(threadResponse.body);
+    var thread = parseMailReadJson(threadResponse.body);
     var latest = (Array.isArray(thread.messages) ? thread.messages : []).filter(function (m) {
       return /^[a-f0-9]{8,32}$/i.test(m.id || '') && !(m.labelIds || []).includes('DRAFT');
     }).reduce(function (a, b) { return !a || Number(b.internalDate || 0) >= Number(a.internalDate || 0) ? b : a; }, null);
@@ -300,7 +313,7 @@ async function readMailMessageLink(args, beginOperation) {
     response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(latest.id) + '?format=full', authAccount: selected.accountId, timeoutMs: 20000 });
   }
   assertMailReadResponse(response, '无法读取 Gmail 邮件，请检查网络连接和邮件是否仍在邮箱中后重新打开。');
-  var message = JSON.parse(response.body);
+  var message = parseMailReadJson(response.body);
   if (!/^[a-f0-9]{8,32}$/i.test(message.id || '') || !message.payload) throw new Error('Incomplete Gmail message');
   var conversation, conversationUnavailable = false;
   // Read only metadata for the surrounding messages. Cindy requests a body
@@ -310,7 +323,7 @@ async function readMailMessageLink(args, beginOperation) {
       if (!thread) {
         var metadata = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + encodeURIComponent(message.threadId) + '?format=metadata', authAccount: selected.accountId, timeoutMs: 20000 });
         if (!metadata.ok || metadata.status !== 200 || metadata.truncated) throw new Error('Conversation unavailable');
-        thread = JSON.parse(metadata.body);
+        thread = parseMailReadJson(metadata.body);
       }
       if (!Array.isArray(thread.messages)) throw new Error('Incomplete conversation');
       var members = thread.messages.filter(function (m) {
@@ -331,7 +344,8 @@ async function readMailMessageLink(args, beginOperation) {
     var decoder;
     try { decoder = new TextDecoder(match && (match[1] || match[2] || match[3]) || 'utf-8'); }
     catch (_) { decoder = new TextDecoder('utf-8'); }
-    return decoder.decode(Uint8Array.from(atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); }));
+    try { return decoder.decode(Uint8Array.from(decodeMailReadBytes(part.body.data), function (c) { return c.charCodeAt(0); })); }
+    catch (_) { throw new Error('无法解析 Gmail 邮件正文，请重新打开邮件，或在邮箱中查看。'); }
   }
   var bodies = { 'text/plain': [], 'text/html': [] }, attachments = [];
   var bodyBytes = 0;
@@ -352,9 +366,9 @@ async function readMailMessageLink(args, beginOperation) {
         var loaded = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/attachments/' + encodeURIComponent(body.attachmentId),
           authAccount: selected.accountId, timeoutMs: 20000 });
         assertMailReadResponse(loaded, '无法完整读取邮件正文，请检查网络连接后重新打开。');
-        var content = JSON.parse(loaded.body);
+        var content = parseMailReadJson(loaded.body);
         if (typeof content.data !== 'string' || !/^[A-Za-z0-9_-]*={0,2}$/.test(content.data) || content.size !== body.size
-          || atob(content.data.replace(/-/g, '+').replace(/_/g, '/')).length !== body.size) throw new Error('邮件正文大小不一致');
+          || decodeMailReadBytes(content.data).length !== body.size) throw new Error('邮件正文大小不一致');
         bodyBytes += body.size;
         body.data = content.data;
       }

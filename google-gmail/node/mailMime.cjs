@@ -17,6 +17,16 @@ function isAttachmentPart(part) {
   const bodyPart = /^multipart\//i.test(part.mimeType) || /^text\/(plain|html)$/i.test(part.mimeType);
   return Boolean(part.filename || /^attachment\b/i.test(disposition) || !bodyPart);
 }
+// URI schemes are case-insensitive; Content-ID values are not. Decode URI
+// escapes once, without changing the MIME identifier or the authored HTML.
+function referencedContentIds(html) {
+  const ids = new Set();
+  for (const match of html.matchAll(/\bcid:([^\s"'<>\(\)]+)/gi)) {
+    try { ids.add(decodeURIComponent(match[1])); }
+    catch (_) { throw new Error('正文图片引用无效，请检查 CID 地址后再保存。'); }
+  }
+  return ids;
+}
 // Return only fixed, safe guidance across worker boundaries; never forward an
 // arbitrary decoder/provider exception (which may contain private input).
 function draftBodyErrorMessage(error) {
@@ -173,7 +183,7 @@ async function updateRichDraft(p, token, before, helpers, execution) {
   // Removing an inline attachment must not leave a broken image reference.
   const cids = new Set(files.filter(f => f.contentId).map(f => f.contentId.replace(/^<|>$/g, '')));
   if (cids.size !== files.filter(f => f.contentId).length) throw new Error('图片引用重复，请重新读取草稿');
-  for (const match of (fields.bodyHtml + fields.quoteHtml).matchAll(/\bcid:([^\s"'<>]+)/g)) if (!cids.has(match[1])) throw new Error('正文仍引用已移除的图片，请先在正文中删除图片');
+  for (const cid of referencedContentIds(fields.bodyHtml + fields.quoteHtml)) if (!cids.has(cid)) throw new Error('正文仍引用已移除的图片，请先在正文中删除图片');
   const raw = buildMime({ fields, headers: before.headers, files }, helpers);
   // The transport preserves a received write status; without one, do not replay.
   execution.started = true;
@@ -201,4 +211,4 @@ async function verifyDraftAttachmentBytes(token, saved, expected) {
   const facts = files => JSON.stringify(files.map(f => [f.filename, f.mimeType, f.bytes, (f.contentId || '').replace(/^<|>$/g, ''), f.sha256]).sort());
   return facts(actual) === facts(expected);
 }
-module.exports = { updateRichDraft, buildMime, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes };
+module.exports = { updateRichDraft, buildMime, keyFor, isAttachmentPart, referencedContentIds, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes };

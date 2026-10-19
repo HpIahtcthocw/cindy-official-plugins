@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const { updateRichDraft, keyFor, isAttachmentPart, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
+const { updateRichDraft, keyFor, isAttachmentPart, referencedContentIds, gmailJson, decodeMimeBody, draftBodyErrorMessage, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
 const SERVICE = 'gmail';
 const root = path.resolve(__dirname, '..');
 const binaries = require('../vendor/gog/binaries.json');
@@ -447,7 +447,7 @@ function buildInlineMessage(options, cwd, draft = false) {
   images.forEach((image, index) => {
     if (!image || typeof image.path !== 'string' || typeof image.hash !== 'string') throw new Error('Invalid inline image');
     const cid = 'img' + (index + 1) + '@cindy.local';
-    if (!html.includes('cid:' + cid)) throw new Error('body-html must reference cid:' + cid + ' in inline-images order');
+    if (!referencedContentIds(html).has(cid)) throw new Error('body-html must reference cid:' + cid + ' in inline-images order');
     const file = localPath(image.path, cwd);
     const bytes = fs.readFileSync(file);
     if (digest(bytes) !== image.hash) throw new Error('Inline image changed before send');
@@ -509,12 +509,13 @@ async function handle(message, execution) {
       if (bodyChanged !== htmlChanged) return failure('更新此图文草稿时，请同时提供 body 和 body-html（或对应文件），以保留图片和纯文本版本。');
       const fields = Object.fromEntries(['to', 'cc', 'bcc', 'subject'].map(name => [name, textOption(name, checked.headers[name])]));
       const html = textOption('body-html', checked.editor.bodyHtml) + checked.editor.quoteHtml;
+      const referenced = referencedContentIds(html);
       // attach replaces ordinary files. Only inline parts still referenced by
       // the replacement body survive implicitly; omission preserves all files.
       const retained = options['clear-attachments'] === true ? [] : options.attach === undefined ? checked.attachments
         : checked.attachments.filter(a => {
           const cid = (a.contentId || '').replace(/^<|>$/g, '');
-          return cid && [...html.matchAll(/\bcid:([^\s"'<>]+)/g)].some(m => m[1] === cid);
+          return cid && referenced.has(cid);
         });
       Object.assign(fields, { body: textOption('body', checked.editor.body), bodyHtml: textOption('body-html', checked.editor.bodyHtml),
         quote: checked.editor.quote, quoteHtml: checked.editor.quoteHtml,
