@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Button,
@@ -254,10 +254,21 @@ function Settings({ strings }) {
     </form>
   );
   const accounts = Object.entries(clouds).flatMap(([cloud, cfg]) =>
-    (entry(cloud)?.accounts || []).map((account) => ({ cloud, cfg, account })),
+    (entry(cloud)?.accounts || []).map((account) => ({
+      cloud,
+      cfg,
+      account,
+      label: (account.label || account.id).replace(/^\s*·\s*/, ''),
+      status:
+        account.status !== 'connected'
+          ? 'expired'
+          : account.scopeStale
+            ? 'scopeStale'
+            : 'connected',
+    })),
   );
   return (
-    <main className="settings" aria-busy={busy}>
+    <main aria-busy={busy}>
       <header className="connection-header">
         <h1>{t('title')}</h1>
         <DropdownMenu
@@ -287,10 +298,6 @@ function Settings({ strings }) {
               requestAnimationFrame(() =>
                 document.querySelector('#service-menu [aria-checked="true"]')?.focus(),
               );
-            }}
-            onCloseAutoFocus={(e) => {
-              e.preventDefault();
-              document.getElementById('cloud')?.focus();
             }}
           >
             <DropdownMenuRadioGroup value={selected} onValueChange={selectCloud}>
@@ -337,9 +344,7 @@ function Settings({ strings }) {
           <p id="setup-note" className="hint">
             {!loaded
               ? t(attempted ? 'loadFailed' : 'loading')
-              : required
-                ? t('appMissing')
-                : t(current?.clientCustom ? 'customReady' : 'builtInReady')}
+              : t(current?.clientCustom ? 'customReady' : 'builtInReady')}
           </p>
           {loaded && current?.clientCustom && (
             <Button
@@ -383,21 +388,17 @@ function Settings({ strings }) {
         </h2>
         <div id="accounts">
           {loaded && !accounts.length && <p className="hint empty">{t('noAccounts')}</p>}
-          {accounts.map(({ cloud, cfg, account: a }) => (
+          {accounts.map(({ cloud, cfg, account: a, label, status }) => (
             <div key={cloud + a.id} className="account" data-cloud={cloud} data-account-id={a.id}>
               <span className="account-avatar">
                 <Icon name="user" />
               </span>
               <div className="identity">
-                <span className="account-name">{(a.label || a.id).replace(/^\s*·\s*/, '')}</span>
-                {(a.status !== 'connected' || a.scopeStale) && (
-                  <p className="hint account-status">
-                    {t(a.status !== 'connected' ? 'expired' : 'scopeStale')}
-                  </p>
-                )}
+                <span className="account-name">{label}</span>
+                {status !== 'connected' && <p className="hint account-status">{t(status)}</p>}
               </div>
               <div className="account-controls">
-                {(a.status !== 'connected' || a.scopeStale) && (
+                {status !== 'connected' && (
                   <Button
                     className="reconnect"
                     onClick={() => void perform(() => connect(cloud))}
@@ -412,35 +413,15 @@ function Settings({ strings }) {
                       className="account-actions"
                       variant="icon"
                       disabled={disabled}
-                      aria-label={t('accountActions') + ': ' + (a.label || a.id)}
+                      aria-label={t('accountActions') + ': ' + label}
                     >
                       <Icon name="more" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    className="account-menu"
-                    onCloseAutoFocus={(event) => {
-                      if (
-                        !document.querySelector(
-                          `[data-account-id="${CSS.escape(a.id)}"][data-cloud="${cloud}"]`,
-                        )
-                      ) {
-                        event.preventDefault();
-                        document.getElementById('accounts-title')?.focus();
-                      }
-                    }}
-                  >
+                  <DropdownMenuContent className="account-menu">
                     <div className="account-details hint">
                       <p>{t(cloud)}</p>
-                      <p>
-                        {t(
-                          a.status !== 'connected'
-                            ? 'expired'
-                            : a.scopeStale
-                              ? 'scopeStale'
-                              : 'connected',
-                        )}
-                      </p>
+                      <p>{t(status)}</p>
                       {a.isDefault && <span className="default-badge">{t('defaultAccount')}</span>}
                     </div>
                     <DropdownMenuSeparator />
@@ -462,15 +443,21 @@ function Settings({ strings }) {
                     )}
                     <DropdownMenuItem
                       disabled={disabled}
-                      onSelect={() =>
-                        void perform(async () => {
+                      onSelect={async () => {
+                        await perform(async () => {
                           await request(
                             '/oauth/' + cfg.key + '/accounts/' + encodeURIComponent(a.id),
                             { method: 'DELETE' },
                           );
                           setMessage(t('disconnected'));
-                        })
-                      }
+                        });
+                        requestAnimationFrame(() => {
+                          const trigger = document.querySelector(
+                            `[data-account-id="${CSS.escape(a.id)}"][data-cloud="${cloud}"] .account-actions`,
+                          );
+                          (trigger || document.getElementById('accounts-title'))?.focus();
+                        });
+                      }}
                     >
                       {t('disconnect')}
                     </DropdownMenuItem>

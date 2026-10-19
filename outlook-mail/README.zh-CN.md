@@ -14,7 +14,7 @@
 
 全球版申请 User.Read、Mail.ReadWrite、Mail.Send、openid 和 offline_access；中国区使用对应中国区 Graph 资源权限。这些均为用户委托权限，不是全租户 Application 权限；租户策略可能要求管理员批准。连接、断开和默认账号管理全部交给 Host，插件 KV 仅保存默认服务区域。
 
-设置页同时展示全部已连接邮箱，每行标明服务和状态；默认账号和断开操作收在该行“⋯”中，需要重连时直接显示入口。可以持续添加多个账号，不必退出已有账号；同一身份重新授权由 Host 作为重连处理。每行的重连、默认和断开操作绑定该账号自身的区域，不受上方新增账号服务选择影响。邮件调用传 `account` 时使用指定账号；只传 `cloud` 时使用该区域默认账号；都不传时使用保存的默认区域及其默认账号。断开一个账号不会退出其他账号或另一区域。中国区仍需配置独立应用。
+设置页在同一张卡片中展示全部已连接邮箱，底部提供连接另一个账户的入口；服务、状态、默认账号和断开操作收在该行“⋯”中，授权异常和重连入口直接显示。可以持续添加多个账号，不必退出已有账号；同一身份重新授权由 Host 作为重连处理。每行的重连、默认和断开操作绑定该账号自身的区域，不受上方新增账号服务选择影响。邮件调用传 `account` 时使用指定账号；只传 `cloud` 时使用该区域默认账号；都不传时使用保存的默认区域及其默认账号。断开一个账号不会退出其他账号或另一区域。中国区仍需配置独立应用。
 
 不带参数调用 `outlook_accounts` 只查看连接元数据，不请求 Graph。核对账号地址时，将返回的账号 ID 作为 `profile_account`：只读 Graph 资料返回 `mail`（SMTP 地址，可能为空）和 `user_principal_name`（登录名）。`mail` 为空时不得用登录名代替；地址查询不证明可发送或已送达。使用现有 User.Read 委托权限，不返回令牌。
 
@@ -28,7 +28,7 @@
 
 2.0.0 替换 SDK 授权路径，旧 SDK 会话与保存的账号元数据不再使用，需要通过 Host OAuth 重新连接。不会读取或清理其他微软工具的凭据缓存，也不会从旧 KV 自动恢复登录。
 
-运行 `node --test .tests/outlook-mail.test.mjs` 和仓库规定的契约、本地化、provisioning、发布流程检查。提交后使用 `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail-2.1.5.cindy` 打包。浏览器测试使用模拟 Host 接口与虚构账号，不作为真实 OAuth 证据；见 `.tests/outlook-mail/settings-browser.mjs`。
+运行 `node --test .tests/outlook-mail.test.mjs` 和仓库规定的契约、本地化、provisioning、发布流程检查。提交后使用 `.github/scripts/package-plugin.sh outlook-mail /tmp/outlook-mail.cindy` 打包。浏览器测试使用模拟 Host 接口与虚构账号，不作为真实 OAuth 证据；见 `.tests/outlook-mail/settings-browser.mjs`。
 
 管理员于 2026-09-09 提供了全球版公共应用 ID。已在 Cindy Beta 验证真实 Host OAuth 登录及单账号只读操作；确切包、客户端版本和当前覆盖范围记录于 PR。发送、草稿、标记和移动仍需获授权的真实邮箱验收；多账号与中国区保持未验证。早期 SDK 开发包结果不能替代本实现的验收。新插件准入和最终实机验收仍需维护者审查。provisioning 是空定向名单，不自动分发；测试及打包限制不作放宽。
 

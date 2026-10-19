@@ -1,7 +1,6 @@
-// shadcn/ui Radix composition, adapted to Cindy's sandbox and semantic tokens.
 // Source: https://ui.shadcn.com/r/styles/new-york-v4/dropdown-menu.json (MIT).
-// See THIRD-PARTY-LICENSES.txt. No host React imports or runtime CDN requests.
-import React, { forwardRef, useLayoutEffect, useState } from 'react';
+// Attribution and full license: THIRD-PARTY-LICENSES.txt.
+import { forwardRef, useLayoutEffect, useState } from 'react';
 import * as Menu from '@radix-ui/react-dropdown-menu';
 import * as Collapsible from '@radix-ui/react-collapsible';
 
@@ -110,12 +109,7 @@ export function Disclosure({
   className = '',
 }) {
   return (
-    <Collapsible.Root
-      id={id}
-      className={`disclosure ${className}`}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
+    <Collapsible.Root id={id} className={className} open={open} onOpenChange={onOpenChange}>
       <Collapsible.Trigger className="disclosure-trigger">
         <span className="disclosure-label">{title}</span>
         {description && <span className="hint disclosure-description">{description}</span>}

@@ -87,6 +87,10 @@ try {
   await page.screenshot({path:fileURLToPath(new URL('outlook-service-menu.png',screenshots)),fullPage:true});
   await page.keyboard.press('Escape');await page.waitForFunction(()=>document.activeElement?.id==='cloud');
   assert(await page.locator('#required-application').isVisible());
+  await page.locator('#cloud').click();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('data-cloud')==='china');
+  await page.locator('#client-id').click({position:{x:8,y:20}});
+  await page.waitForFunction(()=>document.activeElement?.id==='client-id',{},{timeout:2000});
   await page.screenshot({path:fileURLToPath(new URL('outlook-china-setup.png',screenshots)),fullPage:true});
   await page.locator('#client-id').fill('unsaved-china');await selectCloud('global');
   assert.equal(await page.locator('#client-id').inputValue(),'');
@@ -97,7 +101,7 @@ try {
   const registeredRedirect=key=>'http://127.0.0.1:'+manifest.network.secrets.find(s=>s.key===key).oauth.redirectPort+'/callback';
   assert.equal(await page.locator('#redirect').inputValue(),registeredRedirect('outlook_global'));
   assert(await page.locator('#connect').isDisabled());assert(await page.locator('#required-application').isVisible());
-  assert.match(await page.locator('#setup-note').textContent(),/先配置连接应用/);
+  assert.match(await page.locator('#required-application').textContent(),/先配置连接应用/);
   assert.doesNotMatch(await page.locator('#accounts').textContent(),/legacy@example|sdk:old/);
   assert.equal(await page.locator('#connection-mode,#sdk-options').count(),0);
   await page.locator('#client-id').fill('invalid');await page.locator('#save-client').click();await settled();assert.equal(calls.length,0);
@@ -160,10 +164,12 @@ try {
   const before=kvWrites();failDisconnect=true;
   await openActions('china','c1');await page.getByRole('menuitem',{name:'断开',exact:true}).click();await settled();
   assert.equal(await page.locator('.account').count(),4);assert.equal(kvWrites(),before);
+  await page.waitForFunction(()=>document.activeElement?.matches('.account[data-cloud="china"][data-account-id="c1"] .account-actions'));
   failDisconnect=false;await openActions('china','c1');await page.getByRole('menuitem',{name:'断开',exact:true}).click();await settled();
   assert.equal(calls.at(-1).path,'/oauth/outlook_china/accounts/c1');
   assert.deepEqual(entries.map(e=>e.accounts.map(a=>a.id)),[['g1','g2'],['c2']]);assert.equal(kvWrites(),before);
   assert.equal(await page.locator('.account').count(),3);
+  await page.waitForFunction(()=>document.activeElement?.id==='accounts-title');
   await selectCloud('china');await settled();nextAccount='c1';
   await page.locator('#connect').click();await settled();
   failDefault=true;await page.locator('#cloud').click();await page.locator('#default-cloud').click();await settled();

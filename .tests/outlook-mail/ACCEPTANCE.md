@@ -1,3 +1,35 @@
+# Outlook 2.1.7 code review and cleanup — 2026-10-19
+
+- Reproduced a P2 keyboard-focus bug: disconnect succeeded, the account row was
+  removed, and focus fell back to the document body. The former menu-close hook
+  ran before the asynchronous removal and could not restore focus. Restoration
+  now runs after the request and refresh: account menu on failure, list heading
+  after removal. Both paths have browser regressions.
+- Removed unused React default imports, unreferenced CSS hooks, a hidden-only
+  setup branch, and three obsolete translation keys in all four languages.
+  Account label/status derivation is shared by the row and menu. Removed comments
+  that restated the code; retained attribution and the Host auto-height rationale.
+- Removed the redundant service-menu close-focus override in favor of Radix's
+  behavior. Verified Escape returns focus and clicking the setup input outside
+  the menu retains input focus after the menu opens and settles.
+- Corrected both READMEs to describe the account card/menu and use a version-neutral
+  packaging example. No layout redesign, dependency change, permission change or
+  mail-tool change. Manifest differs from the base only in its version.
+
+Validation: 73 repository tests passed; headed desktop Chrome interaction checks
+and all 40 constrained light/dark/localized layouts passed. The focus regression
+failed against 2.1.6 before the fix. Bundle/license rebuild is reproducible; syntax
+and whitespace checks passed. The browser uses synthetic accounts and Host APIs.
+2.1.7 has not been installed in the actual Cindy client; the actual-device evidence
+below remains specifically for 2.1.6 and is not relabeled as a new-version test.
+
+Two pre-existing P1 review threads remain unresolved: Microsoft icon permission
+and the full core-functionality device-verification requirement. Icon/third-party
+resources require maintainer review; Draft status and the unchecked broad device
+checkbox are preserved. No claim of merge readiness or new-head review score.
+
+---
+
 # Outlook 2.1.6 acceptance — 2026-10-19
 
 Source commit: `52a4e6b0a0ec45f2caeea7b5785906f4a17022dd`.
