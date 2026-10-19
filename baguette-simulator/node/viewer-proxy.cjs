@@ -26,20 +26,14 @@ function stagedPage(url){
  if(!DEVICE_PAGE.test(url))return false;
  try{return new URL(url,'http://localhost').searchParams.get('cindyFull')!=='1';}catch{return false;}
 }
-// The panel is not an HTTP origin, so this frame holds no capability cookie; it
-// carries the capability in its own URL and hands it to the stream socket here.
-function authScript(token){
- return token?`<script src="/viewer-auth.js?cindyViewer=${encodeURIComponent(token)}"></script>`:'';
-}
-function injectStage(html,token){
- const inject=STAGE_STYLE+authScript(token);
+function injectStage(html){
  const at=html.search(/<\/head>/i);
- if(at>=0)return html.slice(0,at)+inject+html.slice(at);
+ if(at>=0)return html.slice(0,at)+STAGE_STYLE+html.slice(at);
  const open=html.search(/<head[^>]*>/i);
- if(open>=0){const end=html.indexOf('>',open)+1;return html.slice(0,end)+inject+html.slice(end);}
- return inject+html;
+ if(open>=0){const end=html.indexOf('>',open)+1;return html.slice(0,end)+STAGE_STYLE+html.slice(end);}
+ return STAGE_STYLE+html;
 }
-function proxyRequest(req,res,port,token){
+function proxyRequest(req,res,port){
  if(blockedRoute(req.url)){res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({error:'Not available in Cindy'}));}
  const forwarded={...req.headers};delete forwarded.cookie;delete forwarded['x-cindy-clipboard'];
  const staging=req.method==='GET'&&stagedPage(req.url);
@@ -53,11 +47,9 @@ function proxyRequest(req,res,port,token){
   const chunks=[];
   response.on('data',chunk=>chunks.push(chunk));
   response.on('end',()=>{
-   const body=Buffer.from(injectStage(Buffer.concat(chunks).toString('utf8'),token),'utf8');
+   const body=Buffer.from(injectStage(Buffer.concat(chunks).toString('utf8')),'utf8');
    delete headers['content-length'];delete headers['transfer-encoding'];
-   // Same-origin requests from this page must keep the capability in Referer;
-   // nothing is ever sent to another origin.
-   res.writeHead(200,{...headers,'referrer-policy':'same-origin','content-length':String(body.length)});res.end(body);
+   res.writeHead(200,{...headers,'content-length':String(body.length)});res.end(body);
   });
  });
  upstream.on('error',()=>{if(!res.headersSent){res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'});res.end('<p data-viewer-unavailable>画面连接中断，请点击上方“恢复画面”。</p>');}else res.destroy();});
@@ -82,4 +74,4 @@ function attachUpgrade(server,port,sockets,authorized=()=>false){
   request.on('response',()=>socket.destroy());request.on('error',()=>socket.destroy());socket.on('error',()=>request.destroy());socket.on('close',()=>request.destroy());request.end();
  });
 }
-module.exports={html,chineseHtml,blockedRoute,stagedPage,injectStage,STAGE_STYLE,authScript,proxyRequest,attachUpgrade};
+module.exports={html,chineseHtml,blockedRoute,stagedPage,injectStage,STAGE_STYLE,proxyRequest,attachUpgrade};

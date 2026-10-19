@@ -14,12 +14,8 @@ const $=id=>document.getElementById(id),channel=new BroadcastChannel('baguette-p
 function h(tag,attrs={},children=[]){const n=document.createElement(tag);for(const [k,v] of Object.entries(attrs)){if(v==null||v===false)continue;if(k==='class')n.className=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else if(k.startsWith('on'))n.addEventListener(k.slice(2),v);else n.setAttribute(k,v===true?'':v);}for(const c of [].concat(children))if(c)n.append(c);return n;}
 function message(value,error=false){$('message').textContent=value;$('message').classList.toggle('error',error);}
 async function rpc(action,params={}){
-  // /wake starts the plugin's logic page on demand; a disabled or fused plugin cannot answer.
-  let wake;try{wake=await fetch('/wake',{signal:AbortSignal.timeout(15000)});}catch{throw Error(T.timeout);}
+  const wake=await fetch('/wake',{signal:AbortSignal.timeout(15000)});
   if(!wake.ok)throw Error(T.timeout);
-  const state=(await wake.json().catch(()=>({}))).state;
-  if(state==='off')throw Error(T.disabled);
-  if(state==='fused'||state==='crashed')throw Error(T.failed);
   const id=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
     const send=()=>channel.postMessage({type:'request',id,action,...params});
@@ -60,7 +56,7 @@ function render(){
 }
 async function refresh(){
   try{const r=await rpc('current');if(!r.ok)throw Error(errorText(r));state=r;if($('message').textContent===T.checking)message('');show(r.viewer?.url||null);render();}
-  catch(e){if(!viewerUrl)show(null);message(e.message,true);}
+  catch(e){message(e.message,true);}
 }
 async function open(udid,needsBoot){
   if(busy)return;busy=udid;render();message(needsBoot?T.starting:T.opening);
