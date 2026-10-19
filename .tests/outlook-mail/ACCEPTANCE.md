@@ -1,3 +1,21 @@
+# Outlook 2.1.8 icon refresh — 2026-10-19
+
+Replaced the older Office Fabric Outlook mark with the October 2025 design
+currently served by the Microsoft 365 official website. Official page, SVG URL,
+announcement, conversion details and exact source/output hashes are recorded in
+`outlook-mail/PLUGIN-NOTICE.txt`. The SVG contains only vector paths, gradients
+and definitions; no scripts, external references or embedded raster content.
+Rendered as 512 x 512 RGBA PNG with the original viewBox and transparent margins.
+
+Validation: 73 repository tests passed. Headed desktop Chrome preview and visual
+inspection covered 24/32/48/64/128 px on both light and dark backgrounds; no
+clipping or opaque background. PNG is 116,684 bytes. No settings, runtime,
+dependencies or permission changes in this revision. This package has not yet
+been installed in Cindy; earlier device screenshots remain labeled 2.1.6.
+The two existing P1 threads and Draft status remain unchanged.
+
+---
+
 # Outlook 2.1.7 code review and cleanup — 2026-10-19
 
 - Reproduced a P2 keyboard-focus bug: disconnect succeeded, the account row was
