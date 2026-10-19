@@ -61,7 +61,9 @@
   // ---- stage / iframe ----
   function load() {
     state.generation = state.status?.generation ?? state.generation;
-    screen.src = `/simulators/${encodeURIComponent(udid)}?${state.fullToolbar ? 'handheld=0&cindyFull=1' : 'handheld=1'}${location.hash}`;
+    // The capability travels in the frame URL: Cindy's panel is not an HTTP
+    // origin, so this frame can hold no cookie.
+    screen.src = `/simulators/${encodeURIComponent(udid)}?${state.fullToolbar ? 'handheld=0&cindyFull=1' : 'handheld=1'}${token ? `&cindyViewer=${encodeURIComponent(token)}` : ''}${location.hash}`;
   }
   function blank() { state.generation = null; screen.src = 'about:blank'; }
   function applyZoom() {
