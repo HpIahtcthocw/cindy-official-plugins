@@ -314,17 +314,32 @@ async function readMailMessageLink(args) {
     return decoder.decode(Uint8Array.from(atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); }));
   }
   var bodies = { 'text/plain': [], 'text/html': [] }, attachments = [];
-  function walk(part) {
+  var bodyBytes = 0;
+  async function walk(part) {
     var body = part.body || {}, cid = header(part, 'content-id').replace(/^<|>$/g, '');
     if (part.filename || /^attachment\b/i.test(header(part, 'content-disposition')) || (cid && /^image\//.test(part.mimeType))) {
       attachments.push({ key: part.partId || 'root', filename: part.filename || 'image', mimeType: part.mimeType,
         bytes: body.size, contentId: cid, attachmentId: body.attachmentId, inlineData: body.data });
       return; // Attached .eml messages must never become the outer email body.
     }
-    if (bodies[part.mimeType] && typeof body.data === 'string') bodies[part.mimeType].push(decode(part));
-    (part.parts || []).forEach(walk);
+    if (bodies[part.mimeType]) {
+      if (body.attachmentId && !body.data) {
+        if (!Number.isSafeInteger(body.size) || body.size < 0 || bodyBytes + body.size > 25 * 1024 * 1024) throw new Error('无法完整读取邮件正文');
+        var loaded = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/attachments/' + encodeURIComponent(body.attachmentId),
+          authAccount: selected.accountId, timeoutMs: 20000 });
+        if (!loaded.ok || loaded.status !== 200 || loaded.truncated) throw new Error('无法完整读取邮件正文');
+        var content = JSON.parse(loaded.body);
+        if (typeof content.data !== 'string' || !/^[A-Za-z0-9_-]*={0,2}$/.test(content.data) || content.size !== body.size
+          || atob(content.data.replace(/-/g, '+').replace(/_/g, '/')).length !== body.size) throw new Error('邮件正文大小不一致');
+        bodyBytes += body.size;
+        body.data = content.data;
+      }
+      if (body.size > 0 && !body.data) throw new Error('无法完整读取邮件正文');
+      if (typeof body.data === 'string') bodies[part.mimeType].push(decode(part));
+    }
+    for (var child of part.parts || []) await walk(child);
   }
-  walk(message.payload);
+  await walk(message.payload);
   var preview = await mailImagePreviews({ messageId: message.id, attachments: attachments }, selected.accountId);
   for (var file of preview.attachments) {
     if (file.inlineData && /^image\/(png|jpeg|gif|webp)$/.test(file.mimeType) && file.inlineData.length <= 22000000) {

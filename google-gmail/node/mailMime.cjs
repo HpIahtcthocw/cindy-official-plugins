@@ -43,6 +43,26 @@ function collectAttachments(payload) {
   walk(payload); return result;
 }
 
+// Gmail may store a text body behind an attachmentId. Resolve it before
+// fingerprinting or editing; an incomplete body must never look like empty text.
+async function loadMessageBodies(message, token) {
+  let total = 0;
+  async function walk(part) {
+    if (part.filename || /^(attachment|inline)\b/i.test(header(part, 'content-disposition')) || header(part, 'content-id')) return;
+    const body = part.body || {};
+    if (['text/plain', 'text/html'].includes(part.mimeType) && body.attachmentId && !body.data) {
+      if (!Number.isSafeInteger(body.size) || body.size < 0 || total + body.size > MAX_BYTES) throw new Error('无法完整读取邮件正文');
+      const loaded = await gmailJson(token, 'messages/' + encodeURIComponent(message.id) + '/attachments/' + encodeURIComponent(body.attachmentId));
+      if (typeof loaded.data !== 'string' || !/^[A-Za-z0-9_-]*={0,2}$/.test(loaded.data)
+        || loaded.size !== body.size || Buffer.from(loaded.data, 'base64url').length !== body.size) throw new Error('邮件正文大小不一致');
+      total += body.size;
+      body.data = loaded.data;
+    }
+    for (const child of part.parts || []) await walk(child);
+  }
+  if (message?.payload) await walk(message.payload);
+}
+
 function buildMime({ fields, headers, files }, helpers) {
   const { addressHeader, encodeWords, encodeHeader, wrap } = helpers;
   const boundary = 'cindy-' + crypto.randomUUID();
@@ -77,6 +97,7 @@ async function updateRichDraft(p, token, before, helpers, execution) {
   const wanted = JSON.parse(fields.attachmentItems);
   if (!Array.isArray(wanted) || wanted.length > 100 || wanted.some(a => !a || typeof a.key !== 'string') || new Set(wanted.map(a => a.key)).size !== wanted.length) throw new Error('附件清单无效，请重新读取草稿');
   const current = await gmailJson(token, 'drafts/' + encodeURIComponent(p.draftId) + '?format=full');
+  await loadMessageBodies(current.message, token);
   const verified = helpers.draftReadBack({ draft: current }, p.draftId);
   if (verified.fingerprint !== before.fingerprint) return { ok: false, execution: 'not_executed', stale: verified, message: '草稿已在其他地方修改，请重新核对后再发送。' };
   const parts = collectAttachments(current.message.payload);
@@ -149,4 +170,4 @@ async function verifyDraftAttachmentBytes(token, saved, expected) {
   const facts = files => JSON.stringify(files.map(f => [f.filename, f.mimeType, f.bytes, (f.contentId || '').replace(/^<|>$/g, ''), f.sha256]).sort());
   return facts(actual) === facts(expected);
 }
-module.exports = { updateRichDraft, buildMime, keyFor, gmailJson, decodeMimeBody, verifyDraftAttachmentBytes };
+module.exports = { updateRichDraft, buildMime, keyFor, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes };

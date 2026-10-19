@@ -184,3 +184,43 @@ test('an explicit conversation opening marks the resolved member, never the thre
   await f.read('https://mail.google.com/mail/#all/12345678', { markRead: true });
   assert.equal(writes.length, 1); assert.match(writes[0].url, /messages\/abcdef01\/modify$/);
 });
+
+// Gmail's attachment endpoint also holds text MIME parts. Load both alternatives
+// with their own charsets before returning a message or marking it read (unit).
+test('external text bodies are decoded before mark-read without becoming attachments', async () => {
+  const f = fixture(), encoded = [Buffer.from([0x63, 0x61, 0x66, 0xe9]), Buffer.from('<p>正文</p>')];
+  f.msg.labelIds = ['UNREAD'];
+  f.msg.payload.parts.slice(0, 2).forEach((part, index) => {
+    part.body = { data: '', attachmentId: 'body-' + index, size: encoded[index].length };
+    part.headers = [{ name: 'Content-Type', value: part.mimeType + '; charset=' + (index ? 'UTF-8' : 'ISO-8859-1') }];
+  });
+  const fetch = f.ctx.cindy.fetch;
+  f.ctx.cindy.fetch = async r => {
+    if (!r.url.includes('/attachments/')) return fetch(r);
+    f.calls.push(r);
+    assert.equal(r.authAccount, 'a');
+    const bytes = encoded[Number(r.url.at(-1))];
+    return { ok: true, status: 200, body: JSON.stringify({ data: bytes.toString('base64url'), size: bytes.length }) };
+  };
+  const mail = await f.read('https://mail.google.com/mail/#all/12345678', { markRead: true });
+  assert.equal(mail.bodyText, 'café'); assert.equal(mail.bodyHtml, '<p>正文</p>');
+  assert.equal(mail.attachments.length, 2);
+  assert.equal(f.calls.filter(r => r.url.includes('/attachments/')).length, 2);
+  assert.equal(f.calls.at(-1).method, 'POST');
+});
+test('external body failures never return partial mail or mark it read', async () => {
+  for (const mode of ['http', 'truncated', 'wrong-size', 'oversized']) {
+    const f = fixture(); f.msg.labelIds = ['UNREAD'];
+    f.msg.payload.parts[1].body = { attachmentId: 'html-body', size: mode === 'oversized' ? 26 * 1024 * 1024 : 3 };
+    const fetch = f.ctx.cindy.fetch;
+    f.ctx.cindy.fetch = async r => {
+      if (!r.url.includes('/attachments/')) return fetch(r);
+      f.calls.push(r);
+      return { ok: mode !== 'http', status: mode === 'http' ? 403 : 200, truncated: mode === 'truncated',
+        body: JSON.stringify({ data: 'AQI', size: 3 }) };
+    };
+    await assert.rejects(f.read('https://mail.google.com/mail/#all/12345678', { markRead: true }));
+    assert.equal(f.calls.some(r => r.method === 'POST'), false);
+    assert.equal(f.calls.filter(r => r.url.includes('/attachments/')).length, mode === 'oversized' ? 0 : 1);
+  }
+});

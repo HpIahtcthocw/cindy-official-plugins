@@ -7,7 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
-const { updateRichDraft, keyFor, gmailJson, decodeMimeBody, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
+const { updateRichDraft, keyFor, gmailJson, decodeMimeBody, loadMessageBodies, verifyDraftAttachmentBytes } = require('./mailMime.cjs');
 const SERVICE = 'gmail';
 const root = path.resolve(__dirname, '..');
 const binaries = require('../vendor/gog/binaries.json');
@@ -179,8 +179,10 @@ function draftReadBack(data, draftId) {
       attachments.push({ key: keyFor(part), filename: part.filename || '', mimeType: part.mimeType, bytes: body.size,
         attachmentId: body.attachmentId || null, disposition, contentId,
         ...(typeof body.data === 'string' ? { sha256: digest(Buffer.from(body.data, 'base64url')) } : {}) });
-    } else if (bodies[part.mimeType] && typeof body.data === 'string') {
-      bodies[part.mimeType].push(decodeMimeBody(part));
+      return;
+    } else if (bodies[part.mimeType]) {
+      if ((body.attachmentId || body.size > 0) && (!body.data && body.size !== 0)) throw new Error('无法完整读取草稿正文');
+      if (typeof body.data === 'string') bodies[part.mimeType].push(decodeMimeBody(part));
     }
     for (const child of part.parts || []) walk(child);
   }
@@ -194,6 +196,11 @@ function draftReadBack(data, draftId) {
     attachments: attachments.map(({ attachmentId, ...content }) => content) })));
   result.editor = draftEditor(result);
   return result;
+}
+
+async function readDraft(data, draftId, token) {
+  await loadMessageBodies(data?.draft?.message, token);
+  return draftReadBack(data, draftId);
 }
 
 function draftEditor(draft) {
@@ -259,9 +266,10 @@ async function composeDraft(message, execution) {
     // metadata on update. Never damage an inline image while editing a reply.
     if (!rich && before.attachments.some(item => item.contentId || /^inline\b/i.test(item.disposition)))
       return { ...failure('草稿包含内嵌图片，当前编辑器无法完整保留图片引用。请在 Gmail 修改后重新读取；原草稿未更改。'), readBack: before };
-    const bodyHtml = rich && (fields.bodyHtml !== original.bodyHtml || fields.body === original.body) ? fields.bodyHtml
+    const bodyHtml = rich && (before.editor.format === 'html' || fields.bodyHtml !== original.bodyHtml || fields.body === original.body) ? fields.bodyHtml
       : fields.body === original.body ? before.editor.bodyHtml : mailBodyHtml(fields.body);
-    const quoteHtml = fields.quote === original.quote ? (rich ? fields.quoteHtml : before.editor.quoteHtml) : fields.quote
+    const quoteHtml = rich && (before.editor.format === 'html' || fields.quoteHtml !== original.quoteHtml || fields.quote === original.quote) ? fields.quoteHtml
+      : fields.quote === original.quote ? before.editor.quoteHtml : fields.quote
       ? '<br><br><div class="gmail_quote"><blockquote style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">' + mailBodyHtml(fields.quote) + '</blockquote></div>' : '';
     const from = /<([^<>]+)>$/.exec(before.headers.from);
     let richReceipt;
@@ -330,7 +338,7 @@ async function readSavedDraft(result, command, token, cwd) {
   try {
     if (typeof draftId === 'string' && draftId && !draftId.startsWith('-') && !draftId.includes('\0')) {
       const fetched = await execute([SERVICE, 'drafts', 'get', draftId, '--readonly'], token, cwd, MAX_OUTPUT, undefined, 10000);
-      if (fetched.ok) readBack = draftReadBack(fetched.data, draftId);
+      if (fetched.ok) readBack = await readDraft(fetched.data, draftId, token);
     }
   } catch (_) { /* The write already succeeded; retain its receipt. */ }
   return { ...result, data: { ...data, readBack } };
@@ -459,7 +467,7 @@ async function handle(message, execution) {
   if (command.join(' ') === 'drafts update' && params.readOnly === false && values[0]) {
     const current = await execute([SERVICE, 'drafts', 'get', values[0], '--readonly'], token, undefined, MAX_OUTPUT, undefined, 10000);
     if (!current.ok) return failure('无法核对草稿附件，草稿未修改。请重新读取后重试。');
-    const checked = draftReadBack(current.data, values[0]);
+    const checked = await readDraft(current.data, values[0], token);
     if (checked.attachments.some(a => a.contentId || /^inline\b/i.test(a.disposition))) {
       // AI uses the same verified MIME writer as the card. The old CLI updater
       // loses Content-ID; never send this draft through it.
@@ -578,7 +586,7 @@ async function handle(message, execution) {
     if (temporaryDirectory) result = cleanup(temporaryDirectory, result);
   }
   if (result.ok && command.join(' ') === 'drafts get') {
-    return { ...result, data: { ...result.data, readBack: draftReadBack(result.data, values[0]) } };
+    return { ...result, data: { ...result.data, readBack: await readDraft(result.data, values[0], token) } };
   }
   return readSavedDraft(result, command, token, cwd);
 }
