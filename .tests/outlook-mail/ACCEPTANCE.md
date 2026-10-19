@@ -1,3 +1,58 @@
+# Outlook 2.1.6 acceptance — 2026-10-19
+
+Source commit: `52a4e6b0a0ec45f2caeea7b5785906f4a17022dd`.
+Release-format package: `/tmp/outlook-mail-2.1.6.cindy`, 181568 bytes, 30 entries.
+SHA-256: `c37b27e01e63d1b13be38165c0b068bab4596cfaafd3464ceed47440c2117330`.
+Archive settings HTML/CSS/JS and manifest were compared byte-for-byte with source.
+
+## Actual Cindy Beta
+
+Cindy 0.1.111 Beta, macOS. Forge first updated the other installed Outlook copy.
+The existing-account copy still showed 2.1.5, so its own **Update from .cindy file**
+action was used to select the exact release archive above. That detail page now
+shows 2.1.6 with the original connected mailbox and the new account card.
+No uninstall, catalog replacement, credential edit or mailbox mutation occurred.
+
+Verified in the actual dark desktop UI:
+
+- Content-width service selector; global and China switching.
+- China setup heading and explanation on one line at the actual wide card size;
+  required Client ID and callback fields follow the service selection.
+- Circular user avatar, compact account identity, right-side menu, divider and
+  bottom Connect another account row. The Host's orphan leading label separator
+  is removed only from display, never from account identity.
+- Account menu displays service, connected status and service-default marker.
+  Existing account remains visible while viewing China configuration.
+- Returned to the global service. Read-only `outlook_accounts` reports the original
+  global account connected, with China still unconfigured.
+
+Screenshots (mailbox identity redacted, unrelated UI cropped):
+[default](screenshots/outlook-cindy-beta-default.png),
+[service menu](screenshots/outlook-cindy-beta-menu.png),
+[account menu](screenshots/outlook-cindy-beta-accountmenu.png),
+[China setup](screenshots/outlook-cindy-beta-china.png).
+
+## Browser and repository checks
+
+Headed local desktop Chrome: all prior interaction checks and 40 Host-constrained
+layouts passed (280/320/360/460/720 px × four languages × light/dark). New checks
+cover the compact selector, inline wide-card setup explanation, account-card
+footer, hidden healthy-state details, metadata in the account menu, and display
+cleanup of the orphan separator. Long addresses and authorization warnings remain
+visible and wrap without horizontal clipping.
+
+Repository contract/localization/provisioning/publish-workflow and Outlook tests:
+73 passed, 0 failed. Build, bundle syntax, diff whitespace and packaging passed.
+No new dependencies, permissions or credential paths in this refinement.
+
+Limitations: light theme and narrow layouts were validated in desktop Chrome,
+not in the actual Cindy window. New OAuth sign-in, China enterprise authorization
+and destructive account operations were not performed against real accounts.
+The PR stays Draft; the broader full-core-functionality device checkbox remains
+unchecked. The exact 2.1.6 release archive itself **was** installed this time.
+
+---
+
 # Outlook 2.1.5 acceptance — 2026-10-19
 
 Source commit: `964912570f3d9797d6f0fb3c26a1dcfc72d83fef`.
@@ -27,7 +82,7 @@ Verified through actual desktop UI:
 - Actual screenshots were cropped to the plugin detail area and the mailbox
   identity was redacted before being committed.
 
-Actual screenshots:
+Earlier 2.1.5 screenshots (retained at source/evidence commit `4f53ebe`):
 [default](screenshots/outlook-cindy-beta-default.png),
 [service menu](screenshots/outlook-cindy-beta-menu.png).
 
