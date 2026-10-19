@@ -87,7 +87,7 @@ function fixture(t, overrides = {}) {
   let kv = {};
   const locks = new Map(), continuations = [], timers = new Map();
   let timerId = 0;
-  const sandbox = createContext({ crypto: webcrypto, Uint8Array, btoa, Set, TextEncoder,
+  const sandbox = createContext({ crypto: webcrypto, Uint8Array, atob, btoa, Set, TextEncoder,
     setTimeout: (fn, delay) => { const id = ++timerId; if (delay === 10000) queueMicrotask(fn); else timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
     navigator: { locks: { request(name, callback) {
       const pending = (locks.get(name) || Promise.resolve()).then(callback);
@@ -223,6 +223,42 @@ test('ordinary image attachments receive managed previews and MIME metadata in t
   assert.equal(attachment.mimeType, 'image/jpeg');
   assert.equal(attachment.previewUrl, url);
   assert.equal(card.fields.find(f => f.name === 'bodyHtml').kind, 'mail-html');
+});
+
+test('inline Gmail image bytes reach new and reread draft cards without an attachment fetch', async t => {
+  const inlinePayload = copy(payload);
+  const file = inlinePayload.parts[1];
+  file.body = { data: image.toString('base64url'), size: image.length };
+  file.headers = [{ name: 'Content-ID', value: '<photo@example.test>' }];
+  for (const operation of ['get', 'create', 'reply']) {
+    const f = fixture(t, { rich: true, execute: async argv => argv[2] === 'get'
+      ? { ok: true, data: { draft: { id: 'draft-test', message: { id: 'message-test', payload: copy(inlinePayload) } } } }
+      : { ok: true, execution: 'executed', data: { draftId: 'draft-test' } } });
+    const result = await f.run({ command: ['drafts', operation], arguments: operation === 'create' ? [] : ['draft-test'], options: { body: 'Thank you.' } });
+    assert.equal(result.ok, true, operation);
+    const readBack = result.result.readBack;
+    assert.equal(readBack.attachments[0].previewUrl, url, operation);
+    assert.equal(readBack.attachments[0].inlineData, undefined);
+    assert.deepEqual(readBack.images, [{ cid: 'photo@example.test', url }]);
+    const deposited = f.replies.filter(r => r.kind === 'deposit_media');
+    assert.equal(deposited.length, 1);
+    assert.deepEqual(Buffer.from(deposited[0].data, 'base64'), image);
+    const card = f.replies.find(r => r.type === 'mail-draft-update').draft;
+    assert.equal(JSON.parse(card.fields.find(f => f.name === 'attachmentItems').value)[0].previewUrl, url);
+    // Preview transport metadata must not become a draft revision or model output.
+    const workerRead = f.ctx.draftReadBack({ draft: { id: 'draft-test', message: { id: 'message-test', payload: copy(inlinePayload) } } }, 'draft-test');
+    assert.equal(workerRead.attachments[0].inlineData, image.toString('base64url'));
+    const padded = copy(inlinePayload);
+    padded.parts[1].body.data = image.toString('base64');
+    const reread = f.ctx.draftReadBack({ draft: { id: 'draft-test', message: { id: 'message-test', payload: padded } } }, 'draft-test');
+    assert.notEqual(reread.attachments[0].inlineData, workerRead.attachments[0].inlineData);
+    assert.equal(reread.fingerprint, workerRead.fingerprint);
+    const readonly = await f.run({ command: ['drafts', 'get'], arguments: ['draft-test'], options: {},
+      session_context: { workdir: f.workdir, workdir_is_local: true, workdir_is_read_only: true } });
+    assert.equal(readonly.ok, true);
+    assert.equal(readonly.result.readBack.attachments[0].inlineData, undefined);
+    assert.equal(f.replies.filter(r => r.kind === 'deposit_media').length, 1);
+  }
 });
 
 test('inline draft creation builds one raw RFC822 message and keeps the thread id', async t => {

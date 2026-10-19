@@ -193,27 +193,40 @@ async function selectGoogleAccount(accountId) {
 // Gmail only translates account/CLI arguments and transport results. The shared
 // flow owns card edits, autosave, sending and continuation.
 async function mailImagePreviews(readBack, accountId, previous) {
-  if (!readBack || typeof cindy.fetch !== 'function') return readBack;
+  if (!readBack) return readBack;
+  var sources = readBack.attachments || [];
+  // Inline bytes are worker-to-preview transport, never card/model metadata.
+  var attachments = sources.map(function ({ inlineData, ...metadata }) { return metadata; });
   var images = [];
-  var previewStarted = Date.now();
-  for (var attachment of readBack.attachments || []) {
+  var previewStarted = Date.now(), previewBytes = 0, maxImageBytes = 16 * 1024 * 1024;
+  for (var i = 0; i < attachments.length; i++) {
     if (Date.now() - previewStarted > 15000) break;
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(attachment.mimeType) || !attachment.attachmentId || attachment.bytes > 16 * 1024 * 1024) continue;
+    var attachment = attachments[i];
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(attachment.mimeType) || !Number.isSafeInteger(attachment.bytes)
+      || attachment.bytes < 0 || attachment.bytes > maxImageBytes || previewBytes + attachment.bytes > 25 * 1024 * 1024) continue;
     var cid = (attachment.contentId || '').replace(/^<|>$/g, '');
     // Gmail changes the message/part IDs on a draft update. Never reuse a CID
     // alone: the AI may have replaced its bytes while keeping its name.
     var existing = previous?.messageId === readBack.messageId && previous?.attachments?.find(function (a) { return a.key === attachment.key; });
     if (existing?.previewUrl) { attachment.previewUrl = existing.previewUrl; if (cid) images.push({ cid, url: existing.previewUrl }); continue; }
     try {
-      var response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(readBack.messageId) + '/attachments/' + encodeURIComponent(attachment.attachmentId), authAccount: accountId, timeoutMs: 5000 });
-      if (!response.ok || response.status !== 200 || response.truncated) continue;
-      var data = JSON.parse(response.body).data;
-      if (typeof data !== 'string') continue;
-      var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: data.replace(/-/g, '+').replace(/_/g, '/'), label: attachment.filename });
+      var data = sources[i].inlineData;
+      if (typeof data !== 'string') {
+        if (!attachment.attachmentId || typeof cindy.fetch !== 'function') continue;
+        var response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(readBack.messageId) + '/attachments/' + encodeURIComponent(attachment.attachmentId), authAccount: accountId, timeoutMs: 5000 });
+        if (!response.ok || response.status !== 200 || response.truncated) continue;
+        data = JSON.parse(response.body).data;
+      }
+      if (typeof data !== 'string' || data.length > 4 * Math.ceil(maxImageBytes / 3)
+        || !/^[A-Za-z0-9_-]*={0,2}$/.test(data)) continue;
+      data = data.replace(/-/g, '+').replace(/_/g, '/');
+      if (atob(data).length !== attachment.bytes) continue;
+      previewBytes += attachment.bytes;
+      var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: data, label: attachment.filename });
       if (deposited.ok) { attachment.previewUrl = deposited.url; if (cid) images.push({ cid: cid, url: deposited.url }); }
     } catch (_) { /* A preview failure cannot invalidate a verified saved draft. */ }
   }
-  return { ...readBack, images: images };
+  return { ...readBack, attachments: attachments, images: images };
 }
 var gmailCompose = typeof cindyMail !== 'undefined' && cindyMail.version === 1 ? cindyMail.register({
   providerName: 'Gmail', draftStorage: 'server', storageLock: 'google-account-metadata', richText: true,
@@ -345,14 +358,6 @@ async function readMailMessageLink(args) {
   }
   await walk(message.payload);
   var preview = await mailImagePreviews({ messageId: message.id, attachments: attachments }, selected.accountId);
-  for (var file of preview.attachments) {
-    if (file.inlineData && /^image\/(png|jpeg|gif|webp)$/.test(file.mimeType) && file.inlineData.length <= 22000000) {
-      try {
-        var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: file.inlineData.replace(/-/g, '+').replace(/_/g, '/'), label: file.filename });
-        if (deposited.ok) file.previewUrl = deposited.url;
-      } catch (_) { /* A failed image preview must not hide the readable message. */ }
-    }
-  }
   var markReadResult;
   if (args.markRead === true && (message.labelIds || []).includes('UNREAD') && !(message.labelIds || []).includes('DRAFT')) {
     try {
@@ -469,6 +474,9 @@ async function mailToolDraft(args, sourceCallId) {
         result.data.readBack = await mailImagePreviews(result.data.readBack, selected.accountId);
         try { result.data.draftCard = await gmailCompose.present(message, selected, result.data.readBack); }
         catch (_) { result.data.draftCard = false; } // Do not change the known Gmail receipt.
+      }
+      if (result.ok && result.data?.readBack) {
+        result.data.readBack.attachments = result.data.readBack.attachments.map(function ({ inlineData, ...metadata }) { return metadata; });
       }
       await cindy.send({ type: 'tool-result', callId: message.callId, ok: !!result.ok,
         ...(result.ok ? { result: result.data } : { message: '[' + result.execution + '] ' + result.message }) });

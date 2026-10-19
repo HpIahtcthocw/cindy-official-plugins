@@ -176,9 +176,15 @@ function draftReadBack(data, draftId) {
     const disposition = header(part, 'content-disposition');
     const contentId = header(part, 'content-id');
     if (isAttachmentPart(part)) {
+      const bytes = typeof body.data === 'string' ? Buffer.from(body.data, 'base64url') : null;
       attachments.push({ key: keyFor(part), filename: part.filename || '', mimeType: part.mimeType, bytes: body.size,
         attachmentId: body.attachmentId || null, disposition, contentId,
-        ...(typeof body.data === 'string' ? { sha256: digest(Buffer.from(body.data, 'base64url')) } : {}) });
+        ...(bytes ? { sha256: digest(bytes) } : {}),
+        // Small Gmail parts have no attachmentId. Carry bounded image bytes to
+        // the same media preview path used for downloaded attachments.
+        ...(bytes && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) && bytes.length === body.size
+          && bytes.length <= 16 * 1024 * 1024 && body.data.length <= 4 * Math.ceil(16 * 1024 * 1024 / 3)
+          ? { inlineData: body.data } : {}) });
       return;
     } else if (bodies[part.mimeType]) {
       if ((body.attachmentId || body.size > 0) && (!body.data && body.size !== 0)) throw new Error('无法完整读取草稿正文');
@@ -190,10 +196,10 @@ function draftReadBack(data, draftId) {
   const result = { status: 'read_back', draftId, messageId: message.id, threadId: message.threadId || null,
     headers, bodyText: bodies['text/plain'].join('\n'), bodyHtml: bodies['text/html'].join('\n'), attachments };
   // Gmail can rotate attachment download IDs on every read of an unchanged
-  // message. Keep them for fetching bytes, but exclude them from the revision.
+  // message. Keep fetch IDs and inline preview bytes out of the revision.
   // messageId still changes when Gmail replaces the draft's underlying message.
   result.fingerprint = digest(Buffer.from(JSON.stringify({ ...result,
-    attachments: attachments.map(({ attachmentId, ...content }) => content) })));
+    attachments: attachments.map(({ attachmentId, inlineData, ...content }) => content) })));
   result.editor = draftEditor(result);
   return result;
 }

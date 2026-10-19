@@ -85,6 +85,32 @@ test('one failed inline image deposit preserves body, conversation and other pre
   assert.match(mail.attachments[2].previewUrl, /^cindy-media:/);
   assert.equal(deposits, 2);
 });
+test('reader prefers inline image bytes over a download id and deposits them only once', async () => {
+  const f = fixture(), deposits = [];
+  f.msg.payload.parts.at(-1).body.attachmentId = 'also-downloadable';
+  f.ctx.cindy.send = async r => { deposits.push(r); return { ok: true, url: 'cindy-media://blobs/' + 'b'.repeat(64) + '.png' }; };
+  const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+  assert.equal(deposits.length, 1);
+  assert.deepEqual(Buffer.from(deposits[0].data, 'base64'), Buffer.from([1, 2, 3]));
+  assert.match(mail.attachments[1].previewUrl, /^cindy-media:/);
+  assert.equal(f.calls.length, 1);
+});
+test('inline and downloaded preview bytes share size and encoding checks without hiding the body', async () => {
+  for (const storage of ['inline', 'download']) for (const bad of ['size', 'encoding', 'limit']) {
+    const f = fixture(), file = f.msg.payload.parts.at(-1), deposits = [];
+    const data = bad === 'encoding' ? '@@@@' : 'AQID';
+    file.body = { size: bad === 'size' ? 4 : bad === 'limit' ? 16 * 1024 * 1024 + 1 : 3,
+      ...(storage === 'inline' ? { data } : { attachmentId: 'image-part' }) };
+    f.ctx.cindy.fetch = async r => { f.calls.push(r); return { ok: true, status: 200,
+      body: JSON.stringify(r.url.includes('/attachments/') ? { data } : f.msg) }; };
+    f.ctx.cindy.send = async r => { deposits.push(r); return { ok: true, url: 'cindy-media://blobs/' + 'b'.repeat(64) + '.png' }; };
+    const mail = await f.read('https://mail.google.com/mail/#all/12345678');
+    assert.equal(mail.bodyText, '中文');
+    assert.equal(mail.attachments[1].previewUrl, undefined, storage + ':' + bad);
+    assert.equal(mail.attachments[1].inlineData, undefined);
+    assert.equal(deposits.length, 0, storage + ':' + bad);
+  }
+});
 test('ambiguous accounts and foreign URLs never trigger mailbox requests', async () => {
   const f = fixture([{ id: 'a', email: 'a@example.com', status: 'connected' }, { id: 'b', email: 'b@example.com', status: 'connected' }]);
   for (const url of ['https://evil.com/mail/#all/12345678', 'https://mail.google.com.evil.com/mail/#all/12345678', 'https://mail.google.com/mail/#all/12345678', 'https://mail.google.com/mail/?authuser=missing@example.com#all/12345678'])
