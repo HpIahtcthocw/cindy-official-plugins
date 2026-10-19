@@ -51,8 +51,16 @@
   }
 
   async function api(action, extra = {}) {
-    const r = await fetch('/control-api', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cindy-Clipboard': token },
-      body: JSON.stringify({ ...extra, action, udid, locale: lang }), signal: AbortSignal.timeout(['shutdown', 'create', 'boot'].includes(action) ? 120000 : 20000) });
+    let r;
+    try {
+      r = await fetch('/control-api', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cindy-Clipboard': token },
+        body: JSON.stringify({ ...extra, action, udid, locale: lang }), signal: AbortSignal.timeout(['shutdown', 'create', 'boot'].includes(action) ? 120000 : 20000) });
+    } catch (error) {
+      // Nothing answers on this address: the plugin's service is gone.
+      throw Object.assign(Error('SERVICE_STOPPED'), { code: error?.name === 'TimeoutError' ? 'TIMEOUT' : 'SERVICE_STOPPED' });
+    }
+    // A service answers but no longer accepts this page's capability.
+    if (r.status === 403) throw Object.assign(Error('VIEWER_EXPIRED'), { code: 'VIEWER_EXPIRED' });
     const p = await r.json();
     if (!r.ok || p.ok === false) throw Object.assign(Error(p.errorCode || 'CONTROL_FAILED'), { code: p.errorCode });
     return p;
@@ -123,6 +131,8 @@
       actions && h('div', { class: 'actions' }, actions)]);
     const busy = (label) => h('div', { class: 'card plain' }, [h('div', { class: 'spinner' }), h('p', { text: label })]);
     if (o.kind === 'offline') overlay.append(card(ICON.unplug, t.offlineTitle, t.offlineBody, [h('button', { class: 'btn primary', text: t.recover, onclick: recover })]));
+    else if (o.kind === 'serviceOff') overlay.append(card(ICON.unplug, t.serviceOffTitle, t.serviceOffBody, [h('button', { class: 'btn', text: t.retry, onclick: check })]));
+    else if (o.kind === 'expired') overlay.append(card(ICON.unplug, t.expiredTitle, t.expiredBody));
     else if (o.kind === 'off') overlay.append(card(ICON.off, t.offTitle(name), t.offBody, [h('button', { class: 'btn cta', text: t.boot, onclick: boot })]));
     else if (o.kind === 'paused') overlay.append(card(ICON.pause, t.pausedTitle, t.pausedBody));
     else if (o.kind === 'switching') {
@@ -162,7 +172,11 @@
         else decorate();
       }
       if (s.device?.state === 'Shutdown' && screen.src !== 'about:blank') blank();
-    } catch { state.lost = true; }
+    } catch (error) {
+      state.lost = error.code === 'SERVICE_STOPPED' ? 'stopped' : error.code === 'VIEWER_EXPIRED' ? 'expired' : true;
+      // The screen frame died with the service; reload it once the service is back.
+      if (state.lost !== true && screen.src !== 'about:blank') blank();
+    }
     finally { checking = false; render(); }
   }
   function trackSwitch(s) {

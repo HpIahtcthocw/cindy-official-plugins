@@ -10,6 +10,9 @@
       zoom: '画面大小', zoomFit: '适应窗口', fullToolbar: '显示完整工具栏', releaseKeys: '解除卡键', recover: '恢复画面', shutdown: '关闭设备',
       devices: '设备', addDevice: '添加设备', rename: '重命名', switchTo: '切换到此设备', current: '当前',
       offlineTitle: '画面已断开', offlineBody: '设备可能仍在运行。恢复画面不会影响 App。',
+      serviceOff: '服务已停止', expired: '画面已过期', retry: '立即重试',
+      serviceOffTitle: '模拟器服务已停止', serviceOffBody: '在对话里让 Cindy 打开模拟器，或到「插件 → iOS 模拟器」点「打开画面」。服务回来后这里会自动接上。',
+      expiredTitle: '这个画面已过期', expiredBody: '插件换了新的画面地址。在对话里让 Cindy 打开模拟器，或到「插件 → iOS 模拟器」点「打开画面」。',
       offTitle: (name) => `${name} 已关闭`, offBody: 'App 已退出，数据保留。', boot: '启动设备',
       pausedTitle: '模拟器运行已关闭', pausedBody: '在「插件 → iOS 模拟器」里打开开关后即可继续。',
       idleTitle: (left) => `${left} 后自动关闭`, idleBody: '一段时间没有操作。继续使用会重新计时。', keepUsing: '继续使用',
@@ -28,6 +31,9 @@
       zoom: 'View size', zoomFit: 'Fit window', fullToolbar: 'Show full toolbar', releaseKeys: 'Release stuck keys', recover: 'Recover view', shutdown: 'Shut down device',
       devices: 'Devices', addDevice: 'Add device', rename: 'Rename', switchTo: 'Switch to this device', current: 'Current',
       offlineTitle: 'View disconnected', offlineBody: 'The device may still be running. Recovering the view does not affect the app.',
+      serviceOff: 'Service stopped', expired: 'View expired', retry: 'Retry now',
+      serviceOffTitle: 'The simulator service stopped', serviceOffBody: 'Ask Cindy in the chat to open the simulator, or choose Open in Plugins → iOS Simulator. This view reconnects on its own when the service is back.',
+      expiredTitle: 'This view has expired', expiredBody: 'The plugin now uses a new view address. Ask Cindy in the chat to open the simulator, or choose Open in Plugins → iOS Simulator.',
       offTitle: (name) => `${name} is shut down`, offBody: 'Apps quit; data is kept.', boot: 'Start device',
       pausedTitle: 'Simulators are turned off', pausedBody: 'Turn them on in Plugins → iOS Simulator to continue.',
       idleTitle: (left) => `Shuts down in ${left}`, idleBody: 'No activity for a while. Keep using resets the timer.', keepUsing: 'Keep using',
@@ -62,6 +68,8 @@
   function presence(s, flags = {}) {
     const state = s?.device?.state;
     if (flags.switching) return { tone: 'busy', key: 'booting' };
+    if (!s && flags.lost === 'stopped') return { tone: 'off', key: 'serviceOff' };
+    if (!s && flags.lost === 'expired') return { tone: 'off', key: 'expired' };
     if (!s) return { tone: 'off', key: 'offline' };
     if (s.settings && s.settings.enabled === false) return { tone: 'off', key: 'paused' };
     if (state === 'Shutdown') return { tone: 'off', key: 'off' };
@@ -76,6 +84,9 @@
     if (flags.switching) return { kind: 'switching', phase: flags.phase || 'preparing' };
     if (flags.recovering) return { kind: 'recovering' };
     if (flags.stopping) return { kind: 'stopping' };
+    // The page outlived its service: nothing to recover here, say how to reopen.
+    if (!s && flags.lost === 'stopped') return { kind: 'serviceOff' };
+    if (!s && flags.lost === 'expired') return { kind: 'expired' };
     if (!s) return { kind: 'offline' };
     if (s.settings && s.settings.enabled === false) return { kind: 'paused' };
     if (s.device?.state === 'Shutdown') return { kind: 'off' };

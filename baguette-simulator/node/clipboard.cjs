@@ -3,8 +3,10 @@ const http=require('node:http');
 const {randomBytes}=require('node:crypto');
 // An unguessable capability plus exact viewer Origin: other local pages cannot
 // use the bridge. No clipboard contents, tokens, or request bodies are logged.
-async function createClipboard(origin,perform,control){
- const token=randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
+// `preferred` {port, token} comes from the last viewer session: reusing both
+// lets a tab opened earlier reconnect once the plugin runs again.
+async function createClipboard(origin,perform,control,preferred={}){
+ const token=/^[0-9a-f]{64}$/.test(preferred.token||'')?preferred.token:randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
  const authorized=req=>req.headers.cookie?.split(';').some(part=>part.trim()===`cindy_viewer_${server.address().port}=${token}`)===true;
  const server=http.createServer(async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
@@ -59,7 +61,9 @@ async function createClipboard(origin,perform,control){
  });
  if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized,clients);
  server.requestTimeout=10000;server.headersTimeout=10000;
- await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
- return {devices,viewers:()=>clients.size,base:`http://127.0.0.1:${server.address().port}`,fragment:`cindyClipboard=${server.address().port}.${token}`,close(){for(const socket of sockets)socket.destroy();server.close();server.closeAllConnections();}};
+ const listen=port=>new Promise((resolve,reject)=>{const fail=error=>{server.off('listening',done);reject(error);};const done=()=>{server.off('error',fail);resolve();};server.once('error',fail);server.once('listening',done);server.listen(port,'127.0.0.1');});
+ const wanted=Number.isInteger(preferred.port)&&preferred.port>=1024&&preferred.port<=65535?preferred.port:0;
+ try{await listen(wanted);}catch(error){if(!wanted||error.code!=='EADDRINUSE')throw error;await listen(0);}
+ return {devices,viewers:()=>clients.size,session:{port:server.address().port,token},base:`http://127.0.0.1:${server.address().port}`,fragment:`cindyClipboard=${server.address().port}.${token}`,close(){for(const socket of sockets)socket.destroy();server.close();server.closeAllConnections();}};
 }
 module.exports={createClipboard};

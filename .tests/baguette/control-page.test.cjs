@@ -39,7 +39,7 @@ async function boot({respond}){
   location:{search:'?udid='+udid,hash:'#cindyClipboard=123.token',href:'http://127.0.0.1:1/control?udid='+udid+'&lang=zh-CN#cindyClipboard=123.token',origin:'http://127.0.0.1:1'},
   history:{replaceState(_s,_t,url){context.location.href=String(url);}},
   ResizeObserver:class{observe(){}},setInterval:fn=>{intervals.push(fn);return intervals.length;},
-  fetch:async(_url,opts)=>{const body=JSON.parse(opts.body);calls.push(body);const r=await respond(body);if(r instanceof Error)throw r;return {ok:true,json:async()=>r};},
+  fetch:async(_url,opts)=>{const body=JSON.parse(opts.body);calls.push(body);const r=await respond(body);if(r instanceof Error)throw r;if(r?.httpStatus)return {ok:false,status:r.httpStatus,json:async()=>({error:'denied'})};return {ok:true,status:200,json:async()=>r};},
  };
  context.globalThis=context;context.window=context;
  vm.createContext(context);
@@ -60,9 +60,9 @@ test('live device loads the handheld screen once; a service generation change al
  assert.equal(calls.filter(c=>c.action==='status').length,2);
 });
 
-test('a lost service shows the recovery card on the stage; recover restarts once and reloads',async()=>{
+test('a service that answers but cannot reach the view shows the recovery card; recover restarts once and reloads',async()=>{
  let fail=false,generation=1;
- const {dom,poll,calls}=await boot({respond:({action})=>{if(fail&&action==='status')return Error('offline');if(action==='restart'){generation++;return {ready:true,generation};}return status({generation});}});
+ const {dom,poll,calls}=await boot({respond:({action})=>{if(fail&&action==='status')return {ok:false,errorCode:'CONTROL_FAILED'};if(action==='restart'){generation++;return {ready:true,generation};}return status({generation});}});
  fail=true;await poll();
  assert.equal(dom.byId.overlay.hidden,false);assert.match(dom.text(dom.byId.overlay),/画面已断开/);assert.equal(dom.byId['chip-dot'].dataset.tone,'off');
  const recover=dom.byId.overlay.querySelector('button');assert.equal(recover.textContent,'恢复画面');
@@ -107,4 +107,20 @@ test('switching follows the device job, then adopts the new device without expos
  assert.match(context.location.href,new RegExp('udid='+other));assert.equal(dom.byId['chip-name'].textContent,'iPad');
  assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${other}?handheld=1#cindyClipboard=123.token`);
  assert.match(dom.text(dom.byId.dock),/已切换/);
+});
+
+test('a page that outlives its service says how to reopen, then reconnects on its own when the service is back',async()=>{
+ let mode='up';
+ const {dom,poll}=await boot({respond:({action})=>action!=='status'?{ok:true}:mode==='down'?new TypeError('fetch failed'):mode==='expired'?{httpStatus:403}:status()});
+ assert.equal(dom.byId.screen.loads.length,1);
+ mode='down';await poll();
+ const text=dom.text(dom.byId.overlay);
+ assert.match(text,/模拟器服务已停止/);assert.match(text,/打开画面/);assert.doesNotMatch(text,/恢复画面/,'recovery cannot help when nothing answers');
+ assert.equal(dom.byId.screen.src,'about:blank','the dead frame is cleared, not left blank-white');
+ assert.equal(dom.byId.status.textContent,'服务已停止');
+ mode='up';await poll();
+ assert.equal(dom.byId.overlay.hidden,true);
+ assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${udid}?handheld=1#cindyClipboard=123.token`,'reloaded without opening a new tab');
+ mode='expired';await poll();
+ assert.match(dom.text(dom.byId.overlay),/这个画面已过期/);assert.equal(dom.byId.status.textContent,'画面已过期');
 });

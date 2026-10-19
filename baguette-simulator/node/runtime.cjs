@@ -9,7 +9,7 @@ const {randomUUID} = require('node:crypto');
 // alive while any device is running, so that rule outlives the host's idle
 // recycling of on-demand workers.
 const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
-function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false,
+function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false, forgetViewer = () => {},
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
   let config, busy = false, lastActivity = now(), lastStop = null, closing = false;
   let idleHandled = false;
@@ -97,7 +97,8 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
         // Persist the stop switch BEFORE touching devices. Partial failure must
         // not allow a new boot to undo the user's decision.
         await save({enabled:params.enabled, idleMinutes:params.idleMinutes});
-        if (!params.enabled) return stopAll('disabled');
+        // Turning simulators off also retires the saved viewer address.
+        if (!params.enabled) { const result = await stopAll('disabled'); forgetViewer(); return result; }
         touch();
         return {...await status(), ok:true, execution:'executed'};
       }

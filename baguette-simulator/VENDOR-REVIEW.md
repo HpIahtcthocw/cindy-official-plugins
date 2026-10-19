@@ -26,7 +26,7 @@ Source URL scan of all vendor JS/HTML/CSS/JSON identified:
 - `nominatim.openstreetmap.org`, `tile.openstreetmap.org`: pre-existing optional location search and map tiles (`sim-location.js`). User-triggered functionality now routed through the autonomous Node worker fixed endpoints; browser requests stay same-origin.
 - `fonts.googleapis.com`, `fonts.gstatic.com`: removed from `farm/farm.html`; existing CSS system-font fallbacks are used without font downloads.
 - `leafletjs.com`: library attribution; `bugs.chromium.org`, `bugzilla.mozilla.org`: CSS comment references; `www.w3.org`: SVG namespace constant. These are not added runtime API clients.
-- `127.0.0.1`: the added clipboard bridge; exact Origin and random capability required, request body capped at 40 KB, no clipboard content logging.
+- `127.0.0.1`: the added clipboard bridge; exact Origin and random capability required (persisted with the port in a 0600 file under the BaguetteCindy data directory so open tabs reconnect after a Worker restart; retired when simulators are turned off), request body capped at 40 KB, no clipboard content logging.
 
 No eval/new Function calls or added executable base64 blobs were found in the ten modified upstream files or first-party Node/native code. Leaflet contains its upstream embedded transparent GIF and CSS assets; no executable payload was added. The full Baguette binary includes more upstream capabilities than the 16 exposed Agent tools: this PR does not claim to audit every native feature by reading JavaScript. Native binary and new plugin admission require maintainer review; the runtime’s own private-framework ABI is not a stable Apple API.
 

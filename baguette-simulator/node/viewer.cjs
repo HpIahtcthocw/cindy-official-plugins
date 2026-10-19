@@ -2,7 +2,18 @@
 const {spawn}=require('node:child_process');
 const net=require('node:net');
 const http=require('node:http');
+const fs=require('node:fs');
+const path=require('node:path');
 const {createClipboard}=require('./clipboard.cjs');
+// The viewer address (port + capability) survives worker restarts so open tabs
+// can reconnect. It is forgotten when the user turns simulators off.
+const sessionFile=deviceSet=>path.join(path.dirname(deviceSet),'viewer-session.json');
+function readSession(deviceSet){try{return JSON.parse(fs.readFileSync(sessionFile(deviceSet),'utf8'));}catch{return {};}}
+function writeSession(deviceSet,session){
+ const file=sessionFile(deviceSet),temporary=file+'.'+process.pid+'.tmp';
+ try{fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});fs.writeFileSync(temporary,JSON.stringify(session),{mode:0o600});fs.renameSync(temporary,file);}catch{try{fs.rmSync(temporary,{force:true});}catch{}}
+}
+function forgetSession(deviceSet){try{fs.rmSync(sessionFile(deviceSet),{force:true});}catch{}}
 let active=null;
 let controls=null;
 // A window counts as open while its live stream is connected, plus a short
@@ -80,7 +91,9 @@ async function viewerStatus(server){
 async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale){
  const server=await startViewer(binary,deviceSet,children);
  const page=server.base+'/simulators/'+encodeURIComponent(udid);await probe(page);
- if(!server.clipboard)server.clipboard=await createClipboard(server.base,clipboardAction,{
+ if(!server.clipboard){
+ const preferred=readSession(deviceSet);
+ server.clipboard=await createClipboard(server.base,clipboardAction,{
   port:server.port,
   status:async p=>{const state=controls?await controls.status():null;return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),devices:state?.devices,deviceJob:state?.deviceJob,currentApp:await controls?.currentApp?.(p.udid),settings:state?.settings,idleDeadline:state?.idleDeadline};},
   catalog:()=>controls.request('viewer_catalog'),
@@ -97,10 +110,13 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
   guard:()=>controls?.assertEnabled(),
   run:fn=>controls?controls.exclusive(fn):fn(),
   touch:()=>controls?.touch()
- });
+ },preferred);
+ const session=server.clipboard.session;
+ if(session.port!==preferred.port||session.token!==preferred.token)writeSession(deviceSet,session);
+ }
  server.clipboard.devices.add(udid);
  lastViewerSeen=Date.now();
  const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;
  return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Devices are not shut down for idleness while a viewer window is open or another tool or script is operating them; otherwise idle shutdown follows plugin settings (15 minutes by default). close_viewer only stops streaming. Use shutdown when finished.'};
 }
-module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS};
+module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS,forgetSession};
