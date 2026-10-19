@@ -258,7 +258,12 @@ var gmailCompose = typeof cindyMail !== 'undefined' && cindyMail.version === 1 ?
 }) : null;
 
 // Native reader adapter; only an explicit opening may remove the selected UNREAD label.
-async function readMailMessageLink(args) {
+function assertMailReadResponse(response, fallback) {
+  if (response.status === 401) throw new Error('Gmail 账号授权已失效，请到插件详情页重新连接此账号后再打开邮件。');
+  if (response.status === 403) throw new Error('Gmail 拒绝读取，请检查此账号的邮件读取权限，并到插件详情页重新连接或授权。');
+  if (!response.ok || response.status !== 200 || response.truncated) throw new Error(fallback);
+}
+async function readMailMessageLink(args, beginOperation) {
   if (args.markRead !== undefined && typeof args.markRead !== 'boolean') throw new Error('Invalid markRead flag');
   var url = new URL(args.url);
   if (url.protocol !== 'https:' || url.hostname !== 'mail.google.com' || url.port || url.username || url.password || !url.pathname.startsWith('/mail/'))
@@ -284,7 +289,7 @@ async function readMailMessageLink(args) {
   // mistaking an authentication/network failure for a missing message.
   if (response.status === 404 && !url.searchParams.has('permmsgid')) {
     var threadResponse = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + encodeURIComponent(id) + '?format=metadata', authAccount: selected.accountId, timeoutMs: 20000 });
-    if (!threadResponse.ok || threadResponse.status !== 200 || threadResponse.truncated) throw new Error('Unable to read this Gmail conversation.');
+    assertMailReadResponse(threadResponse, '无法读取 Gmail 会话，请检查网络连接后重新打开。');
     var thread = JSON.parse(threadResponse.body);
     var latest = (Array.isArray(thread.messages) ? thread.messages : []).filter(function (m) {
       return /^[a-f0-9]{8,32}$/i.test(m.id || '') && !(m.labelIds || []).includes('DRAFT');
@@ -292,7 +297,7 @@ async function readMailMessageLink(args) {
     if (!latest || latest.id === id) throw new Error('No readable message remains in this Gmail conversation.');
     response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(latest.id) + '?format=full', authAccount: selected.accountId, timeoutMs: 20000 });
   }
-  if (!response.ok || response.status !== 200 || response.truncated) throw new Error('Unable to read this Gmail message.');
+  assertMailReadResponse(response, '无法读取 Gmail 邮件，请检查网络连接和邮件是否仍在邮箱中后重新打开。');
   var message = JSON.parse(response.body);
   if (!/^[a-f0-9]{8,32}$/i.test(message.id || '') || !message.payload) throw new Error('Incomplete Gmail message');
   var conversation, conversationUnavailable = false;
@@ -344,7 +349,7 @@ async function readMailMessageLink(args) {
         if (!Number.isSafeInteger(body.size) || body.size < 0 || bodyBytes + body.size > 25 * 1024 * 1024) throw new Error('无法完整读取邮件正文');
         var loaded = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/attachments/' + encodeURIComponent(body.attachmentId),
           authAccount: selected.accountId, timeoutMs: 20000 });
-        if (!loaded.ok || loaded.status !== 200 || loaded.truncated) throw new Error('无法完整读取邮件正文');
+        assertMailReadResponse(loaded, '无法完整读取邮件正文，请检查网络连接后重新打开。');
         var content = JSON.parse(loaded.body);
         if (typeof content.data !== 'string' || !/^[A-Za-z0-9_-]*={0,2}$/.test(content.data) || content.size !== body.size
           || atob(content.data.replace(/-/g, '+').replace(/_/g, '/')).length !== body.size) throw new Error('邮件正文大小不一致');
@@ -360,6 +365,7 @@ async function readMailMessageLink(args) {
   var preview = await mailImagePreviews({ messageId: message.id, attachments: attachments }, selected.accountId);
   var markReadResult;
   if (args.markRead === true && (message.labelIds || []).includes('UNREAD') && !(message.labelIds || []).includes('DRAFT')) {
+    var finishMarkRead = beginOperation?.();
     try {
       var marked = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/modify',
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ removeLabelIds: ['UNREAD'] }),
@@ -371,6 +377,7 @@ async function readMailMessageLink(args) {
         markReadResult = { execution: 'not_executed', message: '未能标记已读，请检查邮箱授权和邮件状态后再操作。' };
       else markReadResult = { execution: 'unknown', message: '无法确认已读状态，请先在邮箱中核对，不要盲目重试。' };
     } catch (_) { markReadResult = { execution: 'unknown', message: '无法确认已读状态，请先在邮箱中核对，不要盲目重试。' }; }
+    finishMarkRead?.(markReadResult.execution);
   }
   return { accountId: selected.accountId, messageId: message.id, from: header(message.payload, 'from'),
     to: header(message.payload, 'to'), cc: header(message.payload, 'cc'), bcc: header(message.payload, 'bcc'),
@@ -382,7 +389,7 @@ async function readMailMessageLink(args) {
     ...(markReadResult && markReadResult.execution === 'not_executed' ? { markReadFailed: true } : {}),
     attachments: preview.attachments.map(function (a) { var clean = { ...a }; delete clean.inlineData; delete clean.attachmentId; return clean; }) };
 }
-async function mailToolDraft(args, sourceCallId) {
+async function mailToolDraft(args, sourceCallId, beginOperation) {
   if (Array.isArray(args.command) && args.command.length === 1 && ['send', 'reply', 'reply-all'].includes(args.command[0]))
     return { ok: false, execution: 'not_executed', message: '邮件未发送。请先用 drafts create / drafts reply / drafts reply-all 创建并展示草稿，再用 drafts send 发送；Cindy 公共流程会提供 10 秒撤销窗口。不要绕过草稿流程直接发送。' };
   if (!Array.isArray(args.command) || args.command[0] !== 'drafts' || !['get', 'create', 'reply', 'reply-all', 'forward', 'send', 'update', 'delete'].includes(args.command[1])) return null;
@@ -393,8 +400,13 @@ async function mailToolDraft(args, sourceCallId) {
     return { ok: false, execution: 'not_executed', message: '发送现有草稿只接受草稿 ID；修改请先更新该草稿。' };
   if (args.command[1] === 'send' && cindyMail.sendGraceMs !== 10000)
     return { ok: false, execution: 'not_executed', message: '当前 Cindy 尚不支持发送前的 10 秒撤销窗口，请更新 Cindy 后再发送。草稿已保留。' };
-  return gmailCompose.beforeTool({ operation: args.command[1], account: args.account,
+  // beforeTool may flush edits even for get/update. null only means the caller
+  // can continue; it does not prove that no earlier draft write took place.
+  var finish = beginOperation();
+  var result = await gmailCompose.beforeTool({ operation: args.command[1], account: args.account,
     draftId: args.arguments[0], readOnly: args.session_context.workdir_is_read_only !== false, sourceCallId });
+  if (result) finish(result.execution);
+  return result;
 }
 
 (function () {
@@ -404,10 +416,21 @@ async function mailToolDraft(args, sourceCallId) {
     var args = message.args || {};
     var isSchema = message.tool === PREFIX + '_schema';
     var context = args.session_context;
-    var workerRequested = false;
+    // One call owns its receipt until final delivery. Presentation/IPC failures
+    // must never downgrade a confirmed or uncertain Gmail mutation.
+    var execution = 'not_executed';
+    function beginOperation() {
+      var previous = execution;
+      execution = 'unknown';
+      return function (value) {
+        var current = ['executed', 'not_executed', 'unknown'].includes(value) ? value : 'unknown';
+        execution = previous === 'unknown' || current === 'unknown' ? 'unknown'
+          : previous === 'executed' || current === 'executed' ? 'executed' : 'not_executed';
+      };
+    }
     try {
       if (message.tool === 'gmail_read_message') {
-        var mail = await readMailMessageLink(args);
+        var mail = await readMailMessageLink(args, beginOperation);
         await cindy.send({ type: 'tool-result', callId: message.callId, ok: true, result: mail });
         return;
       }
@@ -435,9 +458,7 @@ async function mailToolDraft(args, sourceCallId) {
         args = Object.assign({}, args, { account: selected.accountId });
       }
       if (!isSchema) {
-        workerRequested = true;
-        var cardResult = await mailToolDraft(args, message.callId);
-        workerRequested = false;
+        var cardResult = await mailToolDraft(args, message.callId, beginOperation);
         if (cardResult) {
           await cindy.send({ type: 'tool-result', callId: message.callId, ok: !!cardResult.ok,
             ...(cardResult.ok ? { result: cardResult.data } : { message: '[' + cardResult.execution + '] ' + cardResult.message }) });
@@ -448,7 +469,7 @@ async function mailToolDraft(args, sourceCallId) {
       if (prepared.inline && prepared.inline.length) {
         prepared.options = Object.assign({}, prepared.options, { 'inline-images': prepared.inline });
       }
-      workerRequested = true;
+      var finishWorker = beginOperation();
       var response = await cindy.node.request({
         method: isSchema ? 'schema' : 'run',
         authAccount: args.account,
@@ -467,6 +488,7 @@ async function mailToolDraft(args, sourceCallId) {
         return;
       }
       var result = response.result;
+      finishWorker(result?.execution);
       if (result.ok && prepared.files.length && result.data && typeof result.data === 'object') {
         result.data.importedAttachments = prepared.files;
       }
@@ -479,11 +501,13 @@ async function mailToolDraft(args, sourceCallId) {
         result.data.readBack.attachments = result.data.readBack.attachments.map(function ({ inlineData, ...metadata }) { return metadata; });
       }
       await cindy.send({ type: 'tool-result', callId: message.callId, ok: !!result.ok,
-        ...(result.ok ? { result: result.data } : { message: '[' + result.execution + '] ' + result.message }) });
+        ...(result.ok ? { result: result.data } : { message: '[' + execution + '] ' + (execution === result.execution
+          ? result.message : '此前的草稿操作结果尚未完全确认，请先核对邮箱中的实际状态，不要重复发送、保存或删除。') }) });
     } catch (error) {
       await cindy.send({ type: 'tool-result', callId: message.callId, ok: false,
-        message: workerRequested ? '[unknown] Unable to complete Google operation; check its result before retrying a write.'
-          : '[not_executed] ' + (error.message || 'Unable to prepare Gmail operation; check account and attachment inputs.') });
+        message: execution === 'executed' ? '[executed] 邮箱操作已执行，但结果未能完整返回。请先核对邮箱中的实际状态，不要重复发送、保存或删除。'
+          : execution === 'unknown' ? '[unknown] 无法确认邮箱操作结果，请先核对邮箱中的实际状态，不要重复发送、保存或删除。'
+          : '[not_executed] ' + (error.message || '无法准备 Gmail 操作，请检查账号和附件输入。') });
     }
   });
 })();

@@ -5,18 +5,109 @@ import test from 'node:test';
 const source = readFileSync(new URL('../google-gmail/main.js', import.meta.url), 'utf8');
 function fixture(accounts = [{ id: 'a', email: 'a@example.com', status: 'connected' }]) {
   const calls = [];
+  let handler;
   const part = (type, text) => ({ mimeType: type, body: { data: Buffer.from(text).toString('base64url') } });
   const msg = { id: '12345678', payload: { mimeType: 'multipart/mixed', headers: [{ name: 'Subject', value: '中文主题' }, { name: 'From', value: 'sender@example.com' }], parts: [part('text/plain', '中文'), part('text/html', '<p>中文</p><img src="cid:photo">'),
     { partId: '2', mimeType: 'message/rfc822', filename: 'forward.eml', body: {}, parts: [part('text/plain', 'Do not append me')] },
     { partId: '3', mimeType: 'image/png', filename: 'image.png', headers: [{ name: 'Content-ID', value: '<photo>' }], body: { data: 'AQID', size: 3 } } ] } };
-  const ctx = createContext({ URL, TextDecoder, Uint8Array, atob, cindy: { onHostMessage() {},
+  const ctx = createContext({ URL, TextDecoder, Uint8Array, atob, cindy: { onHostMessage(fn) { handler = fn; },
     fetch: async r => { calls.push(r); return { ok: true, status: 200, body: JSON.stringify(msg) }; },
     send: async r => { assert.equal(r.kind, 'deposit_media'); return { ok: true, url: 'cindy-media://blobs/' + 'a'.repeat(64) + '.png' }; },
   }});
   runInContext(source, ctx);
   ctx.listAccounts = async () => ({ ok: true, result: { accounts } });
-  return { ctx, calls, msg, read: (url, options = {}) => ctx.readMailMessageLink({ url, ...options }) };
+  return { ctx, calls, msg, invoke: message => handler(message), read: (url, options = {}) => ctx.readMailMessageLink({ url, ...options }) };
 }
+// Tool-result transport is downstream of Gmail writes. A failed delivery must
+// retain the same receipt across card, worker and mark-read paths, without replay.
+test('result delivery failure preserves card and worker execution receipts', async () => {
+  for (const operation of ['get', 'send', 'update', 'delete', 'worker']) {
+    for (const execution of ['executed', 'unknown', 'not_executed']) {
+      const f = fixture(), replies = [];
+      let operations = 0, deliveries = 0;
+      const run = async () => { operations++; return { ok: execution === 'executed', execution, data: { saved: true }, message: 'Fixture outcome' }; };
+      f.ctx.gmailCompose = { beforeTool: run };
+      f.ctx.cindyMail = { sendGraceMs: 10000 };
+      f.ctx.cindy.node = { request: async () => ({ ok: true, result: await run() }) };
+      f.ctx.cindy.send = async reply => {
+        if (++deliveries === 1) throw new Error('result transport unavailable');
+        replies.push(reply);
+      };
+      await f.invoke({ type: 'tool-call', tool: 'gmail_run', callId: 'receipt-test', args: {
+        command: operation === 'worker' ? ['search'] : ['drafts', operation], arguments: ['12345678'],
+        session_context: { workdir_is_read_only: false },
+      } });
+      assert.equal(operations, 1, operation + ':' + execution);
+      assert.equal(deliveries, 2);
+      assert.equal(replies[0].ok, false);
+      assert.ok(replies[0].message.startsWith('[' + execution + ']'), operation + ':' + replies[0].message);
+      if (execution !== 'not_executed') assert.match(replies[0].message, /核对.*不要重复/);
+    }
+  }
+});
+test('result delivery after mark-read retains its receipt without repeating the write', async () => {
+  for (const status of [200, 403, 503, 'timeout', 'no-write']) {
+    const f = fixture(), replies = [];
+    let writes = 0, deliveries = 0;
+    f.msg.labelIds = ['UNREAD'];
+    f.ctx.cindy.fetch = async request => {
+      if (request.method === 'POST') {
+        writes++;
+        if (status === 'timeout') throw new Error('response lost');
+        return { ok: status === 200, status };
+      }
+      return { ok: true, status: 200, body: JSON.stringify(f.msg) };
+    };
+    f.ctx.cindy.send = async reply => {
+      if (reply.type !== 'tool-result') return { ok: true };
+      if (++deliveries === 1) throw new Error('result transport unavailable');
+      replies.push(reply);
+    };
+    await f.invoke({ type: 'tool-call', tool: 'gmail_read_message', callId: 'read-receipt-test',
+      args: { url: 'https://mail.google.com/mail/#all/12345678', markRead: status !== 'no-write' } });
+    const expected = status === 200 ? 'executed' : [403, 'no-write'].includes(status) ? 'not_executed' : 'unknown';
+    assert.ok(replies[0].message.startsWith('[' + expected + ']'), status + ':' + replies[0].message);
+    assert.equal(writes, status === 'no-write' ? 0 : 1);
+    assert.equal(deliveries, 2);
+  }
+});
+test('continuing after card autosave cannot erase an earlier uncertain write', async () => {
+  for (const resultDeliveryFails of [false, true]) {
+    const f = fixture(), replies = [];
+    let preparations = 0, requests = 0, deliveries = 0;
+    f.ctx.gmailCompose = { beforeTool: async () => { preparations++; return null; } };
+    f.ctx.cindy.node = { request: async () => {
+      requests++;
+      return { ok: true, result: { ok: false, execution: 'not_executed', message: 'Command rejected' } };
+    } };
+    f.ctx.cindy.send = async reply => {
+      if (++deliveries === 1 && resultDeliveryFails) throw new Error('result transport unavailable');
+      replies.push(reply);
+    };
+    await f.invoke({ type: 'tool-call', tool: 'gmail_run', callId: 'autosave-receipt-test', args: {
+      command: ['drafts', 'update'], arguments: ['12345678'], session_context: { workdir_is_read_only: false },
+    } });
+    assert.equal(preparations, 1); assert.equal(requests, 1);
+    assert.match(replies[0].message, /^\[unknown\]/);
+  }
+});
+test('message, fallback conversation and external body authorization failures explain how to reconnect', async () => {
+  for (const stage of ['message', 'conversation', 'body']) for (const status of [401, 403]) {
+    const f = fixture();
+    f.msg.payload.parts[0].body = { attachmentId: 'body', size: 3 };
+    f.ctx.cindy.fetch = async request => {
+      f.calls.push(request);
+      if (stage === 'message' || request.url.includes('/threads/') || request.url.includes('/attachments/'))
+        return { ok: false, status, body: '{}' };
+      if (stage === 'conversation') return { ok: false, status: 404 };
+      return { ok: true, status: 200, body: JSON.stringify(f.msg) };
+    };
+    await assert.rejects(f.read('https://mail.google.com/mail/#all/12345678'),
+      status === 401 ? /授权.*失效.*插件详情页.*重新连接/ : /读取权限.*插件详情页.*重新连接/);
+    assert.ok(f.calls.every(request => !request.method), 'authorization failure never marks read');
+    assert.equal(f.calls.length, stage === 'message' ? 1 : 2);
+  }
+});
 test('resolves a conversation link when the original draft message no longer exists', async () => {
   const f = fixture(), urls = [];
   f.ctx.cindy.fetch = async r => {
