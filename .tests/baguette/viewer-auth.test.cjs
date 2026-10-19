@@ -77,3 +77,39 @@ test('create, rename and switch retain origin, capability and opened-device auth
   assert.equal(mutations,0);
  }finally{bridge.close();}
 });
+
+test('the embedded frame authorizes by capability in its own URL and Referer, never by origin alone',async()=>{
+ let reads=0,upgrades=0;
+ const upstream=http.createServer((req,res)=>{reads++;res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end('<html><head></head><body>viewer</body></html>');});
+ upstream.on('upgrade',(req,socket)=>{upgrades++;socket.end('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');});
+ await new Promise(r=>upstream.listen(0,'127.0.0.1',r));
+ const bridge=await createClipboard('http://127.0.0.1:'+upstream.address().port,async()=>{}, {port:upstream.address().port,status:async()=>({ready:true})});bridge.devices.add(udid);
+ const token=bridge.fragment.split('.')[1];
+ const page=`${bridge.base}/simulators/${udid}?handheld=1&cindyViewer=${token}`;
+ try {
+  // The device page itself: capability in the URL stands in for the cookie the
+  // panel frame cannot hold; the host staging and the socket helper come with it.
+  const framed=await fetch(page);
+  assert.equal(framed.status,200);assert.equal(reads,1);
+  assert.equal(framed.headers.get('referrer-policy'),'same-origin');
+  const body=await framed.text();
+  assert.ok(body.includes(`<script src="/viewer-auth.js?cindyViewer=${token}"></script>`),'the frame gets the socket capability helper');
+  // Subresources of that page carry the capability in Referer.
+  assert.equal((await fetch(bridge.base+'/assets/app.js',{headers:{Referer:page}})).status,200);
+  assert.equal((await fetch(bridge.base+'/viewer-auth.js?cindyViewer='+token)).status,200);
+  // No capability anywhere: still refused, and nothing reaches the simulator.
+  const before=reads;
+  assert.equal((await fetch(bridge.base+'/simulators/'+udid+'?handheld=1')).status,403);
+  assert.equal((await fetch(bridge.base+'/simulators/'+udid+'?cindyViewer=wrong')).status,403);
+  assert.equal((await fetch(bridge.base+'/assets/app.js',{headers:{Referer:bridge.base+'/simulators/x?cindyViewer=wrong'}})).status,403);
+  // A Referer from somewhere else cannot smuggle the capability in.
+  assert.equal((await fetch(bridge.base+'/assets/app.js',{headers:{Referer:'https://evil.test/?cindyViewer='+token}})).status,403);
+  assert.equal(reads,before);
+  // The stream socket presents the capability in its URL (viewer-auth.js adds it).
+  const ws=(query)=>new Promise((resolve,reject)=>{const url=new URL(bridge.base);const s=net.connect(Number(url.port),'127.0.0.1');let data='';
+   s.on('connect',()=>s.write(`GET /stream${query} HTTP/1.1\r\nHost: ${url.host}\r\nOrigin: ${bridge.base}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`));
+   s.on('data',d=>{data+=d;s.destroy();});s.on('error',reject);s.on('close',()=>resolve(data));});
+  assert.equal(await ws('?cindyViewer=wrong'),'');assert.equal(upgrades,0);
+  assert.match(await ws('?cindyViewer='+token),/101/);assert.equal(upgrades,1);
+ } finally {bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
+});

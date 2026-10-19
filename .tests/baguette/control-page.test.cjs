@@ -53,7 +53,7 @@ const status=(over={})=>({ready:true,parked:false,generation:1,device:{udid,name
 test('live device loads the handheld screen once; a service generation change alone does not reload it',async()=>{
  let generation=1;
  const {dom,poll,calls}=await boot({respond:({action})=>action==='status'?status({generation}):{ok:true}});
- assert.deepEqual(dom.byId.screen.loads,[`/simulators/${udid}?handheld=1#cindyClipboard=123.token`]);
+ assert.deepEqual(dom.byId.screen.loads,[`/simulators/${udid}?handheld=1&cindyViewer=token#cindyClipboard=123.token`]);
  assert.equal(dom.byId['chip-name'].textContent,'iPhone 17 Pro');assert.equal(dom.byId['chip-dot'].dataset.tone,'on');
  assert.equal(dom.byId.overlay.hidden,true);assert.equal(dom.byId['btn-home'].disabled,false);
  generation++;await poll();assert.equal(dom.byId.screen.loads.length,1);
@@ -67,7 +67,7 @@ test('a service that answers but cannot reach the view shows the recovery card; 
  assert.equal(dom.byId.overlay.hidden,false);assert.match(dom.text(dom.byId.overlay),/画面已断开/);assert.equal(dom.byId['chip-dot'].dataset.tone,'off');
  const recover=dom.byId.overlay.querySelector('button');assert.equal(recover.textContent,'恢复画面');
  fail=false;await recover.listeners.click[0]();
- assert.equal(calls.filter(c=>c.action==='restart').length,1);assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${udid}?handheld=1#cindyClipboard=123.token`);
+ assert.equal(calls.filter(c=>c.action==='restart').length,1);assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${udid}?handheld=1&cindyViewer=token#cindyClipboard=123.token`);
  assert.equal(dom.byId.overlay.hidden,true);
 });
 
@@ -105,7 +105,7 @@ test('switching follows the device job, then adopts the new device without expos
  assert.match(dom.text(dom.byId.overlay),/正在启动 iPad/);
  job={...job,state:'done',phase:'done',activeUdid:other};current=other;await poll();
  assert.match(context.location.href,new RegExp('udid='+other));assert.equal(dom.byId['chip-name'].textContent,'iPad');
- assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${other}?handheld=1#cindyClipboard=123.token`);
+ assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${other}?handheld=1&cindyViewer=token#cindyClipboard=123.token`);
  assert.match(dom.text(dom.byId.dock),/已切换/);
 });
 
@@ -120,7 +120,7 @@ test('a page that outlives its service says how to reopen, then reconnects on it
  assert.equal(dom.byId.status.textContent,'服务已停止');
  mode='up';await poll();
  assert.equal(dom.byId.overlay.hidden,true);
- assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${udid}?handheld=1#cindyClipboard=123.token`,'reloaded without opening a new tab');
+ assert.equal(dom.byId.screen.loads.at(-1),`/simulators/${udid}?handheld=1&cindyViewer=token#cindyClipboard=123.token`,'reloaded without opening a new tab');
  mode='expired';await poll();
  assert.match(dom.text(dom.byId.overlay),/这个画面已过期/);assert.equal(dom.byId.status.textContent,'画面已过期');
 });

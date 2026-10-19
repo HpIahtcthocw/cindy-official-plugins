@@ -7,21 +7,29 @@ const {randomBytes}=require('node:crypto');
 // lets a tab opened earlier reconnect once the plugin runs again.
 async function createClipboard(origin,perform,control,preferred={}){
  const token=/^[0-9a-f]{64}$/.test(preferred.token||'')?preferred.token:randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
- const authorized=req=>req.headers.cookie?.split(';').some(part=>part.trim()===`cindy_viewer_${server.address().port}=${token}`)===true;
+ // Cindy's plugin pages are not an HTTP origin, so a viewer framed by them can
+ // store no cookie. It carries the same capability in its own URL instead:
+ // same-origin subresources pass it in Referer, the stream socket appends it
+ // (viewer-auth.js). Anything without the capability stays rejected.
+ const capability=value=>{try{return new URL(String(value),`http://127.0.0.1:${server.address().port}`).searchParams.get('cindyViewer')===token;}catch{return false;}};
+ const sameOrigin=value=>typeof value==='string'&&value.startsWith(`http://127.0.0.1:${server.address().port}/`);
+ const authorized=req=>req.headers.cookie?.split(';').some(part=>part.trim()===`cindy_viewer_${server.address().port}=${token}`)===true
+  ||capability(req.url)||(sameOrigin(req.headers.referer)&&capability(req.headers.referer));
  const server=http.createServer(async(req,res)=>{
   res.setHeader('Cache-Control','no-store');
   const reply=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
   const own=`127.0.0.1:${server.address().port}`;
   if(req.headers.host!==own)return reply(403,{error:'Invalid host'});
   if(control&&req.method==='GET'){
-   if(['/control.js','/control-model.js','/control.css'].includes(req.url)){
-    res.writeHead(200,{'Content-Type':req.url.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','X-Content-Type-Options':'nosniff'});
-    return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,req.url.slice(1))));
+   if(['/control.js','/control-model.js','/control.css','/viewer-auth.js'].includes(req.url.split('?',1)[0])){
+    const file=req.url.split('?',1)[0];
+    res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','X-Content-Type-Options':'nosniff'});
+    return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,file.slice(1))));
    }
    if(req.url.startsWith('/control?')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"frame-ancestors 'self' cindy-ghost://baguette-simulator",'Referrer-Policy':'no-referrer'});return res.end(require('./viewer-proxy.cjs')[new URL(req.url,'http://localhost').searchParams.get('lang')==='zh-CN'?'chineseHtml':'html']);}
    if(!authorized(req))return reply(403,{error:'Viewer capability required'});
    if(req.url.startsWith('/map/'))return require('./map.cjs').serveMap(req,res,own);
-   return require('./viewer-proxy.cjs').proxyRequest(req,res,control.port);
+   return require('./viewer-proxy.cjs').proxyRequest(req,res,control.port,token);
   }
   if(req.headers.origin!==origin&&req.headers.origin!==`http://${own}`)return reply(403,{error:'Invalid origin',execution:'not_executed'});
   res.setHeader('Access-Control-Allow-Origin',req.headers.origin);res.setHeader('Vary','Origin');
@@ -33,7 +41,7 @@ async function createClipboard(origin,perform,control,preferred={}){
    try{
     const operation=async()=>{
      await control.guard?.();
-     await new Promise(resolve=>{res.once('finish',resolve);res.once('close',resolve);require('./viewer-proxy.cjs').proxyRequest(req,res,control.port);});
+     await new Promise(resolve=>{res.once('finish',resolve);res.once('close',resolve);require('./viewer-proxy.cjs').proxyRequest(req,res,control.port,token);});
      control.touch?.();
     };
     return await (control.run?control.run(operation):operation());
