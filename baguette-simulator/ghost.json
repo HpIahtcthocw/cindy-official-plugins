@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "minCindyVersion": "0.1.83",
+  "minCindyVersion": "1.0.1",
   "id": "baguette-simulator",
   "name": "iOS 模拟器",
   "description": "独立的 iOS 模拟器；侧栏预览可添加、改名和切换测试设备，支持缩放与手动关闭。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。基于开源项目 Baguette（tddworks，Apache-2.0）。",
@@ -367,6 +367,13 @@
     "idleTimeoutSeconds": 3600
   },
   "command": "baguette",
+  "panel": {
+    "title": "iOS 模拟器",
+    "html": "panel.html",
+    "position": "left",
+    "minWidth": 320,
+    "defaultFraction": 0.3
+  },
   "preview": {
     "hosts": [
       "127.0.0.1"

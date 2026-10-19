@@ -8,6 +8,13 @@ let controls=null;
 function configureControls(value){controls=value;}
 function freePort(){return new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(error=>error?reject(error):resolve(port));});});}
 function probe(url){return new Promise((resolve,reject)=>{const request=http.get(url,{timeout:1500},response=>{response.resume();response.on('end',()=>response.statusCode===200?resolve():reject(Error('Viewer HTTP '+response.statusCode)));});request.once('timeout',()=>request.destroy(Error('Viewer timed out')));request.once('error',reject);});}
+function controlUrl(server,udid,locale){return server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;}
+/** The controller URL of the last opened device while the viewer is up; null once stopped. */
+function currentViewer(){
+ const current=active;
+ if(!current||current.stopped||!current.clipboard||!current.lastUdid)return null;
+ return {udid:current.lastUdid,url:controlUrl(current,current.lastUdid,current.locale),generation:current.generation,parked:current.parked};
+}
 async function stopViewer(){
  const current=active;if(!current)return {stopped:false};active=null;current.stopped=true;clearTimeout(current.restartTimer);current.clipboard?.close();
  const child=current.child;
@@ -90,8 +97,8 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
   run:fn=>controls?controls.exclusive(fn):fn(),
   touch:()=>controls?.touch()
  });
- server.clipboard.devices.add(udid);
- const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;
- return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Device idle shutdown follows plugin settings (15 minutes by default); status polling does not renew use. close_viewer only stops streaming. Use shutdown when finished.'};
+ server.clipboard.devices.add(udid);server.lastUdid=udid;server.locale=locale;
+ const url=controlUrl(server,udid,locale);
+ return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live controller ready (Cindy toolbar, device menu, confirmed shutdown). Simulator data is preserved. Device idle shutdown follows plugin settings (15 minutes by default); status polling does not renew use. close_viewer only stops streaming. Use shutdown when finished.'};
 }
-module.exports={openViewer,stopViewer,configureControls};
+module.exports={openViewer,stopViewer,currentViewer,configureControls};

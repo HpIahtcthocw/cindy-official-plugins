@@ -6,7 +6,7 @@
 
 Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.7。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
 
-iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。launch_app 默认打开当前 session 侧边栏；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 open_viewer 打开已有设备。
+iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。实时画面显示在 Cindy 的停靠面板「iOS 模拟器」里（`panel.html`，位于聊天左侧；宿主标题条提供撑满、拆成独立窗口和最小化）。launch_app 与 open_viewer 把控制页地址交给面板；只有面板应答后 viewer.previewOpened 才为 true，否则 previewError 会说明面板未打开或已最小化。没有画面时面板显示设备选择（打开，或一键创建第一台 iPhone）。需要 Cindy ≥ 1.0.1：该版本允许本插件的面板嵌入自己的本机页面。
 
 控制页由 Cindy 自己绘制：设备胶囊（状态圆点、设备名，点开可切换、添加、改名）、主屏幕、旋转、截图和「更多」菜单（摇一摇、App 切换器、画面大小最大 200%、显示 Baguette 完整工具栏、解除卡键、恢复画面、需确认的关闭设备）。内嵌的 Baguette 页面只负责渲染实时画面（`?handheld=1`，按设备圆角适应窗口；折叠屏保留 3D 视图），其工作台界面由注入样式隐藏。画面断开、闲置倒计时和设备已关闭都直接显示在画面位置，并提供恢复 / 继续使用 / 启动按钮；没有明确操作不会重启模拟器或 App。Agent 使用 press(button=release-input) 解除卡键。Unicode 粘贴会替换模拟器剪贴板；网页复制会替换 Mac 剪贴板。输入前观察焦点，之后核对结果；按键投递回调不代表 App 处理完成。
 
