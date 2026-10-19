@@ -10,6 +10,10 @@ Forge and a particular harness are not prerequisites. See the
 Manifest, and package format, and [Contributing](../CONTRIBUTING.md) for official
 publishing requirements. This document adds migration mappings and common runtime calls.
 
+Mail plugins should reuse the [shared compose workflow](mail-compose.md) for
+editable draft cards, autosave, unified sends and task continuation. Keep
+provider account, MIME and transport differences in adapters.
+
 ## Capability declarations are not a client support gate
 
 Plugin development must not wait for Cindy client capability releases. Within a

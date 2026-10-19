@@ -1,0 +1,123 @@
+'use strict';
+// Fixed Gmail endpoints, request-local Host OAuth token. This module updates
+// drafts only; sending remains owned by cindyMail's confirmation/countdown.
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const MAX_BYTES = 25 * 1024 * 1024;
+const header = (part, name) => (part.headers || []).filter(h => h.name.toLowerCase() === name).map(h => h.value).join('\n');
+const hash = data => crypto.createHash('sha256').update(data).digest('hex');
+const keyFor = part => hash(JSON.stringify([part.partId || '', part.filename || '', part.mimeType, part.body?.size, header(part, 'content-id')]));
+function imageType(data) {
+  if (data.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';
+  if (data[0] === 255 && data[1] === 216 && data[2] === 255) return 'image/jpeg';
+  if (/^GIF8[79]a$/.test(data.subarray(0, 6).toString())) return 'image/gif';
+  if (data.subarray(0, 4).toString() === 'RIFF' && data.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
+  return '';
+}
+
+async function gmailJson(token, resource, init = {}, maxBytes = MAX_BYTES * 2) {
+  const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + resource, {
+    ...init, redirect: 'error', signal: AbortSignal.timeout(60000),
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+  });
+  if (!response.ok) { await response.body?.cancel(); throw new Error('Gmail HTTP ' + response.status); }
+  const chunks = []; let size = 0;
+  for await (const chunk of response.body) { size += chunk.length; if (size > maxBytes) throw new Error('邮件内容超过大小上限'); chunks.push(chunk); }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function collectAttachments(payload) {
+  const result = [];
+  function walk(part) {
+    if (part.filename || /^(attachment|inline)\b/i.test(header(part, 'content-disposition')) || header(part, 'content-id')) result.push(part);
+    else for (const child of part.parts || []) walk(child);
+  }
+  walk(payload); return result;
+}
+
+function buildMime({ fields, headers, files }, helpers) {
+  const { addressHeader, encodeWords, encodeHeader, wrap } = helpers;
+  const boundary = 'cindy-' + crypto.randomUUID();
+  const lines = [];
+  for (const [name, value] of Object.entries({ From: headers.from, To: fields.to, Cc: fields.cc, Bcc: fields.bcc, 'Reply-To': headers['reply-to'] })) {
+    if (value) lines.push(name + ': ' + addressHeader(value));
+  }
+  lines.push('Subject: ' + encodeWords(fields.subject));
+  for (const name of ['in-reply-to', 'references']) if (headers[name]) lines.push(name + ': ' + encodeHeader(headers[name]));
+  lines.push('MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="' + boundary + '"', '', '--' + boundary,
+    'Content-Type: multipart/related; boundary="rel-' + boundary + '"', '', '--rel-' + boundary,
+    'Content-Type: multipart/alternative; boundary="alt-' + boundary + '"', '', '--alt-' + boundary,
+    'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrap(fields.body + fields.quote), '', '--alt-' + boundary,
+    'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', wrap(fields.bodyHtml + fields.quoteHtml), '', '--alt-' + boundary + '--');
+  const addFile = (file, delimiter) => {
+    const filename = encodeURIComponent(file.filename).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16));
+    const contentType = /^[\w.+-]+\/[\w.+-]+$/.test(file.mimeType) ? file.mimeType : 'application/octet-stream';
+    lines.push('', delimiter, 'Content-Type: ' + contentType, 'Content-Transfer-Encoding: base64',
+      'Content-Disposition: ' + (file.contentId ? 'inline' : 'attachment') + "; filename*=UTF-8''" + filename);
+    if (file.contentId) lines.push('Content-ID: <' + encodeHeader(file.contentId.replace(/^<|>$/g, '')) + '>');
+    lines.push('', wrap(file.data));
+  };
+  for (const file of files.filter(f => f.contentId)) addFile(file, '--rel-' + boundary);
+  lines.push('', '--rel-' + boundary + '--');
+  for (const file of files.filter(f => !f.contentId)) addFile(file, '--' + boundary);
+  lines.push('', '--' + boundary + '--', '');
+  return lines.join('\r\n');
+}
+
+async function updateRichDraft(p, token, before, helpers, execution) {
+  const fields = p.fields;
+  const wanted = JSON.parse(fields.attachmentItems);
+  if (!Array.isArray(wanted) || wanted.length > 100 || wanted.some(a => !a || typeof a.key !== 'string') || new Set(wanted.map(a => a.key)).size !== wanted.length) throw new Error('附件清单无效，请重新读取草稿');
+  const current = await gmailJson(token, 'drafts/' + encodeURIComponent(p.draftId) + '?format=full');
+  const verified = helpers.draftReadBack({ draft: current }, p.draftId);
+  if (verified.fingerprint !== before.fingerprint) return { ok: false, execution: 'not_executed', stale: verified, message: '草稿已在其他地方修改，请重新核对后再发送。' };
+  const parts = collectAttachments(current.message.payload);
+  const files = []; let total = 0;
+  for (const item of wanted) {
+    const part = parts.find(part => keyFor(part) === item.key);
+    if (!part) throw new Error('附件已发生变化，请重新读取草稿');
+    let encoded = part.body?.data;
+    if (encoded === undefined && part.body?.attachmentId) {
+      const result = await gmailJson(token, 'messages/' + encodeURIComponent(current.message.id) + '/attachments/' + encodeURIComponent(part.body.attachmentId));
+      encoded = result.data;
+    }
+    if (typeof encoded !== 'string') throw new Error('无法完整读取附件，草稿未修改');
+    const data = Buffer.from(encoded, 'base64url'); total += data.length;
+    if (total > MAX_BYTES || data.length !== part.body.size) throw new Error('附件大小不一致或超过 25 MiB，草稿未修改');
+    const originalCid = header(part, 'content-id').replace(/^<|>$/g, '');
+    const contentId = item.contentId === undefined ? originalCid : item.contentId;
+    if (typeof contentId !== 'string') throw new Error('图片引用无效');
+    const cid = contentId.replace(/^<|>$/g, '');
+    if (cid !== originalCid && (originalCid || !/^image-[1-9]\d*@cindy\.local$/.test(cid) || !imageType(data))) throw new Error('只能将图片附件插入正文');
+    const filename = item.filename ?? part.filename ?? '';
+    if (typeof filename !== 'string' || filename.length > 1024 || /[\r\n\0]/.test(filename)) throw new Error('附件名称无效');
+    files.push({ filename, mimeType: cid !== originalCid ? imageType(data) : part.mimeType, contentId: cid, data });
+  }
+  if (!Array.isArray(p.attachments || []) || (p.attachments || []).length > 20) throw new Error('附件清单无效');
+  for (const item of p.attachments || []) {
+    if (!item || typeof item.path !== 'string' || typeof item.filename !== 'string' || !/^[a-f0-9]{64}$/.test(item.sha256) || !Number.isSafeInteger(item.bytes) || item.bytes < 0 || item.bytes > 16 * 1024 * 1024) throw new Error('附件无效，请重新选择');
+    const file = await fs.promises.open(item.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    let data;
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.size !== item.bytes) throw new Error('附件已变化，请重新选择');
+      data = await file.readFile();
+    } finally { await file.close(); }
+    if (hash(data) !== item.sha256) throw new Error('附件已变化，请重新选择');
+    total += data.length;
+    if (total > MAX_BYTES) throw new Error('附件总大小不能超过 25 MiB');
+    const mimeType = imageType(data) || 'application/octet-stream';
+    if (item.contentId && (!/^image\//.test(mimeType) || !/^[a-f0-9-]+@cindy\.local$/.test(item.contentId))) throw new Error('请选择 PNG、JPEG、GIF 或 WebP 图片');
+    files.push({ filename: item.filename, mimeType, contentId: item.contentId || '', data });
+  }
+  // Removing an inline attachment must not leave a broken image reference.
+  const cids = new Set(files.filter(f => f.contentId).map(f => f.contentId.replace(/^<|>$/g, '')));
+  if (cids.size !== files.filter(f => f.contentId).length) throw new Error('图片引用重复，请重新读取草稿');
+  for (const match of (fields.bodyHtml + fields.quoteHtml).matchAll(/\bcid:([^\s"'<>]+)/g)) if (!cids.has(match[1])) throw new Error('正文仍引用已移除的图片，请先在正文中删除图片');
+  const raw = buildMime({ fields, headers: before.headers, files }, helpers);
+  // A failed PUT is unknown: never replay it automatically.
+  execution.started = true;
+  await gmailJson(token, 'drafts/' + encodeURIComponent(p.draftId), { method: 'PUT', body: JSON.stringify({ id: p.draftId, message: { raw: Buffer.from(raw).toString('base64url'), ...(before.threadId ? { threadId: before.threadId } : {}) } }) }, 300 * 1024);
+  return { ok: true, files: files.map(f => ({ filename: f.filename, mimeType: f.mimeType, bytes: f.data.length, contentId: f.contentId.replace(/^<|>$/g, '') })) };
+}
+module.exports = { updateRichDraft, buildMime, keyFor, gmailJson };

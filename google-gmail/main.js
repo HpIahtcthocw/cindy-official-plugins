@@ -62,7 +62,7 @@ var googleAccountMetadata = (function () {
 
 
 /* global cindy */
-// Plugin-local bridge. Google business operations run only through gog.
+// Provider adapter. Draft MIME updates and previews use fixed Gmail endpoints.
 var SECRET_KEY = 'gmail_account';
 var PLUGIN_NAME = 'Gmail';
 function fail(message) { return { ok: false, message: message }; }
@@ -99,7 +99,7 @@ async function prepareMailAttachments(args, callId) {
   if (inline !== undefined && (!Array.isArray(inline) || !inline.length || inline.some(function (item) { return typeof item !== 'string'; }))) {
     throw new Error('inline-images must be a non-empty list of granted image hashes.');
   }
-  if (inline && command !== 'send') throw new Error('Draft commands cannot embed new images. Save them as normal attachments, or send only after explicit permission.');
+  if (inline && command !== 'drafts create') throw new Error('Create an HTML draft with inline-images first, then use the common draft send workflow.');
   if (inline && options['raw-file']) throw new Error('Do not combine inline-images with a caller-supplied raw-file.');
   var directory = 'gmail-attachments/' + crypto.randomUUID();
   var files = [];
@@ -183,11 +183,179 @@ async function selectGoogleAccount(accountId) {
   }
   var account = accountId === undefined ? accounts[0] : accounts.find(function (item) { return item.id === accountId; });
   if (!account) return fail('尚未执行：指定账号不存在，请重新选择账号；不会切换到其他账号。');
-  if (account.status !== 'connected' || account.scope_stale === true) {
+  // Newly added scopes are a non-blocking hint: existing read/compose grants
+  // remain usable. Let the requested endpoint report its actual missing scope.
+  if (account.status !== 'connected') {
     return fail('尚未执行：账号 ' + (account.email || account.id) + ' 授权已失效或权限不足，请到插件详情页重新连接此账号。');
   }
   return { ok: true, accountId: account.id, accountEmail: account.email };
 }
+// Gmail only translates account/CLI arguments and transport results. The shared
+// flow owns card edits, autosave, sending and continuation.
+async function mailImagePreviews(readBack, accountId, previous) {
+  if (!readBack || typeof cindy.fetch !== 'function') return readBack;
+  var images = [];
+  var previewStarted = Date.now();
+  for (var attachment of readBack.attachments || []) {
+    if (Date.now() - previewStarted > 15000) break;
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(attachment.mimeType) || !attachment.attachmentId || attachment.bytes > 16 * 1024 * 1024) continue;
+    var cid = (attachment.contentId || '').replace(/^<|>$/g, '');
+    // Gmail changes the message/part IDs on a draft update. Never reuse a CID
+    // alone: the AI may have replaced its bytes while keeping its name.
+    var existing = previous?.messageId === readBack.messageId && previous?.attachments?.find(function (a) { return a.key === attachment.key; });
+    if (existing?.previewUrl) { attachment.previewUrl = existing.previewUrl; if (cid) images.push({ cid, url: existing.previewUrl }); continue; }
+    try {
+      var response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(readBack.messageId) + '/attachments/' + encodeURIComponent(attachment.attachmentId), authAccount: accountId, timeoutMs: 5000 });
+      if (!response.ok || response.status !== 200 || response.truncated) continue;
+      var data = JSON.parse(response.body).data;
+      if (typeof data !== 'string') continue;
+      var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: data.replace(/-/g, '+').replace(/_/g, '/'), label: attachment.filename });
+      if (deposited.ok) { attachment.previewUrl = deposited.url; if (cid) images.push({ cid: cid, url: deposited.url }); }
+    } catch (_) { /* A preview failure cannot invalidate a verified saved draft. */ }
+  }
+  return { ...readBack, images: images };
+}
+var gmailCompose = typeof cindyMail !== 'undefined' && cindyMail.version === 1 ? cindyMail.register({
+  providerName: 'Gmail', draftStorage: 'server', storageLock: 'google-account-metadata', richText: true,
+  selectAccount: selectGoogleAccount,
+  async deleteDraft({ record }) {
+    var response = await cindy.node.request({ method: 'run', authAccount: record.account,
+      params: { command: ['drafts', 'delete'], arguments: [record.draftId], options: {}, readOnly: false }, timeoutMs: 120000 });
+    var result = response && response.ok && response.result;
+    return result?.ok ? { ...result, data: { deleted: true, draftId: record.draftId } } : result;
+  },
+  async readDraft({ record }) {
+    var response = await cindy.node.request({ method: 'run', authAccount: record.account,
+      params: { command: ['drafts', 'get'], arguments: [record.draftId], options: {}, readOnly: true }, timeoutMs: 120000 });
+    var result = response && response.ok && response.result;
+    if (result?.ok && result.data?.readBack) result.data.readBack = await mailImagePreviews(result.data.readBack, record.account);
+    return result;
+  },
+  async writeDraft({ record, account, fields, send, attachments, readBack }) {
+    var response = await cindy.node.request({ method: 'compose', authAccount: record.account,
+      params: { draftId: record.draftId, fingerprint: record.fingerprint, accountEmail: account.accountEmail, fields, send, attachments }, timeoutMs: 120000 });
+    var result = response && response.ok && response.result;
+    if (result?.ok && result.data?.readBack) result.data.readBack = await mailImagePreviews(result.data.readBack, record.account, readBack);
+    if (result && result.ok && result.data && result.data.sent) {
+      result = { ...result, data: { ...result.data,
+        receipt: { messageId: result.data.messageId || null, threadId: result.data.threadId || null } } };
+    }
+    return result;
+  },
+}) : null;
+
+// Native reader adapter; only an explicit opening may remove the selected UNREAD label.
+async function readMailMessageLink(args) {
+  if (args.markRead !== undefined && typeof args.markRead !== 'boolean') throw new Error('Invalid markRead flag');
+  var url = new URL(args.url);
+  if (url.protocol !== 'https:' || url.hostname !== 'mail.google.com' || url.port || url.username || url.password || !url.pathname.startsWith('/mail/'))
+    throw new Error('Unsupported Gmail link');
+  var id = url.searchParams.get('permmsgid') || url.hash.split('/').pop();
+  if (!/^[a-f0-9]{8,32}$/i.test(id || '')) throw new Error('This Gmail link cannot be resolved; open it in Gmail.');
+  var listed = await listAccounts();
+  if (!listed.ok) throw new Error(listed.message);
+  var email = url.searchParams.get('authuser');
+  var accountId = args.account;
+  if (!accountId && email && email.includes('@')) {
+    var matches = listed.result.accounts.filter(function (a) { return a.email.toLowerCase() === email.toLowerCase(); });
+    if (matches.length !== 1) throw new Error('The Gmail account in this link is not connected.');
+    accountId = matches[0].id;
+  }
+  var selected = await selectGoogleAccount(accountId);
+  if (!selected.ok) throw new Error(selected.message);
+  var response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(id) + '?format=full', authAccount: selected.accountId, timeoutMs: 20000 });
+  // Gmail web links can identify a conversation whose original draft message
+  // has been replaced. Resolve that conversation without changing accounts or
+  // mistaking an authentication/network failure for a missing message.
+  if (response.status === 404 && !url.searchParams.has('permmsgid')) {
+    var threadResponse = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + encodeURIComponent(id) + '?format=metadata', authAccount: selected.accountId, timeoutMs: 20000 });
+    if (!threadResponse.ok || threadResponse.status !== 200 || threadResponse.truncated) throw new Error('Unable to read this Gmail conversation.');
+    var thread = JSON.parse(threadResponse.body);
+    var latest = (Array.isArray(thread.messages) ? thread.messages : []).filter(function (m) {
+      return /^[a-f0-9]{8,32}$/i.test(m.id || '') && !(m.labelIds || []).includes('DRAFT');
+    }).reduce(function (a, b) { return !a || Number(b.internalDate || 0) >= Number(a.internalDate || 0) ? b : a; }, null);
+    if (!latest || latest.id === id) throw new Error('No readable message remains in this Gmail conversation.');
+    response = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(latest.id) + '?format=full', authAccount: selected.accountId, timeoutMs: 20000 });
+  }
+  if (!response.ok || response.status !== 200 || response.truncated) throw new Error('Unable to read this Gmail message.');
+  var message = JSON.parse(response.body);
+  if (!/^[a-f0-9]{8,32}$/i.test(message.id || '') || !message.payload) throw new Error('Incomplete Gmail message');
+  var conversation, conversationUnavailable = false;
+  // Read only metadata for the surrounding messages. Cindy requests a body
+  // through the same reader when the user expands that message.
+  if (message.threadId || thread) {
+    try {
+      if (!thread) {
+        var metadata = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + encodeURIComponent(message.threadId) + '?format=metadata', authAccount: selected.accountId, timeoutMs: 20000 });
+        if (!metadata.ok || metadata.status !== 200 || metadata.truncated) throw new Error('Conversation unavailable');
+        thread = JSON.parse(metadata.body);
+      }
+      if (!Array.isArray(thread.messages)) throw new Error('Incomplete conversation');
+      var members = thread.messages.filter(function (m) {
+        return /^[a-f0-9]{8,32}$/i.test(m.id || '') && (!(m.labelIds || []).includes('DRAFT') || m.id === message.id);
+      }).sort(function (a, b) { return Number(a.internalDate || 0) - Number(b.internalDate || 0); });
+      if (!members.some(function (m) { return m.id === message.id; })) throw new Error('Message missing from conversation');
+      conversation = { threadId: thread.id || message.threadId || id, messages: members.map(function (m) {
+        return { messageId: m.id,
+          url: 'https://mail.google.com/mail/?authuser=' + encodeURIComponent(selected.accountEmail) + '&permmsgid=' + encodeURIComponent(m.id) + '#all/' + m.id,
+          from: header(m.payload || {}, 'from'), date: header(m.payload || {}, 'date'),
+          subject: header(m.payload || {}, 'subject'), snippet: String(m.snippet || '').slice(0, 2048) };
+      }) };
+    } catch (_) { conversationUnavailable = true; }
+  }
+  function header(part, name) { return (part.headers || []).filter(function (h) { return h.name.toLowerCase() === name; }).map(function (h) { return h.value; }).join(', '); }
+  function decode(data) { return new TextDecoder().decode(Uint8Array.from(atob(data.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); })); }
+  var bodies = { 'text/plain': [], 'text/html': [] }, attachments = [];
+  function walk(part) {
+    var body = part.body || {}, cid = header(part, 'content-id').replace(/^<|>$/g, '');
+    if (part.filename || /^attachment\b/i.test(header(part, 'content-disposition')) || (cid && /^image\//.test(part.mimeType))) {
+      attachments.push({ key: part.partId || 'root', filename: part.filename || 'image', mimeType: part.mimeType,
+        bytes: body.size, contentId: cid, attachmentId: body.attachmentId, inlineData: body.data });
+      return; // Attached .eml messages must never become the outer email body.
+    }
+    if (bodies[part.mimeType] && typeof body.data === 'string') bodies[part.mimeType].push(decode(body.data));
+    (part.parts || []).forEach(walk);
+  }
+  walk(message.payload);
+  var preview = await mailImagePreviews({ messageId: message.id, attachments: attachments }, selected.accountId);
+  for (var file of preview.attachments) {
+    if (file.inlineData && /^image\/(png|jpeg|gif|webp)$/.test(file.mimeType) && file.inlineData.length <= 22000000) {
+      var deposited = await cindy.send({ type: 'cindy-request', kind: 'deposit_media', data: file.inlineData.replace(/-/g, '+').replace(/_/g, '/'), label: file.filename });
+      if (deposited.ok) file.previewUrl = deposited.url;
+    }
+  }
+  var markReadFailed = false;
+  if (args.markRead === true && (message.labelIds || []).includes('UNREAD') && !(message.labelIds || []).includes('DRAFT')) {
+    try {
+      var marked = await cindy.fetch({ url: 'https://gmail.googleapis.com/gmail/v1/users/me/messages/' + encodeURIComponent(message.id) + '/modify',
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ removeLabelIds: ['UNREAD'] }),
+        authAccount: selected.accountId, timeoutMs: 20000 });
+      markReadFailed = !marked.ok || marked.status !== 200;
+    } catch (_) { markReadFailed = true; }
+  }
+  return { accountId: selected.accountId, messageId: message.id, from: header(message.payload, 'from'),
+    to: header(message.payload, 'to'), cc: header(message.payload, 'cc'), bcc: header(message.payload, 'bcc'),
+    subject: header(message.payload, 'subject'), date: header(message.payload, 'date'),
+    bodyText: bodies['text/plain'].join('\n'), bodyHtml: bodies['text/html'].join('\n'),
+    ...(conversation ? { conversation: conversation } : {}),
+    ...(conversationUnavailable ? { conversationUnavailable: true } : {}),
+    ...(markReadFailed ? { markReadFailed: true } : {}),
+    attachments: preview.attachments.map(function (a) { var clean = { ...a }; delete clean.inlineData; delete clean.attachmentId; return clean; }) };
+}
+async function mailToolDraft(args, sourceCallId) {
+  if (Array.isArray(args.command) && args.command.length === 1 && ['send', 'reply', 'reply-all'].includes(args.command[0]))
+    return { ok: false, execution: 'not_executed', message: '邮件未发送。请先用 drafts create / drafts reply / drafts reply-all 创建并展示草稿，再用 drafts send 发送；Cindy 公共流程会提供 10 秒撤销窗口。不要绕过草稿流程直接发送。' };
+  if (!Array.isArray(args.command) || args.command[0] !== 'drafts' || !['get', 'send', 'update', 'delete'].includes(args.command[1])) return null;
+  if (args.command.length !== 2 || (args.arguments || []).length !== 1) return { ok: false, execution: 'not_executed', message: '请使用完整的草稿命令和单个草稿 ID。' };
+  if (args.command[1] === 'send' && (Object.keys(args.options || {}).length || (args.attachments || []).length))
+    return { ok: false, execution: 'not_executed', message: '发送现有草稿只接受草稿 ID；修改请先更新该草稿。' };
+  if (!gmailCompose) return args.command[1] === 'get' ? null : { ok: false, execution: 'not_executed', message: '当前 Cindy 不支持公共邮件流程，请更新 Cindy 后再编辑或发送草稿。' };
+  if (args.command[1] === 'send' && cindyMail.sendGraceMs !== 10000)
+    return { ok: false, execution: 'not_executed', message: '当前 Cindy 尚不支持发送前的 10 秒撤销窗口，请更新 Cindy 后再发送。草稿已保留。' };
+  return gmailCompose.beforeTool({ operation: args.command[1], account: args.account,
+    draftId: args.arguments[0], readOnly: args.session_context.workdir_is_read_only !== false, sourceCallId });
+}
+
 (function () {
   var PREFIX = 'gmail';
   cindy.onHostMessage(async function (message) {
@@ -197,6 +365,11 @@ async function selectGoogleAccount(accountId) {
     var context = args.session_context;
     var workerRequested = false;
     try {
+      if (message.tool === 'gmail_read_message') {
+        var mail = await readMailMessageLink(args);
+        await cindy.send({ type: 'tool-result', callId: message.callId, ok: true, result: mail });
+        return;
+      }
       if (message.tool === PREFIX + '_accounts') {
         var listed = await listAccounts();
         await cindy.send(Object.assign({ type: 'tool-result', callId: message.callId }, listed));
@@ -219,6 +392,16 @@ async function selectGoogleAccount(accountId) {
           return;
         }
         args = Object.assign({}, args, { account: selected.accountId });
+      }
+      if (!isSchema) {
+        workerRequested = true;
+        var cardResult = await mailToolDraft(args, message.callId);
+        workerRequested = false;
+        if (cardResult) {
+          await cindy.send({ type: 'tool-result', callId: message.callId, ok: !!cardResult.ok,
+            ...(cardResult.ok ? { result: cardResult.data } : { message: '[' + cardResult.execution + '] ' + cardResult.message }) });
+          return;
+        }
       }
       var prepared = isSchema ? { options: args.options || {}, files: [], inline: [] } : await prepareMailAttachments(args, message.callId);
       if (prepared.inline && prepared.inline.length) {
@@ -245,6 +428,11 @@ async function selectGoogleAccount(accountId) {
       var result = response.result;
       if (result.ok && prepared.files.length && result.data && typeof result.data === 'object') {
         result.data.importedAttachments = prepared.files;
+      }
+      if (!isSchema && result.ok && result.data && result.data.readBack && context && context.workdir_is_read_only === false) {
+        result.data.readBack = await mailImagePreviews(result.data.readBack, selected.accountId);
+        try { result.data.draftCard = await gmailCompose.present(message, selected, result.data.readBack); }
+        catch (_) { result.data.draftCard = false; } // Do not change the known Gmail receipt.
       }
       await cindy.send({ type: 'tool-result', callId: message.callId, ok: !!result.ok,
         ...(result.ok ? { result: result.data } : { message: '[' + result.execution + '] ' + result.message }) });

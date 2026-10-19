@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+// The workflow is shared source outside plugin directories. Run its behavioral
+// and bundled-source checks even when no plugin-prefixed test was selected.
+import './mail-compose.test.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
