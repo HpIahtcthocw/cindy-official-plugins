@@ -2,6 +2,21 @@ Outlook Mail for Cindy
 
 Independently authored integration for Microsoft cloud mailboxes.
 Microsoft, Outlook, Hotmail and Microsoft 365 are trademarks of Microsoft.
-This plugin is not endorsed by Microsoft and does not use a Microsoft brand icon.
+This plugin is not affiliated with, sponsored by, or endorsed by Microsoft.
 OAuth authorization, refresh tokens and request credential injection are managed
 by the Cindy Host; no Microsoft SDK or executable runtime is bundled.
+
+Icon: assets/icon.png
+Owner: Microsoft Corporation.
+Source: Microsoft Office Fabric CDN, retrieved 2026-10-19:
+https://res.cdn.office.net/files/fabric-cdn-prod_20221201.001/assets/brand-icons/product/svg/outlook_48x1.svg
+The source vector was rasterized to a 512 x 512 RGBA PNG, retaining its colors,
+proportions and transparent background. No artwork was redrawn or recolored.
+Source SVG SHA-256: 0884e0478f7e073163febe67eaff20be97ae38373b0866c9668f81c2f6bd26c2
+Packaged PNG SHA-256: 55bbc2548f2c7cf26bbd71ccb1b53de4a508c7d4bb2da204427c8ae8990faa64
+
+The Outlook mark identifies the service this independent integration supports.
+The repository Apache-2.0 license does not grant rights to Microsoft's brand
+assets. This notice is attribution, not a claim of permission or endorsement.
+Microsoft trademark and brand guidelines:
+https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks
