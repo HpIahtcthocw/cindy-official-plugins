@@ -124,10 +124,11 @@ function fixture(t, overrides = {}) {
       } },
     },
   });
-  runInContext(read('.tests/contracts/cindy-mail-runtime.js'), sandbox);
+  if (overrides.mailSdkVersion !== 0) runInContext(read('.tests/contracts/cindy-mail-runtime.js'), sandbox);
   // Existing transport fixtures exercise the v1 plain-text adapter. Rich MIME
   // updates have separate byte-preservation tests against the actual builder.
-  if (!overrides.rich) runInContext('const originalRegister = cindyMail.register; cindyMail.register = adapter => originalRegister({...adapter, richText:false});', sandbox);
+  if (overrides.mailSdkVersion !== 0 && !overrides.rich) runInContext('const originalRegister = cindyMail.register; cindyMail.register = adapter => originalRegister({...adapter, richText:false});', sandbox);
+  if (overrides.mailSdkVersion) sandbox.cindyMail.version = overrides.mailSdkVersion;
   runInContext(main, sandbox);
   async function run(args = {}) {
     await handler({ type: 'tool-call', tool: 'gmail_run', callId: 'call-test', args: {
@@ -153,6 +154,24 @@ function fixture(t, overrides = {}) {
     flush: async () => { for (const [id, fn] of [...timers]) { timers.delete(id); await fn(); } },
     kv: () => copy(kv), action: message => handler({ type: 'event', name: 'card-action', callId: 'call-test', userActionToken: 'click-ticket', ...message }) };
 }
+
+for (const mailSdkVersion of [0, 2]) test('unsupported mail SDK blocks every draft mutation before the worker: ' + mailSdkVersion, async t => {
+  const f = fixture(t, { mailSdkVersion });
+  for (const operation of ['create', 'reply', 'reply-all', 'forward', 'update', 'send', 'delete']) {
+    const result = await f.run({ command: ['drafts', operation], arguments: operation === 'create' ? [] : ['draft-test'], options: {} });
+    assert.equal(result.ok, false, operation);
+    assert.match(result.message, /\[not_executed\].*更新 Cindy/);
+  }
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.replies.some(r => r.type === 'mail-draft-update'), false);
+  // Read-only tools still work on older hosts; no orphan draft is created.
+  const readBack = await f.run({ command: ['drafts', 'get'], arguments: ['draft-test'], options: {},
+    session_context: { workdir: f.workdir, workdir_is_local: true, workdir_is_read_only: true } });
+  assert.equal(readBack.ok, true);
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].params.readOnly, true);
+});
 
 test('chat image → reply draft → read-back retains source thread, original quote and attachment bytes', async t => {
   const f = fixture(t);

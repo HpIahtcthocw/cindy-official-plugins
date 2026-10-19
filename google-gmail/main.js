@@ -256,9 +256,11 @@ async function readMailMessageLink(args) {
   if (!listed.ok) throw new Error(listed.message);
   var email = url.searchParams.get('authuser');
   var accountId = args.account;
-  if (!accountId && email && email.includes('@')) {
+  if (email && email.includes('@')) {
     var matches = listed.result.accounts.filter(function (a) { return a.email.toLowerCase() === email.toLowerCase(); });
     if (matches.length !== 1) throw new Error('The Gmail account in this link is not connected.');
+    if (accountId !== undefined && accountId !== matches[0].id)
+      throw new Error('邮件链接与指定的 Gmail 账号不一致，请选择链接对应的账号后再打开。');
     accountId = matches[0].id;
   }
   var selected = await selectGoogleAccount(accountId);
@@ -353,11 +355,12 @@ async function readMailMessageLink(args) {
 async function mailToolDraft(args, sourceCallId) {
   if (Array.isArray(args.command) && args.command.length === 1 && ['send', 'reply', 'reply-all'].includes(args.command[0]))
     return { ok: false, execution: 'not_executed', message: '邮件未发送。请先用 drafts create / drafts reply / drafts reply-all 创建并展示草稿，再用 drafts send 发送；Cindy 公共流程会提供 10 秒撤销窗口。不要绕过草稿流程直接发送。' };
-  if (!Array.isArray(args.command) || args.command[0] !== 'drafts' || !['get', 'send', 'update', 'delete'].includes(args.command[1])) return null;
+  if (!Array.isArray(args.command) || args.command[0] !== 'drafts' || !['get', 'create', 'reply', 'reply-all', 'forward', 'send', 'update', 'delete'].includes(args.command[1])) return null;
+  if (!gmailCompose) return args.command[1] === 'get' ? null : { ok: false, execution: 'not_executed', message: '当前 Cindy 不支持公共邮件流程，请更新 Cindy 后再创建、编辑或发送草稿。' };
+  if (!['get', 'send', 'update', 'delete'].includes(args.command[1])) return null;
   if (args.command.length !== 2 || (args.arguments || []).length !== 1) return { ok: false, execution: 'not_executed', message: '请使用完整的草稿命令和单个草稿 ID。' };
   if (args.command[1] === 'send' && (Object.keys(args.options || {}).length || (args.attachments || []).length))
     return { ok: false, execution: 'not_executed', message: '发送现有草稿只接受草稿 ID；修改请先更新该草稿。' };
-  if (!gmailCompose) return args.command[1] === 'get' ? null : { ok: false, execution: 'not_executed', message: '当前 Cindy 不支持公共邮件流程，请更新 Cindy 后再编辑或发送草稿。' };
   if (args.command[1] === 'send' && cindyMail.sendGraceMs !== 10000)
     return { ok: false, execution: 'not_executed', message: '当前 Cindy 尚不支持发送前的 10 秒撤销窗口，请更新 Cindy 后再发送。草稿已保留。' };
   return gmailCompose.beforeTool({ operation: args.command[1], account: args.account,

@@ -93,6 +93,22 @@ test('ambiguous accounts and foreign URLs never trigger mailbox requests', async
   assert.equal((await f.read('https://mail.google.com/mail/?authuser=b@example.com#all/12345678')).accountId, 'b');
 });
 
+test('explicit account must match the link account before any read or mark-read request', async () => {
+  const f = fixture([{ id: 'a', email: 'a@example.test', status: 'connected' }, { id: 'b', email: 'b@example.test', status: 'connected' }]);
+  f.msg.labelIds = ['UNREAD'];
+  for (const markRead of [false, true]) {
+    for (const account of ['b', 'missing']) {
+      await assert.rejects(f.read('https://mail.google.com/mail/?authuser=a%40example.test#all/12345678', { account, markRead }), /账号不一致/);
+    }
+    await assert.rejects(f.read('https://mail.google.com/mail/?authuser=missing%40example.test#all/12345678', { account: 'a', markRead }));
+  }
+  assert.equal(f.calls.length, 0);
+  const mail = await f.read('https://mail.google.com/mail/?authuser=A%40EXAMPLE.TEST#all/12345678', { account: 'a', markRead: true });
+  assert.equal(mail.accountId, 'a');
+  assert.ok(f.calls.some(r => r.method === 'POST'));
+  assert.ok(f.calls.every(r => r.authAccount === 'a'));
+});
+
 // Conversation support: one selected body + chronological metadata, never eagerly read other bodies.
 test('keeps the selected mail and exposes account-bound links for the whole conversation', async () => {
   const f = fixture(), calls = [];
