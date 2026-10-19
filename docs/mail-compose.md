@@ -203,8 +203,9 @@ keep read-only tools usable and report that Cindy must be updated before draft
 editing/sending. Do not silently bypass the common flow.
 
 Editing/autosaving updates the current card. A later tool read presents a new
-view; Cindy collapses previous views of the same provider instance/account/draft
-within that task into read-only history. Equal subjects do not identify a draft.
+view; Cindy hides previous views and their plugin labels for the same provider
+instance/account/draft within that task, retaining only the latest card. Historical
+snapshots remain stored. Equal subjects do not identify a draft.
 Old buttons are rejected at the Host, not only hidden. Sent cards cannot send again.
 
 Run `.tests/mail-compose.test.mjs` and the provider tests. The SDK contract snapshot
