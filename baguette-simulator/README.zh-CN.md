@@ -6,7 +6,9 @@
 
 Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.7。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
 
-iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。launch_app 默认打开当前 session 侧边栏；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 open_viewer 打开已有设备。
+iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。launch_app 默认打开当前任务的模拟器页签；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 open_viewer 打开已有设备。
+
+两个界面：每个任务在右侧栏有自己的「iOS 模拟器」页签（只有画面和控制条，没有地址栏）；左侧导航的「模拟器」不跟对话，管理全部设备（启动、关闭、改名、新建 iPhone、在当前任务中打开），并显示每台设备被几个任务在用。任务用哪台设备由 AI 打开模拟器时决定：devices 每行带 tasks、thisTask，可复用空闲设备或新建；boot、open_viewer、launch_app 把设备绑定到调用所属的任务（`~/Library/Application Support/BaguetteCindy/task-bindings.json`，权限 0600）。还没有设备或设备已关闭时，页签显示设备列表或「启动」，不留空白。宿主不支持任务页时回退到侧栏预览。
 
 控制页由 Cindy 自己绘制：设备胶囊（状态圆点、设备名，点开可切换、添加、改名）、主屏幕、旋转、截图和「更多」菜单（摇一摇、App 切换器、画面大小最大 200%、显示 Baguette 完整工具栏、解除卡键、恢复画面、需确认的关闭设备）。内嵌的 Baguette 页面只负责渲染实时画面（`?handheld=1`，按设备圆角适应窗口；折叠屏保留 3D 视图），其工作台界面由注入样式隐藏。画面断开、闲置倒计时和设备已关闭都直接显示在画面位置，并提供恢复 / 继续使用 / 启动按钮；没有明确操作不会重启模拟器或 App。Agent 使用 press(button=release-input) 解除卡键。Unicode 粘贴会替换模拟器剪贴板；网页复制会替换 Mac 剪贴板。输入前观察焦点，之后核对结果；按键投递回调不代表 App 处理完成。
 
@@ -34,7 +36,7 @@ Node Worker 有当前用户级本机权限。只调用固定可执行文件和�
 
 上游 0.2.7 新增 App 偏好设置（UserDefaults）编辑卡片，可读取或改写任意已安装 App 的设置，并以注入 dylib 的方式重启 App。这些接口不使用独立设备目录，因此插件隐藏该卡片、在画面代理对相关接口返回 404，且不打包 `DefaultsLookups.dylib`。Handheld 模式为上游原有行为，仍只监听本机。
 
-已知限制：iOS 27 上断开视频连接可能触发上游 SIGABRT。服务每分钟最多自动重启五次，独立控制页可手动恢复；这是缓解，不是原生崩溃根治。插件停用或 Cindy 退出时控制页也会停止，需要 Cindy 再次启动。设备数据跨 session 保留，但浏览器标签属于当前 session。
+已知限制：iOS 27 上断开视频连接可能触发上游 SIGABRT。服务每分钟最多自动重启五次，独立控制页可手动恢复；这是缓解，不是原生崩溃根治。插件停用或 Cindy 退出时控制页也会停止，需要 Cindy 再次启动。设备数据跨任务保留，每个任务页签记住自己的设备。
 
 ## 构建与验证
 
