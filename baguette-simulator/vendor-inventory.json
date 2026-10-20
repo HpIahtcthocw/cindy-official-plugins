@@ -1,13 +1,13 @@
 [
   {
     "path": "vendor/baguette/Baguette",
-    "bytes": 7939904,
-    "sha256": "a7dc0f00933838a5471f271b5916edc69ca0f0af6c37606aa67e421043ba5ff5"
+    "bytes": 7972848,
+    "sha256": "9de96d7c83fbf347fb838f61afa7ee91a00666af98de7d844b7e62a5e75e539a"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/HingeControl/HingeControl",
-    "bytes": 77424,
-    "sha256": "cfa928ed2240fc09e6e7226c0950a97a00c25a03f251becc46b9acdfa1ada647"
+    "bytes": 77808,
+    "sha256": "0e7b0228b23926f6492a47ebbd1fe7d93d424c19e0005a8f0dddd62520f30156"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/HingeControl/LICENSE.idb",
@@ -65,14 +65,14 @@
     "sha256": "afcff034727f00c52491ac489535055eebc1280455542bc758487a3bc129933c"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17/definition.json",
-    "bytes": 541,
-    "sha256": "c49d4c219da38fefdc40f51095068cecc40e1331d4842132aec051e5307de296"
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/definition.json",
+    "bytes": 2357,
+    "sha256": "d1fa1a9f53bb365cd3b7f9a9097a005e26e9ed1b8d893e4d429ebac59d19fa15"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17/device.usdz",
-    "bytes": 2662557,
-    "sha256": "2d0eb39e8b60405577a8add689717be4b97e3766aed81d30fb2c84365793fb42"
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/device.usdz",
+    "bytes": 3119968,
+    "sha256": "0edb3a4a51a7dcb777234f50dcce532758349ed8fe70ee5fd17709f225c8f81b"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro/definition.json",
@@ -85,14 +85,14 @@
     "sha256": "eb22bf605aaded77b65dc632f2da0f3daedec98af3aa5cd4c45795788fdc07c7"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/definition.json",
-    "bytes": 2357,
-    "sha256": "d1fa1a9f53bb365cd3b7f9a9097a005e26e9ed1b8d893e4d429ebac59d19fa15"
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17/definition.json",
+    "bytes": 541,
+    "sha256": "c49d4c219da38fefdc40f51095068cecc40e1331d4842132aec051e5307de296"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/device.usdz",
-    "bytes": 3119968,
-    "sha256": "0edb3a4a51a7dcb777234f50dcce532758349ed8fe70ee5fd17709f225c8f81b"
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17/device.usdz",
+    "bytes": 2662557,
+    "sha256": "2d0eb39e8b60405577a8add689717be4b97e3766aed81d30fb2c84365793fb42"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-air/definition.json",
@@ -138,6 +138,11 @@
     "path": "vendor/baguette/Baguette_Baguette.bundle/VirtualNetwork/VirtualNetwork.dylib",
     "bytes": 165192,
     "sha256": "c145c82deb00d3c736ba583582a527e045427378459f7843f4d6dae48701c934"
+  },
+  {
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/baguette-demo.html",
+    "bytes": 3567,
+    "sha256": "58a6565a542f0ba88d4eede5c5d755250b6b392be59dcd5e9b120a75fe24975d"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/baguette/baguette.js",
@@ -250,9 +255,9 @@
     "sha256": "605d9a180e2daaa8840de5560a52c459e20f18f709698a2b2bdea13c10139c6f"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/baguette-demo.html",
-    "bytes": 3567,
-    "sha256": "58a6565a542f0ba88d4eede5c5d755250b6b392be59dcd5e9b120a75fe24975d"
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/capture-gallery.js",
+    "bytes": 13896,
+    "sha256": "711756bc802919b3f75f343252d5202c18c5cc44b2dd137e3a67c4ff3a915d2b"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/capture/capture-composer.js",
@@ -273,11 +278,6 @@
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/capture/capture-size.js",
     "bytes": 8876,
     "sha256": "8551a1d7a8b7cdd42e60a099b2a9393d88a576899011e307511d1538e0a554c4"
-  },
-  {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/capture-gallery.js",
-    "bytes": 13896,
-    "sha256": "711756bc802919b3f75f343252d5202c18c5cc44b2dd137e3a67c4ff3a915d2b"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/carplay-frames/cupra/climate-bar.png",
@@ -415,14 +415,14 @@
     "sha256": "e5ca8f15185f73ba01f87a1a275cc7749f92e54af3b9c6e62281028e5e5ae991"
   },
   {
-    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-list/device-filter.js",
-    "bytes": 2680,
-    "sha256": "2a0e5856dbce36eae86d1af7b45a4c167c420e0bc039631dc152baa7386cf27b"
-  },
-  {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-list.js",
     "bytes": 17626,
     "sha256": "8c420ce56a71ee6df41155c69c323af5610704faebc6b8cb1b08c59addf7ca3d"
+  },
+  {
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-list/device-filter.js",
+    "bytes": 2680,
+    "sha256": "2a0e5856dbce36eae86d1af7b45a4c167c420e0bc039631dc152baa7386cf27b"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-location.js",
@@ -436,18 +436,23 @@
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-native.html",
-    "bytes": 174294,
-    "sha256": "3bf280bdc8e149fe44574c735e52d0e13435983b9c212d90315e4e0c6aa0b55b"
+    "bytes": 179337,
+    "sha256": "319a1d223829df581ca930ff7f2208c39ddecede881f530d8602ccc767221e6d"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-native.js",
-    "bytes": 142132,
-    "sha256": "8ff2b20a1b40faafc6639aa070193bb7a919d88a7ba45e98d4a50e5c6caad331"
+    "bytes": 143522,
+    "sha256": "77520c4dd4f3018434e4d8f80456910192a9500f00f9f5c560109eadc84bff94"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-network.js",
     "bytes": 12268,
     "sha256": "f3cd8a876278418580f0d860b6adb86edd8c162beb65f6dd4fa7fcbcb525215c"
+  },
+  {
+    "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-notify.js",
+    "bytes": 4516,
+    "sha256": "159c585fc464b4d6cb1defcca6f5981e9cd50e701060838c27c042376730cb4a"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim-plugins.js",
@@ -476,8 +481,8 @@
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/sim.html",
-    "bytes": 8380,
-    "sha256": "e9de1b72278faa39533a39bf0d5aeffda289f0dae1f4e4d7ec2b1420e3fbce9d"
+    "bytes": 8419,
+    "sha256": "0d31274b256865e6e86df75be75fe93b902164943875ba2637240eab04f13f44"
   },
   {
     "path": "vendor/baguette/Baguette_Baguette.bundle/Web/stream-format.js",

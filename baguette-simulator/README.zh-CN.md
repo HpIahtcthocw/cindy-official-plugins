@@ -4,7 +4,7 @@
 
 [English](README.md)
 
-Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.7。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
+Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.8。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
 
 iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。launch_app 默认打开当前任务的模拟器页签；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 open_viewer 打开已有设备。
 
@@ -42,7 +42,7 @@ Node Worker 有当前用户级本机权限。只调用固定可执行文件和�
 
 原生 release 构建使用全程序 LTO 和 Swift -Osize、移除符号并临时签名，确保 Git 中二进制总量符合仓库限制。
 
-在装有 Xcode 的 Apple Silicon Mac 上运行 sh native/build.sh，编译随包 Objective-C 源码并临时签名，不下载依赖；Baguette 和 HingeControl 基于 v0.2.7 加上 vendor-native.patch 重新编译；运行 sh native/build-baguette.sh <已验证的源码压缩包> 可重建。补丁让独立设备目录中的 iPhone Duo 在设备内读取真实折叠角度（CoreDevice 无法发现该目录中的设备）；屏幕枚举、折叠控制和改名设备匹配原型号已由上游按所选设备目录处理。
+在装有 Xcode 的 Apple Silicon Mac 上运行 sh native/build.sh，编译随包 Objective-C 源码并临时签名，不下载依赖；Baguette 和 HingeControl 基于 v0.2.8 加上 vendor-native.patch 重新编译；运行 sh native/build-baguette.sh <已验证的源码压缩包> 可重建，之后运行 node native/inventory.mjs --write。补丁让 Baguette 的每个 simctl 调用都带上独立设备目录（已提交上游 tddworks/baguette#122；没有它，摇一摇、状态栏、定位、外观、日志和 App 相关功能对独立目录中的设备都会失败），并在 3D 画面断开时释放整个场景（tddworks/baguette#123；未修复时折叠屏每重连一次约残留 30 MB）。运行 node .tests/baguette/real-simulator-smoke.mjs --foldable 可在临时设备目录中用真模拟器检查一次构建。
 
 运行仓库契约和 .tests/baguette-simulator.test.mjs。审核 VENDOR-REVIEW.md、THIRD-PARTY-LICENSES.txt 和提案 #119：https://github.com/makecindy/cindy-official-plugins/issues/119。首发为空定向受众，不推送全体用户。最终包在合格 Cindy 客户端内的安装验证，必须与直接 Node/原生测试分开记录。
 

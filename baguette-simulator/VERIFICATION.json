@@ -1,22 +1,26 @@
 {
-  "date": "2026-10-19",
+  "date": "2026-10-21",
   "pluginVersion": "0.1.24",
-  "baguette": "0.2.7",
-  "status": "upstream-upgrade-and-controller-redesign-local-verified",
+  "baguette": "0.2.8",
+  "status": "upstream-0.2.8-maintenance-local-verified",
   "passed": [
-    "Official v0.2.7 source and release archives match the pinned SHA-256 values; release Web resources are byte-identical to the tagged source",
-    "Rebased vendor-native.patch applies to the tagged source; the full upstream Swift suite (2449 tests in 302 suites) passes, including the new custom-set DevicectlHinge regression",
-    "LTO build on Xcode 27.1 (27A9269): --version reports 0.2.7; on a private-set iPhone Duo (iOS 27.1) hinge read 0° through the guest monitor, describe-ui, screenshot and serve (/simulators, device page, /hinge) succeeded; the device stayed booted",
-    "Tracked binaries total 8,677,926 bytes after the icon change, within the 10 MiB repository gate",
-    "Plugin Node tests pass, including: blocked Defaults/app-list/relaunch routes; every vendored and first-party page script parses (regression for the misplaced 0.2.7 web hunk that broke /simulators/:udid); control-model view logic; control.js against a fake DOM (load once, recover, start after shutdown, idle card, device switch)",
+    "Official v0.2.8 release archive (498328d1…) matches the GitHub asset digest; the source archive (f0fe577b…) equals `git archive v0.2.8`; release Web resources are byte-identical to the tagged source; vendor-web.patch applies with context and no fuzz",
+    "vendor-native.patch (device set for every simctl call, tddworks/baguette#122; 3D scene freed on close and models loaded once, tddworks/baguette#123; version stamp) on v0.2.8: the full upstream Swift suite passes (2536 tests in 305 suites, Swift 6.4, Xcode 27.1)",
+    "LTO build on Xcode 27.1 (27A9269): --version reports 0.2.8; node .tests/baguette/real-simulator-smoke.mjs --foldable passed 17/17 in a throwaway device set (iPhone 18 Pro on iOS 27.0, iPhone Duo on iOS 27.1): boot, flat H.264 and MJPEG frames, describe-ui, screenshot, tap/swipe/press, keyboard helper, private-set clipboard round trip, shake, status bar, rotation, hinge read and open/close, 3D frames",
+    "Before the device-set patch, POST /simulators/:udid/shake and GET /simulators/:udid/status-bar returned 500 for a private-set device; after it both succeed",
+    "3D stream memory: 30 open/close cycles leave serve at 233 MB with the patch (v0.2.8 unpatched: 1032 MB); flat streams plateau near 66 MB",
+    "Disconnect stress on 0.2.7 with iOS 27.1: about 25 minutes of three concurrent loops opening and dropping flat and 3D streams (clean close and TCP reset) did not crash the server",
+    "Idle cost measured against an idle iPhone Duo: flat MJPEG sends no frames, flat H.264 ~45 fps (+~5% CPU), 3D ~+10% CPU; set_fps 2 throttles both flat and 3D sockets",
+    "vendor-inventory.json matches all 103 packaged upstream files and is now checked by a plugin test",
+    "Plugin Node tests pass (81), including: blocked plugin/bakery/farm/device-twin/HTTP-input/CarPlay routes; hidden-page stream throttling; orphaned serve reaping and the idle memory recycle; private-set clipboard writes without devicectl",
     "Headless Chrome against the real proxy and a booted private-set iPad Air 11 (iOS 27.0): the redesigned controller renders Cindy chrome with the live handheld screen, contain-fit with corner radius, light and dark; no console errors. iPhone Duo (iOS 27.1) renders the 3D stage under the same chrome (first 3D frame did not arrive within the headless budget; stream behavior is unchanged upstream code)",
     "Settings page variants (devices, empty with one-tap creation, paused, English, dark) rendered in headless Chrome against a mocked host channel"
   ],
   "notVerified": [
-    "0.1.24 package has not yet been installed in a production or Beta Cindy; the PR device-verification gate remains open",
+    "The 0.1.24 package has been installed only in a development Cindy build (task page and management view observed there); production or Beta installation remains the PR device-verification gate",
     "Xcode 26 integration remains unverified",
-    "Controller interactions (device menu, More menu, dialogs, confirm shutdown) were exercised only through the fake-DOM tests, not clicked in a real browser",
-    "Duo 3D live frames and the full-toolbar toggle were not observed in a real browser session"
+    "3D memory with the patch was measured on the iPhone Duo only; other 3D models are covered by upstream unit tests",
+    "Hidden-page throttling was verified by socket-level measurement and unit tests, not by watching CPU while switching Cindy sidebar tabs"
   ],
   "previousReleaseVerification": {
     "date": "2026-10-13",

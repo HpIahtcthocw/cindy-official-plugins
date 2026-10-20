@@ -1,5 +1,5 @@
-Baguette v0.2.7 https://github.com/tddworks/baguette
-Local native changes: guest CoreMotion hinge-angle monitoring for custom device sets (HingeControl `monitor`), read by DevicectlHinge and the observed-screen sample; version constant stamped from the 0.2.7 source tag. Source patch and rebuild instructions accompany the rebuilt Baguette and HingeControl binaries. The host binary uses whole-program LTO, size optimization, symbol stripping and ad-hoc signing. Nine unchanged portable USDZ resources are collected from the same pinned official archive at packaging time. DefaultsLookups.dylib is not bundled.
+Baguette v0.2.8 https://github.com/tddworks/baguette
+Local native changes: every simctl call that names a device passes the custom device set (`--set`), submitted upstream as tddworks/baguette#122; live 3D streams free their RealityKit scene on close and load each device model once, submitted upstream as tddworks/baguette#123; version constant stamped from the 0.2.8 source tag. Source patch and rebuild instructions accompany the rebuilt Baguette and HingeControl binaries. The host binary uses whole-program LTO, size optimization, symbol stripping and ad-hoc signing. Nine unchanged portable USDZ resources are collected from the same pinned official archive at packaging time. DefaultsLookups.dylib is not bundled.
 Local farm patch: remove remote font links and use existing system-font fallback.
 Local Web networking patch: OSM tiles/search routed through same-origin fixed-endpoint Node proxy.
 Local keyboard transport: use same-origin /clipboard; never select host or port from fragment data.
@@ -223,6 +223,7 @@ Official Baguette logo sourced from https://github.com/tddworks/baguette/blob/v0
 0.1.6 itemized modifications: native/keyboard.m adapts the CoreSimulator resolution and SimulatorKit HID protocol from Baguette v0.1.98 (Apache-2.0), adds completion acknowledgements, exclusive device lock and release-only recovery; compiled as native/keyboard (Apple Silicon, ad-hoc signed). Web/baguette/parts/keyboard.js routes all keyboard/text input through the acknowledged adapter, suppresses repeats and serializes key bursts. Web/baguette/parts/bezel.js, Web/baguette/carplay/carplay-frame.js and Web/sim-native.html replace crosshair with default cursor. Original Baguette binary remains unchanged.
 
 0.1.24: upgraded to Baguette v0.2.7 (official tag and release archive above); native/web patches regenerated with context; idb MIT notice added for HingeControl's Frontmost.m; DefaultsLookups.dylib excluded. The plugin is renamed iOS Simulator and its icon is replaced with Cindy's own; the Baguette logo is no longer shipped.
+0.1.24 (2026-10-21): upgraded to Baguette v0.2.8; the guest hinge-read patch is retired (merged upstream) and replaced by the device-set and 3D-scene patches above; Web gains upstream's unmodified sim-notify.js.
 
 
 === idb (Meta Platforms, Inc.) — code adapted in Baguette HingeControl ===

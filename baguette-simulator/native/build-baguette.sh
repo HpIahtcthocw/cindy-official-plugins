@@ -2,8 +2,8 @@
 # Rebuild only the patched native payloads from the verified official source.
 set -eu
 PLUGIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SOURCE_ARCHIVE=${1:?Pass the official v0.2.7 source archive (see VENDOR-REVIEW.md)}
-EXPECTED_SHA=c7a3003515af13c752af5cdbb8846cbf6dc0b819c3645f6b98e17951a4927771
+SOURCE_ARCHIVE=${1:?Pass the official v0.2.8 source archive (see VENDOR-REVIEW.md)}
+EXPECTED_SHA=f0fe577bf6319105773b1e7419bdc3a6e9d507efc8bcc69cc38c31cb605330c8
 ACTUAL_SHA=$(shasum -a 256 "$SOURCE_ARCHIVE" | cut -d ' ' -f 1)
 [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo 'Source archive hash mismatch' >&2; exit 1; }
 BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/baguette-native.XXXXXX")
@@ -20,4 +20,4 @@ DEST="$PLUGIN_DIR/vendor/baguette"
 cp .build/release/Baguette "$DEST/Baguette"
 cp Injected/HingeControl/HingeControl "$DEST/Baguette_Baguette.bundle/HingeControl/HingeControl"
 cp Injected/HingeControl/Sources/LICENSE.idb "$DEST/Baguette_Baguette.bundle/HingeControl/LICENSE.idb"
-echo 'Rebuilt Baguette and HingeControl; regenerate vendor-inventory.json before packaging.'
+echo 'Rebuilt Baguette and HingeControl; run node native/inventory.mjs --write before packaging.'

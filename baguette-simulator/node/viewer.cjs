@@ -100,9 +100,10 @@ async function restartNative(current){
   }finally{current.retiring=null;current.restartPromise=null;}
  })();return current.restartPromise;
 }
-// Baguette 0.2.7/0.2.8 keeps about 33 MB per closed 3D stream (foldables reconnect
-// on every task-page load), so a long session grows by gigabytes. With nobody
-// watching, a server past this budget restarts on the same port; tabs reconnect.
+// Backstop for server memory: unpatched Baguette 0.2.7/0.2.8 kept about 33 MB per
+// closed 3D stream (foldables reconnect on every task-page load; fixed by the
+// bundled patch, tddworks/baguette#123). With nobody watching, a server past this
+// budget restarts on the same port; tabs reconnect.
 const RECYCLE_RSS_KB=1536*1024;
 function residentKb(pid){
  try{return Number(execFileSync('/bin/ps',['-o','rss=','-p',String(pid)],{encoding:'utf8',timeout:5000}).trim())||0;}catch{return 0;}
