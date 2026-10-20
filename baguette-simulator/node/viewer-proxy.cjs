@@ -2,11 +2,20 @@
 const http=require('node:http');const fs=require('node:fs');const path=require('node:path');
 const html=fs.readFileSync(path.join(__dirname,'control.html'));
 const chineseHtml=fs.readFileSync(path.join(__dirname,'control.zh-CN.html'));
-// Baguette 0.2.7 Defaults routes read/rewrite any app's UserDefaults and relaunch with
-// an injected dylib; they ignore the private device set, so they stay unavailable.
-const BLOCKED_ROUTE=/^\/simulators\/[^/]+\/(?:defaults(?:\.json)?|defaults-groups\.json|apps\.json|relaunch)\/?$/i;
+// Upstream routes the viewer never needs stay unavailable:
+// - Defaults read/rewrite any app's UserDefaults and relaunch it with an injected dylib;
+// - /input is the plugin API's HTTP gesture route (the page sends gestures on its socket);
+// - carplay-display clicks Simulator.app's menus through AppleScript, which can reach the
+//   user's own Simulator window;
+// - plugin commands run programs, bakeries clone git repositories, farm and the
+//   physical-device twin (/devices/:udid…) are outside this plugin.
+const BLOCKED_ROUTES=[
+ /^\/simulators\/[^/]+\/(?:defaults(?:\.json)?|defaults-groups\.json|apps\.json|relaunch|input|carplay-display)\/?$/i,
+ /^\/(?:plugins|bakeries|farm|devices)\/./i,
+ /^\/(?:bakeries\.json|farm)\/?$/i,
+];
 function blockedRoute(url){
- try{return BLOCKED_ROUTE.test(decodeURIComponent(String(url).split(/[?#]/,1)[0]).replace(/\/{2,}/g,'/'));}catch{return true;}
+ try{const p=decodeURIComponent(String(url).split(/[?#]/,1)[0]).replace(/\/{2,}/g,'/');return BLOCKED_ROUTES.some(re=>re.test(p));}catch{return true;}
 }
 // Cindy draws the controller chrome; the device page only renders the screen.
 // Injected into the page HTML before its scripts run, so the 3D stage reads the

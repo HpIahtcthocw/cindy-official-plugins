@@ -3,7 +3,11 @@ const {blockedRoute}=require('../../baguette-simulator/node/viewer-proxy.cjs');
 const {createClipboard}=require('../../baguette-simulator/node/clipboard.cjs');
 const udid='00000000-0000-4000-8000-000000000001';
 
-test('Defaults, app list and relaunch routes are blocked in every spelling; other routes pass',()=>{
+test('routes outside the viewer are blocked in every spelling; the viewer\'s own routes pass',()=>{
+ for(const route of ['input','carplay-display?enabled=1','INPUT/'])assert.equal(blockedRoute(`/simulators/${udid}/`+route),true,route);
+ for(const route of ['/plugins/a11y/commands/audit?udid=x','/bakeries/preview','/bakeries/install','/bakeries.json','/farm','/farm/farm-app.js',`/devices/${udid}/stream`,'//plugins//x/commands/y','/%62akeries/preview'])
+  assert.equal(blockedRoute(route),true,route);
+ for(const route of ['/plugins.json','/devices.json','/plugin-control.js','/farm-tile.js'])assert.equal(blockedRoute(route),false,route);
  for(const route of ['defaults.json?bundleId=com.example.app','defaults','defaults/','DEFAULTS','apps.json','defaults-groups.json?bundleId=x','relaunch?bundleId=x','%64efaults','defaults%2Ejson'])
   for(const prefix of [`/simulators/${udid}/`,`//simulators//${udid}/`])assert.equal(blockedRoute(prefix+route),true,prefix+route);
  assert.equal(blockedRoute('/simulators/%E0%A4%A/defaults'),true,'malformed encoding fails closed');
