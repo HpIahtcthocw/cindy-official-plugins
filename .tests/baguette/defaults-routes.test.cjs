@@ -31,14 +31,14 @@ test('blocked routes never reach the native server, even with a valid viewer ses
  }finally{bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
 });
 
-const {stagedPage,injectStage,STAGE_STYLE}=require('../../baguette-simulator/node/viewer-proxy.cjs');
+const {stagedPage,injectStage,STAGE_STYLE,STAGE_HEAD}=require('../../baguette-simulator/node/viewer-proxy.cjs');
 test('only the device page receives the Cindy stage stylesheet, and not when the full workbench is requested',()=>{
  assert.equal(stagedPage(`/simulators/${udid}`),true);assert.equal(stagedPage(`/simulators/${udid}?handheld=1`),true);assert.equal(stagedPage(`/simulators/${udid}/`),true);
  assert.equal(stagedPage(`/simulators/${udid}?handheld=0&cindyFull=1`),false);
  for(const url of ['/simulators','/simulators.json',`/simulators/${udid}/stream`,`/simulators/${udid}/hinge`,'/sim-native.js'])assert.equal(stagedPage(url),false,url);
- assert.equal(injectStage('<html><head><title>x</title></head><body></body></html>'),'<html><head><title>x</title>'+STAGE_STYLE+'</head><body></body></html>');
- assert.equal(injectStage('<html><head lang="en"><body>'),'<html><head lang="en">'+STAGE_STYLE+'<body>');
- assert.equal(injectStage('<p>bare</p>'),STAGE_STYLE+'<p>bare</p>');
+ assert.equal(injectStage('<html><head><title>x</title></head><body></body></html>'),'<html><head><title>x</title>'+STAGE_HEAD+'</head><body></body></html>');
+ assert.equal(injectStage('<html><head lang="en"><body>'),'<html><head lang="en">'+STAGE_HEAD+'<body>');
+ assert.equal(injectStage('<p>bare</p>'),STAGE_HEAD+'<p>bare</p>');
  assert.match(STAGE_STYLE,/\.top-bar/);assert.match(STAGE_STYLE,/--nv-page-bg/);
 });
 

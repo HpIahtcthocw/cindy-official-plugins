@@ -18,9 +18,18 @@ const STAGE_STYLE='<style id="cindy-stage-style">'+[
  '@media (prefers-color-scheme:light){#simNativeView{--nv-page-bg:#f8f8f6!important}}',
  '@media (prefers-color-scheme:dark){#simNativeView{--nv-page-bg:#1f1f1e!important}}',
  '#simNativeView[data-handheld] #nativeDeviceFrame{background:transparent!important}',
+ // Foldable pose picker: Cindy's grayscale pill instead of the workbench's blue-on-white.
+ '.r3d-pose-picker{background:#ffffff!important;color:#737373!important;border-color:#e4e4e0!important;box-shadow:none!important}',
+ '.r3d-pose-picker button{color:#737373!important}',
+ '.r3d-pose-picker button.active{background:#e5e5e5!important;color:#262626!important;border-color:#e5e5e5!important}',
+ '#simNativeView .r3d-pose-picker input[type=range]{border-left-color:#e4e4e0!important}',
+ '#simNativeView .r3d-pose-picker input[type=range]:active::-webkit-slider-thumb{border-color:#a3a3a3!important}',
+ '@media (prefers-color-scheme:dark){.r3d-pose-picker{background:#2c2c2a!important;color:#a3a3a3!important;border-color:#3c3c3a!important}.r3d-pose-picker button{color:#a3a3a3!important}.r3d-pose-picker button.active{background:#3c3c3a!important;color:#d4d4d4!important;border-color:#3c3c3a!important}#simNativeView .r3d-pose-picker input[type=range]{border-left-color:#3c3c3a!important}#simNativeView .r3d-pose-picker input[type=range]::-webkit-slider-runnable-track{background:#4a4a48!important}#simNativeView .r3d-pose-picker input[type=range]::-webkit-slider-thumb{background:#d4d4d4!important;border-color:#d4d4d4!important;box-shadow:none!important}}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div>div:first-child{border-radius:var(--cindy-screen-radius,0)!important}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div{outline:1px solid rgba(0,0,0,.08);outline-offset:-1px;border-radius:var(--cindy-screen-radius,0)}',
 ].join('\n')+'</style>';
+// viewer-stage.js keeps the 3D backdrop on Cindy's light/dark mode after attach.
+const STAGE_HEAD=STAGE_STYLE+'<script src="/viewer-stage.js"></script>';
 const DEVICE_PAGE=/^\/simulators\/[^/?#]+\/?(?:[?#]|$)/;
 function stagedPage(url){
  if(!DEVICE_PAGE.test(url))return false;
@@ -32,7 +41,7 @@ function authScript(token){
  return token?`<script src="/viewer-auth.js?cindyViewer=${encodeURIComponent(token)}"></script>`:'';
 }
 function injectStage(html,token){
- const inject=STAGE_STYLE+authScript(token);
+ const inject=STAGE_HEAD+authScript(token);
  const at=html.search(/<\/head>/i);
  if(at>=0)return html.slice(0,at)+inject+html.slice(at);
  const open=html.search(/<head[^>]*>/i);
@@ -86,4 +95,4 @@ function attachUpgrade(server,port,sockets,authorized=()=>false,clients=new Set(
   request.on('response',()=>socket.destroy());request.on('error',()=>socket.destroy());socket.on('error',()=>request.destroy());socket.on('close',()=>request.destroy());request.end();
  });
 }
-module.exports={html,chineseHtml,blockedRoute,stagedPage,injectStage,STAGE_STYLE,authScript,proxyRequest,attachUpgrade};
+module.exports={html,chineseHtml,blockedRoute,stagedPage,injectStage,STAGE_STYLE,STAGE_HEAD,authScript,proxyRequest,attachUpgrade};

@@ -21,7 +21,7 @@ async function createClipboard(origin,perform,control,preferred={}){
   const own=`127.0.0.1:${server.address().port}`;
   if(req.headers.host!==own)return reply(403,{error:'Invalid host'});
   if(control&&req.method==='GET'){
-   if(['/control.js','/control-model.js','/control.css','/viewer-auth.js'].includes(req.url.split('?',1)[0])){
+   if(['/control.js','/control-model.js','/control.css','/viewer-auth.js','/viewer-stage.js'].includes(req.url.split('?',1)[0])){
     const file=req.url.split('?',1)[0];
     res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','X-Content-Type-Options':'nosniff'});
     return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,file.slice(1))));

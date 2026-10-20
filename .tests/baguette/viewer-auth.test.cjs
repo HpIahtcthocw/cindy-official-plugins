@@ -94,9 +94,11 @@ test('the embedded frame authorizes by capability in its own URL and Referer, ne
   assert.equal(framed.headers.get('referrer-policy'),'same-origin');
   const body=await framed.text();
   assert.ok(body.includes(`<script src="/viewer-auth.js?cindyViewer=${token}"></script>`),'the frame gets the socket capability helper');
+  assert.ok(body.indexOf('<script src="/viewer-stage.js"></script>')>=0&&body.indexOf('<script src="/viewer-stage.js"></script>')<body.indexOf('</head>'),'the stage helper runs before the page scripts');
   // Subresources of that page carry the capability in Referer.
   assert.equal((await fetch(bridge.base+'/assets/app.js',{headers:{Referer:page}})).status,200);
   assert.equal((await fetch(bridge.base+'/viewer-auth.js?cindyViewer='+token)).status,200);
+  assert.equal((await fetch(bridge.base+'/viewer-stage.js')).status,200);
   // No capability anywhere: still refused, and nothing reaches the simulator.
   const before=reads;
   assert.equal((await fetch(bridge.base+'/simulators/'+udid+'?handheld=1')).status,403);
@@ -112,4 +114,29 @@ test('the embedded frame authorizes by capability in its own URL and Referer, ne
   assert.equal(await ws('?cindyViewer=wrong'),'');assert.equal(upgrades,0);
   assert.match(await ws('?cindyViewer='+token),/101/);assert.equal(upgrades,1);
  } finally {bridge.close();upstream.closeAllConnections();await new Promise(r=>upstream.close(r));}
+});
+
+test('the 3D stage backdrop follows a light/dark change that arrives after it attached',async()=>{
+ // Real case: the stage attached while the nested frame still read light, then
+ // stayed a white square in dark Cindy because upstream never re-reads the mode.
+ const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+ let pageBg='#f8f8f6';const listeners=[];
+ const window={matchMedia:()=>({matches:false,addEventListener:(type,fn)=>listeners.push(fn)})};
+ const document={getElementById:id=>id==='simNativeView'?{}:null,addEventListener(){},visibilityState:'visible'};
+ const context=vm.createContext({window,document,getComputedStyle:()=>({getPropertyValue:()=>pageBg}),Promise});
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../../baguette-simulator/node/viewer-stage.js'),'utf8'),context);
+ // The upstream class is defined after the helper, as sim-3d.js loads later.
+ const sent=[];
+ function Sim3DPanel(){}
+ Sim3DPanel.prototype.attach=async function(){};
+ Sim3DPanel.prototype.detach=function(){};
+ Sim3DPanel.prototype.setBackground=function(value){sent.push(value);};
+ window.Sim3DPanel=Sim3DPanel;
+ const panel=new window.Sim3DPanel();
+ await panel.attach();await new Promise(r=>setImmediate(r));
+ assert.deepEqual(sent,['#f8f8f6']);
+ pageBg='#1f1f1e';listeners.forEach(fn=>fn());
+ assert.deepEqual(sent,['#f8f8f6','#1f1f1e']);
+ panel.detach();pageBg='#f8f8f6';listeners.forEach(fn=>fn());
+ assert.equal(sent.length,2,'a detached stage is left alone');
 });
