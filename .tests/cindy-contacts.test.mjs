@@ -1064,6 +1064,61 @@ test('device sync merges offline fields and deletions without resurrecting stale
   assert.equal(ok(await b.call('stats')).people, 0);
 });
 
+// P1: irreversible deletion used to retain contact/merge payload in sync metadata.
+// Unit regression through real tool + SQLite: disabled sync, rollback, restart and stale replay.
+test('device sync erases deleted payload atomically and migrates full tombstones', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-erase-'));
+  for (const name of ['a', 'b']) fs.mkdirSync(path.join(dir, name));
+  let a = boot({ libDir: path.join(dir, 'a') });
+  const b = boot({ libDir: path.join(dir, 'b') });
+  t.after(() => { a.close(); b.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const snapshot = async app => JSON.parse((await vm.runInContext('serial(syncSnapshot)', app.ctx)).text);
+  const apply = async (app, state) => { app.ctx.remoteState = structuredClone(state); return vm.runInContext('serial(() => syncApply(remoteState))', app.ctx); };
+  const stored = app => app.library.db('contacts.sqlite').prepare("SELECT value FROM plugin_meta WHERE key = 'device_sync_state'").get()?.value;
+  const source = ok(await a.call('save', { name: 'Private Source', narrative: 'private biography', identities: [{ platform: 'email', value: 'private@example.test' }] }));
+  const target = ok(await a.call('save', { name: 'Private Target' }));
+  assert.equal(stored(a), undefined);
+  await b.call('stats');
+  const beforeMerge = await snapshot(a);
+  const merge = ok(await a.call('merge', { source_id: source.id, target_id: target.id }));
+  const merged = await snapshot(a);
+  assert.ok(JSON.stringify(merged).includes('private biography'), 'live merge retains its undo snapshot');
+  await apply(b, merged);
+  // Both apps have sync disabled/unsupported, but deleting must still clean existing state.
+  const beforeDelete = stored(a);
+  const db = a.library.db('contacts.sqlite');
+  db.exec("CREATE TRIGGER fail_delete BEFORE DELETE ON contacts BEGIN SELECT RAISE(ABORT, 'test rollback'); END");
+  const failed = await a.call('delete', { id: target.id, confirm: true });
+  assert.equal(failed.ok, false);
+  assert.equal(stored(a), beforeDelete, 'sync cleanup must roll back with the business delete');
+  assert.equal(ok(await a.call('stats')).people, 1);
+  db.exec('DROP TRIGGER fail_delete');
+  ok(await a.call('delete', { id: target.id, confirm: true }));
+  const assertErased = app => {
+    const text = stored(app);
+    for (const payload of ['Private Source', 'Private Target', 'private biography', 'private@example.test']) assert.ok(!text.includes(payload), payload);
+    const state = JSON.parse(text);
+    for (const rows of Object.values(state.tables)) for (const entry of Object.values(rows)) if (!entry.alive[2]) assert.deepEqual(entry.fields, {});
+  };
+  assertErased(a); // Before any subsequent sync/capture call.
+  const deleted = await snapshot(a);
+  assert.deepEqual(deleted.tables.contact_merges[JSON.stringify([merge.mergeId])].fields, {});
+  await apply(b, deleted); assertErased(b);
+  // Simulate a snapshot persisted by the old build, including full deleted merge snapshots.
+  const old = JSON.parse(stored(a));
+  for (const [table, rows] of Object.entries(old.tables)) for (const [key, entry] of Object.entries(rows)) {
+    if (!entry.alive[2]) entry.fields = structuredClone(merged.tables[table]?.[key]?.fields || {});
+  }
+  old.tables.contacts[JSON.stringify([source.id])].fields = beforeMerge.tables.contacts[JSON.stringify([source.id])].fields;
+  db.prepare("UPDATE plugin_meta SET value = ? WHERE key = 'device_sync_state'").run(JSON.stringify(old));
+  a.close(); a = boot({ libDir: path.join(dir, 'a') }); await a.call('stats');
+  await snapshot(a); assertErased(a);
+  await apply(a, beforeMerge); await apply(a, old); assertErased(a);
+  await apply(b, old); assertErased(b);
+  assert.equal(ok(await a.call('stats')).people, 0);
+  assert.equal(ok(await b.call('stats')).people, 0);
+});
+
 test('device sync reconciles independently imported identities and keeps linked exchanges', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-'));
   for (const name of ['a', 'b', 'c']) fs.mkdirSync(path.join(dir, name));

@@ -1110,6 +1110,9 @@ async function undoMerge(mergeId) {
 
 async function deleteContact(id) {
   const c = await requireContact(id);
+  // Capture the post-delete projection before committing, even with sync disabled.
+  // The business rows and their cached payload disappear in the same transaction.
+  const syncState = await syncCapture({ deletedContactId: c.id });
   await batch([
     { sql: 'DELETE FROM contact_identities WHERE contact_id = ?', params: [c.id] },
     { sql: 'DELETE FROM contact_events WHERE contact_id = ?', params: [c.id] },
@@ -1121,6 +1124,7 @@ async function deleteContact(id) {
     { sql: 'DELETE FROM contact_merges WHERE target_id = ? OR source_id = ?', params: [c.id, c.id] },
     { sql: 'DELETE FROM plugin_meta WHERE key IN (?, ?)', params: [`qa:${c.id}`, `task:c:${c.id}`] },
     { sql: 'DELETE FROM contacts WHERE id = ?', params: [c.id] },
+    ...(syncState ? [setMetaStmt('device_sync_state', syncState)] : []),
   ]);
   return { deleted: c.id, name: c.display_name };
 }
@@ -2515,16 +2519,21 @@ async function syncReadRows() {
 }
 
 /** Compare with the last committed projection, including after a crash or upgrade. */
-async function syncCapture() {
+async function syncCapture({ deletedContactId = null } = {}) {
   const stored = await q("SELECT value FROM plugin_meta WHERE key = 'device_sync_state'");
   let saved = null;
   if (stored.length) {
     try { saved = JSON.parse(stored[0].value); syncValidate(saved); if (!saved.projection || !saved.origins || !Number.isSafeInteger(saved.clock) || saved.clock < 0 || !/^[a-f0-9-]{36}$/.test(saved.node)) throw Error('invalid'); }
     catch (_) { throw fail('SYNC_CORRUPT', '本机同步记录无法读取，已暂停同步并保留通讯录资料。'); }
   }
+  if (deletedContactId && !saved) return null; // Never initialize sync for a local-only delete.
   const s = saved || syncEmpty();
   if (s.version !== 1) throw fail('SYNC_VERSION', '同步数据版本不兼容，请更新两台电脑上的通讯录插件。');
   const rows = await syncReadRows();
+  if (deletedContactId) for (const table of Object.keys(SYNC_TABLES)) {
+    rows[table] = rows[table].filter(row => table === 'contacts' ? row.id !== deletedContactId :
+      !['contact_id', 'from_id', 'to_id', 'target_id', 'source_id'].some(col => row[col] === deletedContactId));
+  }
   // Remember prior automatic reconciliation even when its shared identity is removed.
   const links = Object.values(s.origins.contacts || {}).flatMap(keys => keys.slice(1).map(key => [JSON.parse(keys[0])[0], JSON.parse(key)[0]]));
   const contactLinks = syncMergeLinks(s.contactLinks || [], links);
@@ -2561,8 +2570,12 @@ async function syncCapture() {
       changed = true;
     }
   }
+  // Also compact snapshots saved by earlier versions. Tombstones need no content.
+  for (const entries of Object.values(s.tables)) for (const entry of Object.values(entries)) {
+    if (!entry.alive[2] && Object.keys(entry.fields).length) { entry.fields = {}; changed = true; }
+  }
   s.projection = rows;
-  if (changed) await batch([setMetaStmt('device_sync_state', s)]);
+  if (changed && !deletedContactId) await batch([setMetaStmt('device_sync_state', s)]);
   return s;
 }
 
@@ -2578,8 +2591,13 @@ function syncValidate(remote) {
     if (!Object.hasOwn(SYNC_TABLES, table) || !rows || typeof rows !== 'object' || Array.isArray(rows)) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
     const cols = SYNC_TABLES[table].split(' ');
     for (const [key, entry] of Object.entries(rows)) {
-      if (!entry || !stamp(entry.alive, true) || !entry.fields || typeof entry.fields !== 'object' ||
-          Object.keys(entry.fields).length !== cols.length || !cols.every(c => Object.hasOwn(entry.fields, c) && stamp(entry.fields[c]))) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
+      if (!entry || !stamp(entry.alive, true) || !entry.fields || typeof entry.fields !== 'object' || Array.isArray(entry.fields)) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
+      let ids;
+      try { ids = JSON.parse(key); } catch (_) { throw fail('SYNC_INVALID', '同步记录标识无效，本机资料未更改。'); }
+      if (!Array.isArray(ids) || ids.length !== (table === 'contact_group_members' ? 2 : 1) || !ids.every(id => typeof id === 'string')) throw fail('SYNC_INVALID', '同步记录标识无效，本机资料未更改。');
+      if (!entry.alive[2] && Object.keys(entry.fields).length === 0) continue;
+      // Accept old, full tombstones for migration; never retain their payload.
+      if (Object.keys(entry.fields).length !== cols.length || !cols.every(c => Object.hasOwn(entry.fields, c) && stamp(entry.fields[c]))) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
       const row = Object.fromEntries(cols.map(c => [c, entry.fields[c][2]]));
       // Keys are immutable; mapped foreign keys may evolve during duplicate reconciliation.
       if (table !== 'contact_group_members' && syncKey(table, row) !== key) throw fail('SYNC_INVALID', '同步记录标识无效，本机资料未更改。');
@@ -2668,9 +2686,11 @@ async function syncApply(remote) {
     for (const [key, incoming] of Object.entries(rows)) {
       const existing = local[key];
       s.clock = Math.max(s.clock, incoming.alive[0], ...Object.values(incoming.fields).map(v => v[0]));
-      if (!existing) { local[key] = syncClone(incoming); continue; }
+      if (!existing) { local[key] = { alive: syncClone(incoming.alive), fields: incoming.alive[2] ? syncClone(incoming.fields) : {} }; continue; }
       if (syncCompare(incoming.alive, existing.alive) > 0) existing.alive = syncClone(incoming.alive);
-      for (const [col, field] of Object.entries(incoming.fields)) if (!existing.fields[col] || syncCompare(field, existing.fields[col]) > 0) existing.fields[col] = syncClone(field);
+      if (!existing.alive[2]) { existing.fields = {}; continue; }
+      // A stale full tombstone cannot reintroduce content after a deliberate restore.
+      if (incoming.alive[2]) for (const [col, field] of Object.entries(incoming.fields)) if (!existing.fields[col] || syncCompare(field, existing.fields[col]) > 0) existing.fields[col] = syncClone(field);
     }
   }
   s.contactLinks = syncMergeLinks(s.contactLinks || [], remote.contactLinks || []);
@@ -2696,7 +2716,7 @@ async function syncSnapshot() {
     tables[table] = {};
     for (const key of Object.keys(s.tables[table]).sort()) {
       const e = s.tables[table][key];
-      tables[table][key] = { alive: e.alive, fields: Object.fromEntries(SYNC_TABLES[table].split(' ').map(c => [c, e.fields[c]])) };
+      tables[table][key] = { alive: e.alive, fields: e.alive[2] ? Object.fromEntries(SYNC_TABLES[table].split(' ').map(c => [c, e.fields[c]])) : {} };
     }
   }
   const text = JSON.stringify({ version: 1, tables, contactLinks: s.contactLinks });
