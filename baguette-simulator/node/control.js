@@ -297,7 +297,8 @@
   async function switchTo(targetUdid) {
     if (state.switching) return;
     state.switching = true; state.phase = 'preparing'; state.switchTarget = targetUdid; state.handledJob = null; blank(); render();
-    try { await api('switch', { targetUdid }); }
+    // Inside a task page the switch also moves that task to the new device.
+    try { await api('switch', { targetUdid, ...(params.get('task') ? { task: params.get('task') } : {}) }); }
     catch (error) { state.switching = false; toast(`${t.switching.failed} (${error.code || 'SWITCH_FAILED'})`, 'error'); }
     await check();
   }

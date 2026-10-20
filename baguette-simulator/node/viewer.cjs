@@ -99,7 +99,7 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
   catalog:()=>controls.request('viewer_catalog'),
   create:async p=>{const created=await controls.request('create_device',{name:p.name,deviceType:p.deviceType,runtime:p.runtime});return {ok:true,created,devices:(await controls.status()).devices};},
   rename:async p=>{await controls.request('rename_device',{udid:p.targetUdid,name:p.name});return {ok:true,devices:(await controls.status()).devices};},
-  switch:async p=>{const job=await controls.request('viewer_switch',{udid:p.udid,targetUdid:p.targetUdid,_locale:p.locale});server.clipboard.devices.add(job.targetUdid);return {ok:true,job};},
+  switch:async p=>{const job=await controls.request('viewer_switch',{udid:p.udid,targetUdid:p.targetUdid,_locale:p.locale,task:p.task});server.clipboard.devices.add(job.targetUdid);return {ok:true,job};},
   restart:()=>controls?controls.exclusive(async()=>{await controls.assertEnabled();return restartNative(server);}):restartNative(server),
   release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};}):clipboardAction({udid:p.udid,action:'release'}),
   shutdown:p=>controls.request('settings_shutdown',{udid:p.udid}),
@@ -119,4 +119,11 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
  const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;
  return {url,ready:true,recentRestarts:server.crashes.length,lastExit:server.lastExit,note:'Live viewer ready with zoom and device shutdown controls. Simulator data is preserved. Devices are not shut down for idleness while a viewer window is open or another tool or script is operating them; otherwise idle shutdown follows plugin settings (15 minutes by default). close_viewer only stops streaming. Use shutdown when finished.'};
 }
-module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS,forgetSession};
+// The controller address for a device while the viewer already runs, without
+// starting anything; null when it is not running.
+function existingViewerUrl(udid,locale){
+ if(!active||active.stopped||active.parked||!active.clipboard)return null;
+ active.clipboard.devices.add(udid);
+ return active.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+active.clipboard.fragment;
+}
+module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS,forgetSession,existingViewerUrl};

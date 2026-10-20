@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('node:fs/promises');
+const {validSession} = require('./tasks.cjs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
@@ -10,6 +11,7 @@ const {randomUUID} = require('node:crypto');
 // recycling of on-demand workers.
 const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
 function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false, forgetViewer = () => {},
+  tasks = null, existingViewerUrl = () => null,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
   let config, busy = false, lastActivity = now(), lastStop = null, closing = false;
   let idleHandled = false;
@@ -77,11 +79,60 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     busy = true;
     try { return await fn(); } finally { busy = false; }
   }
+  // The Cindy task a call belongs to: injected session context for Agent tools,
+  // or the task page's own task (main.js sets `_task` for page actions only).
+  const sessionOf = params => params?.session_context?.session_id ?? params?._task;
+  // Each device row says how many tasks use it and whether the calling task does,
+  // so the AI can reuse a free device or create one for this task.
+  async function annotate(devices, session) {
+    if (!tasks) return devices;
+    const counts = await tasks.counts().catch(() => ({}));
+    const mine = session ? (await tasks.get(session).catch(() => null))?.udid : null;
+    return devices.map(d => ({...d, tasks: counts[d.udid] || 0, ...(session ? {thisTask: d.udid === mine} : {})}));
+  }
+  const withTask = (url, session) => url.replace('#', `&task=${encodeURIComponent(session)}#`);
+  async function taskState(session, locale) {
+    if (!tasks || !validSession(session)) throw failure('INVALID_ARGUMENT', 'Unknown task.');
+    const devices = await annotate((await dispatch('devices')).devices, session);
+    const binding = await tasks.get(session);
+    const device = binding ? devices.find(d => d.udid === binding.udid) || null : null;
+    let settings;
+    try { settings = await load(); } catch { settings = {enabled:false, idleMinutes:null}; }
+    let viewer = null, waiting = false;
+    if (device && device.state === 'Booted' && settings.enabled) {
+      // Reuse a running viewer without taking the runtime lock, so a page refresh
+      // never makes an Agent tool call fail with BUSY.
+      let url = existingViewerUrl(device.udid, locale);
+      if (!url) {
+        try { url = (await request('open_viewer', {udid:device.udid, _locale:locale}))?.url || null; }
+        catch (error) { if (error.code === 'BUSY') waiting = true; else throw error; }
+      }
+      if (url) viewer = {udid:device.udid, url:withTask(url, session)};
+    }
+    return {ok:true, sessionId:session, device, devices, settings:{...settings}, viewer, busy:waiting};
+  }
   async function request(method, params = {}) {
     // A settings refresh must not reject a user's stop/permission change.
     // Reading simulator state is safe while a command is in flight.
     if (method === 'settings_status') return status();
-    if (method === 'viewer_switch') return manager.start(params);
+    if (method === 'viewer_switch') {
+      const job = await manager.start(params);
+      // Switching inside a task's page moves that task to the new device.
+      if (tasks && validSession(params.task)) await tasks.bind(params.task, params.targetUdid).catch(() => {});
+      return job;
+    }
+    if (method === 'task_state') return taskState(params._task, params._locale);
+    if (method === 'task_bind') {
+      if (!tasks || !validSession(params._task)) throw failure('INVALID_ARGUMENT', 'Unknown task.');
+      const listed = (await dispatch('devices')).devices;
+      if (!listed.some(d => d.udid === params.udid)) throw failure('INVALID_ARGUMENT', 'Unknown device. Refresh the list.');
+      await tasks.bind(params._task, params.udid);
+      return taskState(params._task, params._locale);
+    }
+    if (method === 'manage_state') {
+      const result = await status();
+      return {...result, ok:true, devices: await annotate(result.devices, null)};
+    }
     if (method === 'viewer_catalog') return dispatch('environment');
     if (method === 'device_hold') return hold();
     return exclusive(async () => {
@@ -90,7 +141,11 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       if (method === 'close_viewer') return dispatch(method, params);
       if (method === 'settings_shutdown') return stopOne(params.udid);
       if (method === 'settings_stop_all') return stopAll('manual');
-      if (['environment','devices'].includes(method)) return dispatch(method, params);
+      if (method === 'devices') {
+        const result = await dispatch(method, params);
+        return {...result, devices: await annotate(result.devices, sessionOf(params))};
+      }
+      if (method === 'environment') return dispatch(method, params);
       const settings = await load();
       if (method === 'settings_save') {
         if (typeof params.enabled !== 'boolean' || ![0,15,30,60].includes(params.idleMinutes)) throw failure('INVALID_ARGUMENT', 'Invalid runtime settings. Refresh this page.');
@@ -109,6 +164,10 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       touch();
       const result = await dispatch(actual, params);
       if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
+      // Starting, opening or launching on a device from a task gives that task the device.
+      if (tasks && ['boot','open_viewer','launch_app'].includes(actual) && result?.ok !== false) {
+        await tasks.bind(sessionOf(params), params.udid).catch(() => {});
+      }
       touch();
       return result;
     });

@@ -80,14 +80,17 @@ test('the logic page keeps one hold in flight while devices run and stops when n
  let handler;const holds=[];const answers=[true,true,false];
  vm.runInNewContext(code,{Object,String,Promise,setTimeout,cindy:{onHostMessage:fn=>handler=fn,request:async()=>({ok:true,context:{locale:'en'}}),
   preview:async()=>({ok:true}),send:async()=>{},
-  node:{request:async r=>{if(r.method==='device_hold'){holds.push(r);return {ok:true,result:{running:answers.shift()}};}return {ok:true,result:{ok:true,execution:'executed'}};}}}});
+  node:{request:async r=>{if(r.method==='device_hold'){holds.push(r);return {ok:true,result:{running:await answers.shift()}};}return {ok:true,result:{ok:true,execution:'executed'}};}}}});
  await handler({type:'tool-call',tool:'boot',callId:'c',args:{udid}});
  await new Promise(r=>setTimeout(r,20));
  assert.equal(holds.length,3,'re-issued while running, ended when no device runs');
  assert.ok(holds.every(h=>h.timeoutMs<120000),'within the host request ceiling');
- // A second tool call while a hold loop is active does not start another.
- answers.push(true,true,true,false);
- await handler({type:'tool-call',tool:'devices',callId:'d',args:{}});await handler({type:'tool-call',tool:'devices',callId:'e',args:{}});
+ // A second tool call while a hold is in flight does not start another loop.
+ let release;answers.push(new Promise(r=>release=r),false);
+ await handler({type:'tool-call',tool:'devices',callId:'d',args:{}});
+ await handler({type:'tool-call',tool:'devices',callId:'e',args:{}});
  await new Promise(r=>setTimeout(r,20));
- assert.equal(holds.length,7,'one loop at a time');
+ assert.equal(holds.length,4,'only the first call started a hold');
+ release(true);await new Promise(r=>setTimeout(r,20));
+ assert.equal(holds.length,5,'the same loop re-issued once, then ended');
 });

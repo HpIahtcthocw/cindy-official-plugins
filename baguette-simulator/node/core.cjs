@@ -234,7 +234,9 @@ function startWorker() {
     const running=(await dispatch('devices')).devices.filter(d=>d.state!=='Shutdown').map(d=>d.udid);
     return (await require('./activity.cjs').externalUse(running)).length>0;
   };
-  const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json'),inUse,viewing:()=>require('./viewer.cjs').viewing(),forgetViewer:()=>require('./viewer.cjs').forgetSession(DEVICE_SET)});
+  const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json'),inUse,viewing:()=>require('./viewer.cjs').viewing(),forgetViewer:()=>require('./viewer.cjs').forgetSession(DEVICE_SET),
+    tasks:require('./tasks.cjs').createTaskBindings(path.join(ROOT,'task-bindings.json')),
+    existingViewerUrl:(udid,locale)=>require('./viewer.cjs').existingViewerUrl(udid,locale)});
   configureControls(runtime);
   const timer=setInterval(()=>runtime.checkIdle().catch(error=>process.stderr.write('[baguette-idle] '+(error.code||'FAILED')+'\n')),15000);
   timer.unref();

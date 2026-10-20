@@ -178,7 +178,7 @@ function validateLocalizedLabels(raw, declarations, label) {
 function validateLocaleResource(pluginDir, locale, raw, manifest) {
   const label = `${pluginDir}/locales.${locale}`;
   assert.ok(raw && typeof raw === 'object' && !Array.isArray(raw), `${label} must be an object`);
-  const allowed = new Set(['name', 'description', 'whenToUse', 'tools', 'panel', 'network', 'node', 'setup']);
+  const allowed = new Set(['name', 'description', 'whenToUse', 'tools', 'panel', 'mainView', 'taskView', 'network', 'node', 'setup']);
   for (const field of Object.keys(raw)) assert.ok(allowed.has(field), `${label} contains unknown field ${field}`);
   assertText(raw.name, `${label}.name`, 64);
   assertText(raw.description, `${label}.description`, 300);
@@ -209,6 +209,15 @@ function validateLocaleResource(pluginDir, locale, raw, manifest) {
         if (text.description !== undefined) assertText(text.description, `${label}.tools.${name}.parameters.${pointer}.description`, 1024);
       }
     }
+  }
+
+  // Host contract: a page title may be translated only when the manifest declares one.
+  for (const field of ['mainView', 'taskView']) {
+    if (raw[field] === undefined) continue;
+    assert.ok(manifest[field]?.title, `${label}.${field} is present but manifest.${field}.title is absent`);
+    assert.ok(raw[field] && typeof raw[field] === 'object' && !Array.isArray(raw[field]), `${label}.${field} must be an object`);
+    assert.deepEqual(Object.keys(raw[field]), ['title'], `${label}.${field} fields`);
+    assertText(raw[field].title, `${label}.${field}.title`, 64);
   }
 
   if (raw.panel !== undefined) {
