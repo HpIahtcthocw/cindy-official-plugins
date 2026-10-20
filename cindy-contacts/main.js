@@ -2471,7 +2471,10 @@ function startLegacyImportOnce() {
   pendingImport = serial(() => importLegacy())
     .catch((e) => ({ status: 'error', code: e.code, message: e.message }))
     .then(async (r) => {
-      try { await serial(syncCapture); } catch (e) { syncStatus.error = { code: e.code || 'SYNC_UNAVAILABLE', message: e.message }; }
+      try {
+        syncStatus.enabled = !!await getMeta('device_sync_enabled');
+        if (syncStatus.supported && syncStatus.enabled) await serial(syncCapture);
+      } catch (e) { syncStatus.error = { code: e.code || 'SYNC_UNAVAILABLE', message: e.message }; }
       pendingImport = null;
       broadcast({ kind: 'event', name: 'legacy', data: r });
       notifyChanged();
@@ -2503,7 +2506,7 @@ const syncTransfers = new Map();
 const syncCompare = (a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
 const syncKey = (table, row) => JSON.stringify(table === 'contact_group_members' ? [row.group_id, row.contact_id] : [row.id]);
 const syncClone = (v) => JSON.parse(JSON.stringify(v));
-const syncEmpty = () => ({ version: 1, node: uuid(), clock: 0, tables: {}, projection: {}, origins: {} });
+const syncEmpty = () => ({ version: 1, node: uuid(), clock: 0, tables: {}, projection: {}, origins: {}, contactLinks: [] });
 
 async function syncReadRows() {
   const out = {};
@@ -2522,7 +2525,11 @@ async function syncCapture() {
   const s = saved || syncEmpty();
   if (s.version !== 1) throw fail('SYNC_VERSION', '同步数据版本不兼容，请更新两台电脑上的通讯录插件。');
   const rows = await syncReadRows();
-  let changed = !saved;
+  // Remember prior automatic reconciliation even when its shared identity is removed.
+  const links = Object.values(s.origins.contacts || {}).flatMap(keys => keys.slice(1).map(key => [JSON.parse(keys[0])[0], JSON.parse(key)[0]]));
+  const contactLinks = syncMergeLinks(s.contactLinks || [], links);
+  let changed = !saved || JSON.stringify(contactLinks) !== JSON.stringify(s.contactLinks);
+  s.contactLinks = contactLinks;
   const tick = (value) => { if (!saved) return [0, s.node, value]; if (s.clock >= Number.MAX_SAFE_INTEGER - 1) throw fail('SYNC_CLOCK', '同步版本计数已达上限。'); return [++s.clock, s.node, value]; };
   for (const table of Object.keys(SYNC_TABLES)) {
     const stateRows = s.tables[table] || (s.tables[table] = {});
@@ -2559,8 +2566,13 @@ async function syncCapture() {
   return s;
 }
 
+function syncMergeLinks(...sets) {
+  return [...new Set(sets.flat().map(pair => JSON.stringify([...pair].sort())))].sort().map(key => JSON.parse(key));
+}
+
 function syncValidate(remote) {
   if (!remote || remote.version !== 1 || !remote.tables || typeof remote.tables !== 'object' || Array.isArray(remote.tables)) throw fail('SYNC_VERSION', '同步格式不兼容，请更新两台电脑上的通讯录插件。');
+  if (remote.contactLinks !== undefined && (!Array.isArray(remote.contactLinks) || remote.contactLinks.some(pair => !Array.isArray(pair) || pair.length !== 2 || !pair.every(id => typeof id === 'string' && id.length > 0)))) throw fail('SYNC_INVALID', '同步归并关系无效，本机资料未更改。');
   const stamp = (s, boolean = false) => Array.isArray(s) && s.length === 3 && Number.isSafeInteger(s[0]) && s[0] >= 0 && s[0] < Number.MAX_SAFE_INTEGER - 1 && typeof s[1] === 'string' && /^[a-f0-9-]{36}$/.test(s[1]) && (boolean ? typeof s[2] === 'boolean' : typeof s[2] === 'string');
   for (const [table, rows] of Object.entries(remote.tables)) {
     if (!Object.hasOwn(SYNC_TABLES, table) || !rows || typeof rows !== 'object' || Array.isArray(rows)) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
@@ -2582,12 +2594,19 @@ function syncProject(s) {
   for (const table of Object.keys(SYNC_TABLES)) live[table] = Object.entries(s.tables[table] || {}).filter(([, e]) => e.alive[2]).map(([key, e]) => ({ key, entry: e, row: Object.fromEntries(Object.entries(e.fields).map(([c, v]) => [c, v[2]])) }));
   for (const x of live.contacts) parent.set(x.row.id, x.row.id);
   const root = (id) => { let p = id; while (parent.has(p) && parent.get(p) !== p) p = parent.get(p); return p; };
+  const links = [...(s.contactLinks || [])];
+  const unite = (one, two) => {
+    const a = root(one), b = root(two);
+    if (a !== b) { parent.set(a < b ? b : a, a < b ? a : b); links.push([a, b]); }
+  };
+  for (const [a, b] of s.contactLinks || []) if (parent.has(a) && parent.has(b)) unite(a, b);
   const seen = new Map();
   for (const x of live.contact_identities) if (parent.has(x.row.contact_id)) {
     const key = JSON.stringify([x.row.platform, x.row.normalized_value]);
-    if (seen.has(key)) { const a = root(seen.get(key)), b = root(x.row.contact_id); parent.set(a < b ? b : a, a < b ? a : b); }
+    if (seen.has(key)) unite(seen.get(key), x.row.contact_id);
     else seen.set(key, x.row.contact_id);
   }
+  s.contactLinks = syncMergeLinks(links);
   // An offline addition to a merged source follows the retained target. Undo restores
   // the source row and removes this redirect without losing the offline addition.
   const redirects = live.contact_merges.filter(x => !x.row.undone_at).sort((a, b) => syncCompare(b.entry.fields.at, a.entry.fields.at) || (a.key < b.key ? -1 : 1));
@@ -2654,6 +2673,7 @@ async function syncApply(remote) {
       for (const [col, field] of Object.entries(incoming.fields)) if (!existing.fields[col] || syncCompare(field, existing.fields[col]) > 0) existing.fields[col] = syncClone(field);
     }
   }
+  s.contactLinks = syncMergeLinks(s.contactLinks || [], remote.contactLinks || []);
   const { rows, origins } = syncProject(s);
   s.projection = rows; s.origins = origins;
   if (JSON.stringify(s).length > SYNC_MAX) throw fail('SYNC_LIMIT', '通讯录同步数据超过当前上限，本机资料保留。');
@@ -2679,7 +2699,7 @@ async function syncSnapshot() {
       tables[table][key] = { alive: e.alive, fields: Object.fromEntries(SYNC_TABLES[table].split(' ').map(c => [c, e.fields[c]])) };
     }
   }
-  const text = JSON.stringify({ version: 1, tables });
+  const text = JSON.stringify({ version: 1, tables, contactLinks: s.contactLinks });
   if (text.length > SYNC_MAX) throw fail('SYNC_LIMIT', '通讯录同步数据超过当前上限，本机资料保留。');
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return { text, digest: Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('') };
@@ -2717,7 +2737,7 @@ async function syncIncoming(peer, data) {
 async function syncRequest(peer, data) {
   const r = await cindy.deviceSync({ op: 'request', peer, data: { version: 1, ...data } });
   if (!r?.ok) throw fail(r?.errorCode || 'SYNC_UNAVAILABLE', '设备同步暂时不可用，资料已保存在本机。');
-  if (r.data?.error) throw fail(r.data.error, '对方尚未接收本次同步，资料已保存在本机。');
+  if (r.data?.error) throw fail(r.data.error, r.data.error === 'SYNC_VERSION' ? '同步数据版本不兼容，请更新两台电脑上的通讯录插件。' : '对方尚未接收本次同步，资料已保存在本机。');
   if (r.data?.disabled) throw fail('SYNC_PEER_DISABLED', '请在另一台电脑的通讯录设置中开启设备同步。');
   return r.data;
 }
@@ -2760,7 +2780,7 @@ async function syncNow() {
 }
 
 function scheduleDeviceSync(delay = 15000) {
-  if (!syncStatus.supported) return;
+  if (!syncStatus.supported || !syncStatus.enabled) return;
   if (syncTimer) { if (delay === 15000) return; clearTimeout(syncTimer); }
   syncTimer = setTimeout(async () => { syncTimer = null; await syncNow(); scheduleDeviceSync(); }, delay);
 }
@@ -2779,9 +2799,8 @@ VIEW_METHODS.deviceSync = async (p) => {
   if (typeof p.enabled === 'boolean') {
     await batch([setMetaStmt('device_sync_enabled', p.enabled)]);
     syncStatus.enabled = p.enabled;
-    if (!p.enabled) { syncTransfers.clear(); syncStatus.phase = 'off'; }
+    if (!p.enabled) { clearTimeout(syncTimer); syncTimer = null; syncTransfers.clear(); syncStatus.phase = 'off'; }
   }
   scheduleDeviceSync(0);
   return syncStatus;
 };
-scheduleDeviceSync();

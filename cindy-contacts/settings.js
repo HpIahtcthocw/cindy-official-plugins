@@ -14,6 +14,7 @@
       syncState: { off: '未开启', waiting: '等待其他电脑连接', syncing: '正在同步…', synced: '已与在线电脑同步', error: '同步暂未完成', unsupported: '需要支持插件同步的 Cindy 版本' },
       syncLast: (w) => `上次确认同步：${w}`,
       syncConflict: '两台电脑上的联系人合并发生冲突。请先撤销其中一次合并，再重新同步；本机资料已保留。',
+      syncVersion: '同步版本不兼容。请更新两台电脑上的通讯录插件后重试；本机资料已保留。',
       syncError: '同步暂未完成，本机资料已保留。请检查两台电脑的连接及同步设置后重试。',
 
       auto: '每天自动整理',
@@ -42,6 +43,7 @@
       syncState: { off: 'Off', waiting: 'Waiting for another computer', syncing: 'Syncing…', synced: 'Synced with online computers', error: 'Sync not completed', unsupported: 'A Cindy version supporting plugin sync is required' },
       syncLast: (w) => `Last confirmed sync: ${w}`,
       syncConflict: 'Conflicting contact merges on two computers. Undo one merge, then sync again. Local data is preserved.',
+      syncVersion: 'Sync versions are incompatible. Update the Contacts plugin on both computers, then retry. Local data is preserved.',
       syncError: 'Sync has not completed. Local data is preserved. Check both computers’ connections and sync settings, then retry.',
 
       auto: 'Daily tidy-up',
@@ -140,7 +142,7 @@
     h += `<div class="item"><div class="label">${esc(T.sync)}</div><div class="body">`;
     if (ds?.supported) {
       h += `<div class="checks"><label><input type="checkbox" id="deviceSync"${ds.enabled ? ' checked' : ''}>${esc(T.syncEnable)}</label></div><p class="hint">${esc(T.syncHint)}</p>`;
-      if (ds.enabled) h += `<button class="pill" type="button" id="syncNow">${esc(T.syncNow)}</button><p class="status">${esc(T.syncState[ds.phase] || T.syncState.waiting)}</p>${ds.lastAt ? `<p class="hint">${esc(T.syncLast(when(ds.lastAt)))}</p>` : ''}${ds.error ? `<p class="err">${esc(ds.error.code === 'SYNC_MERGE_CONFLICT' ? T.syncConflict : LOCALE === 'zh-CN' ? ds.error.message : T.syncError)}</p>` : ''}`;
+      if (ds.enabled) h += `<button class="pill" type="button" id="syncNow">${esc(T.syncNow)}</button><p class="status">${esc(T.syncState[ds.phase] || T.syncState.waiting)}</p>${ds.lastAt ? `<p class="hint">${esc(T.syncLast(when(ds.lastAt)))}</p>` : ''}${ds.error ? `<p class="err">${esc(ds.error.code === 'SYNC_MERGE_CONFLICT' ? T.syncConflict : ds.error.code === 'SYNC_VERSION' ? T.syncVersion : LOCALE === 'zh-CN' ? ds.error.message : T.syncError)}</p>` : ''}`;
     } else h += `<p class="hint">${esc(T.syncUnsupported)}</p>`;
     h += '</div></div>';
     h += `<div class="item"><div class="label">${esc(T.days)}</div><div class="body">${seg('initialDays', [7, 14, 30], T.daysOpt)}<p class="hint">${esc(T.daysHint)}</p></div></div>`;

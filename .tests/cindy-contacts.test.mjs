@@ -116,7 +116,7 @@ function makeWorker(env) {
   };
 }
 
-function boot({ libDir, legacyDb = '', systemFixture = '', locale = '', deviceSync = null }) {
+function boot({ libDir, legacyDb = '', systemFixture = '', locale = '', deviceSync = null, timers = null }) {
   const library = makeLibrary(libDir);
   const worker = makeWorker({
     CINDY_CONTACTS_LEGACY_DB_FOR_TEST: legacyDb,
@@ -197,7 +197,7 @@ function boot({ libDir, legacyDb = '', systemFixture = '', locale = '', deviceSy
   };
   // 任务轮询用的计时器在测试里加速。
   const fastTimeout = (fn, ms) => unrefTimeout(fn, deviceSync && ms >= 2000 ? ms : Math.min(ms, 20));
-  const ctx = vm.createContext({ cindy, BroadcastChannel: Channel, crypto: globalThis.crypto, TextEncoder, console, setTimeout: fastTimeout, clearTimeout });
+  const ctx = vm.createContext({ cindy, BroadcastChannel: Channel, crypto: globalThis.crypto, TextEncoder, console, setTimeout: timers?.setTimeout || fastTimeout, clearTimeout: timers?.clearTimeout || clearTimeout });
   vm.runInContext(mainSource, ctx, { filename: 'main.js' });
   let n = 0;
   const call = (tool, args = {}) =>
@@ -1066,9 +1066,10 @@ test('device sync merges offline fields and deletions without resurrecting stale
 
 test('device sync reconciles independently imported identities and keeps linked exchanges', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-'));
-  fs.mkdirSync(path.join(dir, 'a')); fs.mkdirSync(path.join(dir, 'b'));
-  const a = boot({ libDir: path.join(dir, 'a') }), b = boot({ libDir: path.join(dir, 'b') });
-  t.after(() => { a.close(); b.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  for (const name of ['a', 'b', 'c']) fs.mkdirSync(path.join(dir, name));
+  let a = boot({ libDir: path.join(dir, 'a') }), b = boot({ libDir: path.join(dir, 'b') });
+  const third = boot({ libDir: path.join(dir, 'c') });
+  t.after(() => { a.close(); b.close(); third.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const snapshot = async app => JSON.parse((await vm.runInContext('serial(syncSnapshot)', app.ctx)).text);
   const apply = async (app, state) => { app.ctx.remoteState = structuredClone(state); return vm.runInContext('serial(() => syncApply(remoteState))', app.ctx); };
   const ca = ok(await a.call('save', { name: 'Example', identities: [{ platform: 'email', value: 'same@example.test' }], groups: ['Work'] }));
@@ -1082,6 +1083,19 @@ test('device sync reconciles independently imported identities and keeps linked 
   assert.equal(c.interactions.length, 2); assert.deepEqual(c.groups.map(g => g.name), ['Work']);
   await apply(a, sb);
   assert.equal(ok(await a.call('get', { id: rows[0].id })).interactions.length, 2);
+  // Removing the shared identity must not split the reconciled profile or exchanges,
+  // including on a device that never saw the identity-based reconciliation.
+  await third.call('stats'); await apply(third, sb);
+  ok(await a.call('save', { id: c.id, remove_identity_ids: c.identities.map(i => i.id) }));
+  const removed = await snapshot(a);
+  a.close(); a = boot({ libDir: path.join(dir, 'a') }); await a.call('stats');
+  for (const app of [a, b, third]) {
+    await apply(app, removed); await apply(app, sb);
+    assert.equal(ok(await app.call('list')).contacts.length, 1);
+    const retained = ok(await app.call('get', { id: c.id }));
+    assert.equal(retained.identities.length, 0);
+    assert.equal(retained.interactions.length, 2);
+  }
   // Deleting the merged projection tombstones every underlying identity, across restart.
   ok(await a.call('delete', { id: rows[0].id, confirm: true }));
   await apply(b, await snapshot(a));
@@ -1099,11 +1113,12 @@ test('device sync reconciles independently imported identities and keeps linked 
 test('device sync transfers multiple chunks through the plugin request/reply entry and rejects a partial update', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-wire-'));
   for (const name of ['a', 'b']) fs.mkdirSync(path.join(dir, name));
-  const apps = {}, pending = new Map(); let chunks = 0, drop = false, online = true;
+  const apps = {}, pending = new Map(); let chunks = 0, drop = false, online = true, incompatible = false;
   const transport = name => async req => {
     if (req.op === 'status') return { ok: true, peers: online ? [{ deviceId: name === 'a' ? 'b' : 'a' }] : [] };
     if (req.op === 'reply') { pending.get(req.requestId)?.(req.data); return { ok: true }; }
     if (req.op === 'request') {
+      if (incompatible) return { ok: true, data: { error: 'SYNC_VERSION' } };
       if (req.data.kind === 'chunk') { chunks++; if (drop && req.data.index === 1) return { ok: false, errorCode: 'SYNC_RESULT_UNKNOWN' }; }
       const id = crypto.randomUUID(); let reply;
       pending.set(id, value => { reply = structuredClone(value); });
@@ -1133,6 +1148,10 @@ test('device sync transfers multiple chunks through the plugin request/reply ent
   await vm.runInContext('syncNow()', apps.a.ctx);
   assert.equal(ok(await apps.b.call('stats')).people, 35);
   assert.equal(vm.runInContext('syncStatus.error.code', apps.a.ctx), 'SYNC_PEER_DISABLED');
+  incompatible = true;
+  await vm.runInContext('syncNow()', apps.a.ctx);
+  assert.equal(vm.runInContext('syncStatus.error.code', apps.a.ctx), 'SYNC_VERSION');
+  assert.match(vm.runInContext('syncStatus.error.message', apps.a.ctx), /更新两台电脑上的通讯录插件/);
   online = false;
   await vm.runInContext('syncNow()', apps.a.ctx);
   assert.equal(vm.runInContext('syncStatus.phase', apps.a.ctx), 'waiting');
@@ -1179,4 +1198,40 @@ test('device sync stops opposing offline merges without deleting either local ta
   await apply(a, await snapshot(b));
   assert.deepEqual(await snapshot(a), await snapshot(b));
   assert.equal(ok(await a.call('list')).contacts.length, 1);
+});
+
+// Regression: default-off startup must not duplicate business data or poll Library.
+// Real settings/SQL entry points, controlled timers; no wall-clock polling wait.
+test('device sync stays idle until enabled and stops polling when disabled', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-idle-'));
+  const apps = [];
+  t.after(() => { for (const app of apps) app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  for (const supported of [false, true]) {
+    const libDir = path.join(dir, String(supported)); fs.mkdirSync(libDir);
+    const scheduled = new Map(); let next = 0, requests = 0;
+    const timers = {
+      setTimeout: (fn, ms) => { const id = ++next; scheduled.set(id, { fn, ms }); return id; },
+      clearTimeout: id => scheduled.delete(id),
+    };
+    const app = boot({ libDir, timers, deviceSync: supported ? async () => { requests++; return { ok: true, peers: [] }; } : null });
+    apps.push(app);
+    ok(await app.call('save', { name: 'Local only' }));
+    const state = () => app.library.db('contacts.sqlite').prepare("SELECT value FROM plugin_meta WHERE key = 'device_sync_state'").get();
+    const polls = () => [...scheduled.entries()].filter(([, timer]) => timer.ms < 60000);
+    assert.equal(state(), undefined);
+    assert.equal(polls().length, 0);
+    if (!supported) continue;
+    ok(await app.view('deviceSync', { enabled: true }));
+    const [id, timer] = polls()[0]; scheduled.delete(id); await timer.fn();
+    assert.ok(state()); assert.equal(requests, 1);
+    const pendingPoll = polls()[0][1];
+    assert.equal(pendingPoll.ms, 15000);
+    ok(await app.view('deviceSync', { enabled: false }));
+    assert.equal(polls().length, 0);
+    // An already-dispatched callback must not re-arm after disabling.
+    await pendingPoll.fn();
+    assert.equal(polls().length, 0); assert.equal(requests, 1);
+    ok(await app.call('save', { name: 'Still local' }));
+    assert.equal(polls().length, 0);
+  }
 });
