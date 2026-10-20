@@ -367,3 +367,22 @@ do not authorize reinstating installation permission gates. Use this reference,
 Contributing, and the target Host's actual interfaces for current behavior.
 Keep both languages synchronized; correcting wording does not require changing
 plugin packages, Host behavior, or CI restrictions.
+
+## Same-account device synchronization
+
+The optional `deviceSync: true` capability uses `cindy.deviceSync` on supporting
+Hosts. Probe the function before use; older Hosts keep local functionality.
+`status` lists online desktops, `request` sends bounded JSON to the same plugin
+(namespace + id), and the peer receives a `device-sync-request` message and calls
+`reply` only after committing its data. Each envelope is at most 64 KiB; timeout
+returns `SYNC_RESULT_UNKNOWN`, so only idempotent operations may be retried after
+reconciliation. The Host encrypts transport and binds account, peer, installation
+revision and plugin identity. The plugin owns persistence, conflict resolution
+and tombstones. Use `launch: resident` when automatic reception is required.
+Both computers need a Host implementing this API; this declaration alone does
+not add support to released clients. Mobile remains a controller of a desktop.
+
+Contacts uses this optional capability with an explicit per-device setting.
+Local data remains usable on its existing minimum Cindy version. Synchronization
+needs two online same-account desktops with the new Host API, and the exact
+Host/plugin combination still requires stable/Beta two-device verification.
