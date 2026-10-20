@@ -228,6 +228,7 @@ async function dispatch(method,p={}) {
 function reply(value){process.stdout.write(JSON.stringify(value)+'\n');}
 function shutdown(){ for(const child of children) child.kill('SIGKILL'); process.exit(0); }
 function startWorker() {
+  require('./viewer.cjs').reapOrphans(BINARY,DEVICE_SET);
   // In use = a viewer window is open, or another process names a running device.
   const inUse=async()=>{
     if(require('./viewer.cjs').viewing())return true;

@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const udid='00000000-0000-4000-8000-000000000001';
 
-function harness({coreDeviceFails=false,simctlFails=false,readFails=false,stale=false,owned=true}={}) {
+function harness({simctlFails=false,readFails=false,stale=false,owned=true}={}) {
  const calls=[];let clipboard="";
  const context={module:{exports:{}},__dirname:path.resolve('baguette-simulator/node'),process:{platform:'darwin',arch:'arm64'},require(name){
   if(name==='./viewer.cjs')return {};
@@ -17,7 +17,7 @@ function harness({coreDeviceFails=false,simctlFails=false,readFails=false,stale=
    if(file==='/usr/bin/sw_vers')output='27.0';
    if(file==='/usr/bin/xcode-select')output='/Applications/Xcode.app/Contents/Developer';
    if(args.includes('--json'))output=JSON.stringify({devices:{runtime:owned?[{udid,state:'Booted'}]:[]}});
-   if((args[0]==='devicectl'&&coreDeviceFails)||(args.includes('pbcopy')&&simctlFails))error=Error('unsupported command');
+   if(args.includes('pbcopy')&&simctlFails)error=Error('unsupported command');
    queueMicrotask(()=>{
     if(args.includes('pbcopy')&&!error&&!stale)clipboard=call.input;
     if(args.includes('pbpaste')){output=clipboard;if(readFails)error=Error('read failed');}
@@ -31,28 +31,22 @@ function harness({coreDeviceFails=false,simctlFails=false,readFails=false,stale=
  return {calls,dispatch:context.module.exports.dispatch};
 }
 
-test('paste prefers CoreDevice and keeps Unicode text out of command arguments',async()=>{
+test('paste writes the private device set with simctl and keeps Unicode text out of command arguments',async()=>{
+ // CoreDevice cannot see a private device set (devicectl: "device was not found"), so it is never tried.
  const h=harness();await h.dispatch('type_text',{udid,text:'你好 Duo 🥖'});
- const write=h.calls.find(c=>c.args[0]==='devicectl');
- assert.deepEqual(Array.from(write.args),['devicectl','device','pasteboard','copy','--device',udid]);
+ assert.ok(!h.calls.some(c=>c.args[0]==='devicectl'));
+ const write=h.calls.find(c=>c.args.includes('pbcopy'));
+ assert.equal(write.args[0],'simctl');assert.equal(write.args[1],'--set');
+ assert.ok(write.args[2].endsWith('/BaguetteCindy/devices'));
+ assert.deepEqual(Array.from(write.args.slice(3)),['pbcopy',udid]);
  assert.equal(write.input,'你好 Duo 🥖');
- assert.ok(!h.calls.some(c=>c.args.includes('pbcopy')));
+ assert.equal(write.options.env.LC_ALL,'en_US.UTF-8');
  assert.ok(h.calls.at(-1).file.endsWith('/native/keyboard'));
  assert.ok(h.calls.every(c=>!c.args.includes('你好 Duo 🥖')));
 });
 
-test('older Xcode or unknown CoreDevice falls back only to the private device set',async()=>{
- const h=harness({coreDeviceFails:true});await h.dispatch('type_text',{udid,text:'旧版 Xcode'});
- const fallback=h.calls.find(c=>c.args.includes('pbcopy'));
- assert.equal(fallback.args[0],'simctl');assert.equal(fallback.args[1],'--set');
- assert.ok(fallback.args[2].endsWith('/BaguetteCindy/devices'));
- assert.deepEqual(Array.from(fallback.args.slice(3)),['pbcopy',udid]);
- assert.equal(fallback.input,'旧版 Xcode');
- assert.equal(fallback.options.env.LC_ALL,'en_US.UTF-8');
-});
-
 test('failed clipboard writes never paste stale text, and foreign devices never mutate',async()=>{
- const h=harness({coreDeviceFails:true,simctlFails:true});
+ const h=harness({simctlFails:true});
  await assert.rejects(h.dispatch('type_text',{udid,text:'new'}),e=>e.execution==='unknown');
  // The only keyboard call is the existing key-release step, before any write.
  assert.equal(h.calls.filter(c=>c.file.endsWith('/native/keyboard')).length,1);
@@ -61,13 +55,13 @@ test('failed clipboard writes never paste stale text, and foreign devices never 
  assert.ok(!foreign.calls.some(c=>c.args[0]==='devicectl'||c.args.includes('pbcopy')||c.file.endsWith('/native/keyboard')));
 });
 
-for(const behavior of [{stale:true},{readFails:true}])test('unconfirmed fallback never sends Command-V '+JSON.stringify(behavior),async()=>{
- const h=harness({coreDeviceFails:true,...behavior});
+for(const behavior of [{stale:true},{readFails:true}])test('an unconfirmed clipboard write never sends Command-V '+JSON.stringify(behavior),async()=>{
+ const h=harness({...behavior});
  await assert.rejects(h.dispatch('type_text',{udid,text:'new'}),e=>e.code==='CLIPBOARD_UNVERIFIED'&&e.execution==='unknown');
  assert.equal(h.calls.filter(c=>c.file.endsWith('/native/keyboard')).length,1);
 });
 test('clipboard verification preserves leading/trailing whitespace and Unicode',async()=>{
- const h=harness({coreDeviceFails:true});await h.dispatch('type_text',{udid,text:' 你好 🥖\n'});
+ const h=harness();await h.dispatch('type_text',{udid,text:' 你好 🥖\n'});
  const read=h.calls.find(c=>c.args.includes('pbpaste'));
  assert.deepEqual(Array.from(read.args.slice(0,3)),Array.from(h.calls.find(c=>c.args.includes('pbcopy')).args.slice(0,3)));
  assert.ok(h.calls.at(-1).file.endsWith('/native/keyboard'));
