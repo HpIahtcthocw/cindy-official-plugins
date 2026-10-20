@@ -76,24 +76,17 @@ async function clipboardAction(p) {
     const text=string(p.text,'text',8000);
     // First release any existing repeat before replacing its clipboard payload.
     await nativeKey(device,null);
-    // Xcode 27 simctl pbcopy can report success without changing the guest
-    // clipboard. Match Baguette 0.2.7: prefer CoreDevice, retaining the private
-    // device-set fallback for Xcode 26 or devices CoreDevice does not know.
+    // CoreDevice (devicectl) cannot see a private device set, so write with
+    // simctl --set. Xcode 27 pbcopy has been seen to exit 0 without changing the
+    // guest clipboard: compare exact UTF-8 text (whitespace kept) before pasting.
+    await sim(['pbcopy',device.udid],{input:text,mutation:true,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
+    let actual;
     try {
-      await run('/usr/bin/xcrun',['devicectl','device','pasteboard','copy','--device',device.udid],{input:text,mutation:true});
-    } catch(error) {
-      if(error.code!=='COMMAND_FAILED')throw error;
-      await sim(['pbcopy',device.udid],{input:text,mutation:true,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
-      // A successful exit alone does not prove the guest clipboard changed.
-      // Preserve whitespace and compare exact UTF-8 text before issuing paste.
-      let actual;
-      try {
-        actual=await sim(['pbpaste',device.udid],{trimOutput:false,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
-      } catch {
-        throw new Failure('CLIPBOARD_UNVERIFIED','Could not confirm guest clipboard contents; paste was not sent','unknown');
-      }
-      if(actual.stdout!==text)throw new Failure('CLIPBOARD_UNVERIFIED','Guest clipboard did not match requested text; paste was not sent','unknown');
+      actual=await sim(['pbpaste',device.udid],{trimOutput:false,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
+    } catch {
+      throw new Failure('CLIPBOARD_UNVERIFIED','Could not confirm guest clipboard contents; paste was not sent','unknown');
     }
+    if(actual.stdout!==text)throw new Failure('CLIPBOARD_UNVERIFIED','Guest clipboard did not match requested text; paste was not sent','unknown');
     await nativeKey(device,'KeyV',['command']);
   } else if(p.action==='copy') {
     await nativeKey(device,'KeyC',['command']);
@@ -241,11 +234,14 @@ function startWorker() {
   configureControls(runtime);
   const timer=setInterval(()=>runtime.checkIdle().catch(error=>process.stderr.write('[baguette-idle] '+(error.code||'FAILED')+'\n')),15000);
   timer.unref();
+  const recycle=setInterval(()=>require('./viewer.cjs').recycleIfBloated().catch(()=>{}),60000);
+  recycle.unref();
   let stopping=false;
   const stop=async()=>{
-    if(stopping)return;stopping=true;clearInterval(timer);
+    if(stopping)return;stopping=true;clearInterval(timer);clearInterval(recycle);
     // Host may force termination before this completes. User-facing stop
     // controls await and verify shutdown instead of relying on process exit.
+    require('./viewer.cjs').abandonViewer();
     try{await runtime.close();}catch{process.stderr.write('[baguette-exit] Device shutdown not confirmed\n');}
     shutdown();
   };

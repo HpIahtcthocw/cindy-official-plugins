@@ -1,5 +1,5 @@
 'use strict';
-const {spawn}=require('node:child_process');
+const {spawn,execFileSync}=require('node:child_process');
 const net=require('node:net');
 const http=require('node:http');
 const fs=require('node:fs');
@@ -33,6 +33,22 @@ async function stopViewer(){
  if(!child||child.exitCode!==null||child.signalCode!==null)return {stopped:true};
  await new Promise(resolve=>{const timer=setTimeout(()=>child.kill('SIGKILL'),3000);child.once('close',()=>{clearTimeout(timer);resolve();});child.kill('SIGTERM');});
  return {stopped:true};
+}
+// The host gives a stopping worker about 2 s before SIGKILL, less than shutting
+// devices down takes; a serve child it never stopped is re-parented to launchd and
+// keeps capturing. Exit paths drop it first, and a new worker reaps any left over.
+function abandonViewer(){
+ const current=active;if(!current)return;active=null;current.stopped=true;clearTimeout(current.restartTimer);current.clipboard?.close();
+ const child=current.child;if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');
+}
+function orphanedServes(binary,deviceSet,listing){
+ return String(listing).split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+  .filter(m=>m&&m[2]==='1'&&m[3].startsWith(binary+' serve ')&&m[3].includes(' --device-set '+deviceSet+' ')).map(m=>Number(m[1]));
+}
+function reapOrphans(binary,deviceSet,{list=()=>execFileSync('/bin/ps',['-axww','-o','pid=,ppid=,command='],{encoding:'utf8',timeout:5000}),kill=pid=>process.kill(pid,'SIGTERM')}={}){
+ let pids=[];try{pids=orphanedServes(binary,deviceSet,list());}catch{return [];}
+ for(const pid of pids){try{kill(pid);}catch{/* already gone */}}
+ return pids;
 }
 function launch(current){
  if(current.stopped)return;
@@ -84,6 +100,24 @@ async function restartNative(current){
   }finally{current.retiring=null;current.restartPromise=null;}
  })();return current.restartPromise;
 }
+// Baguette 0.2.7/0.2.8 keeps about 33 MB per closed 3D stream (foldables reconnect
+// on every task-page load), so a long session grows by gigabytes. With nobody
+// watching, a server past this budget restarts on the same port; tabs reconnect.
+const RECYCLE_RSS_KB=1536*1024;
+function residentKb(pid){
+ try{return Number(execFileSync('/bin/ps',['-o','rss=','-p',String(pid)],{encoding:'utf8',timeout:5000}).trim())||0;}catch{return 0;}
+}
+async function recycleIfBloated({rssKb=residentKb,now=Date.now()}={}){
+ const current=active;
+ if(!current||current.stopped||current.parked||current.restartPromise||viewing(now))return false;
+ const child=current.child;
+ if(!child||child.exitCode!==null||child.signalCode!==null)return false;
+ const kb=rssKb(child.pid);
+ if(kb<RECYCLE_RSS_KB)return false;
+ process.stderr.write('[baguette-viewer] recycling idle server at '+Math.round(kb/1024)+' MB\n');
+ await restartNative(current);
+ return true;
+}
 async function viewerStatus(server){
  let available=false;try{await probe(server.base+'/simulators');available=true;}catch{}
  return {ready:available,parked:server.parked,generation:server.generation};
@@ -126,4 +160,4 @@ function existingViewerUrl(udid,locale){
  active.clipboard.devices.add(udid);
  return active.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+active.clipboard.fragment;
 }
-module.exports={openViewer,stopViewer,configureControls,viewing,VIEWER_GRACE_MS,forgetSession,existingViewerUrl};
+module.exports={openViewer,stopViewer,abandonViewer,reapOrphans,recycleIfBloated,configureControls,viewing,VIEWER_GRACE_MS,forgetSession,existingViewerUrl};
