@@ -106,6 +106,10 @@ test("persisted card opens fixed session HTML after restart; wrong/missing sessi
     if (sessionId === sid) {
       assert.equal(p.sessionId, sid);
       assert.match(p.url, /\/studio\/token\/\?file=design.html$/);
+      const saved = JSON.parse(r.disk.get('sessions/' + sid + '.json'));
+      assert.deepEqual(JSON.parse(JSON.stringify(q.calls.find(x => x.method === 'bind').params.registeredDraft)), {
+        id: saved.id, sessionId: saved.sessionId, root: saved.root, file: saved.file,
+      });
     } else assert.equal(p, undefined);
   }
 });

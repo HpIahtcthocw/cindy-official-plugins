@@ -7,16 +7,16 @@
       "description": "在本次调用所属 session 创建第一份 OpenDesign 稿件，写入专用项目目录并返回可点击的静态预览卡片。不创建/切换会话、不打开目录、不调用模型。仅初次创建使用；已有稿件请先 context 再 update。"
     },
     "opendesign_context": {
-      "description": "继续修改前读取本 session 当前稿件全文、revision、草图、元素批注和绘制截图路径。结合本轮请求处理新的修改意见，历史意见仅作上下文；不打开窗口。"
+      "description": "继续修改前读取本 session 当前稿件全文、revision、草图、元素批注和绘制截图路径。结合本轮请求处理新的修改意见，历史意见仅作上下文；不打开窗口。 原项目和正文仍在时，可按已保存的会话绑定恢复缺失的归属标记。"
     },
     "opendesign_update": {
-      "description": "将完整 HTML 写回本 session 的同一稿件，保留旧版本并返回新预览卡片。必须使用 context 返回的 expectedRevision；冲突时重新读取，避免覆盖用户修改。不会创建会话或打开窗口。"
+      "description": "将完整 HTML 写回本 session 的同一稿件，保留旧版本并返回新预览卡片。必须使用 context 返回的 expectedRevision；冲突时重新读取，避免覆盖用户修改。不会创建会话或打开窗口。 原项目和正文仍在时，可按已保存的会话绑定恢复缺失的归属标记。"
     },
     "opendesign_open": {
-      "description": "读取当前稿件并在本次对话返回可点击的预览卡片；用户点击后才打开此 session 的右侧稿件。file 仅用于首次选定旧版项目中的 HTML 文件。"
+      "description": "读取当前稿件并在本次对话返回可点击的预览卡片；用户点击后才打开此 session 的右侧稿件。file 仅用于首次选定旧版项目中的 HTML 文件。 原项目和正文仍在时，可按已保存的会话绑定恢复缺失的归属标记。"
     },
     "opendesign_preview": {
-      "description": "同 opendesign_open：发布当前稿件预览卡片，不自动打开窗口。"
+      "description": "同 opendesign_open：发布当前稿件预览卡片，不自动打开窗口。 原项目和正文仍在时，可按已保存的会话绑定恢复缺失的归属标记。"
     }
   }
 }
