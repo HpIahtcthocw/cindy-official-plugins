@@ -140,3 +140,26 @@ test('the 3D stage backdrop follows a light/dark change that arrives after it at
  panel.detach();pageBg='#f8f8f6';listeners.forEach(fn=>fn());
  assert.equal(sent.length,2,'a detached stage is left alone');
 });
+
+test('a hidden viewer throttles its stream sockets and restores them when shown again',()=>{
+ // Real case: a simulator tab behind another sidebar tab (or a covered window)
+ // kept Baguette capturing and rendering 3D at full rate, ~11% CPU for nothing.
+ const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+ const sockets=[];
+ class FakeSocket{constructor(url){this.url=url;this.readyState=0;this.sent=[];this.listeners={};sockets.push(this);}addEventListener(type,fn){(this.listeners[type]??=[]).push(fn);}send(data){this.sent.push(JSON.parse(data).fps);}fire(type){if(type==='open')this.readyState=1;for(const fn of this.listeners[type]??[])fn();}}
+ const docListeners=[];
+ const document={visibilityState:'hidden',getElementById:()=>null,addEventListener:(type,fn)=>{if(type==='visibilitychange')docListeners.push(fn);}};
+ const window={WebSocket:FakeSocket,matchMedia:()=>null};
+ vm.runInContext(fs.readFileSync(path.join(__dirname,'../../baguette-simulator/node/viewer-stage.js'),'utf8'),vm.createContext({window,document,location:{href:'http://127.0.0.1:5/simulators/x?handheld=1',host:'127.0.0.1:5'},getComputedStyle:()=>({getPropertyValue:()=>''}),Promise,URL,JSON}));
+ const flat=new window.WebSocket('ws://127.0.0.1:5/simulators/'+udid+'/stream?format=avcc');
+ const three=new window.WebSocket('/simulators/'+udid+'/stream.3d.avcc?width=960');
+ const atomic=new window.WebSocket('/simulators/'+udid+'/stream.3d.avcc?frameMetadata=1');
+ const logs=new window.WebSocket('/simulators/'+udid+'/logs');
+ for(const socket of sockets)socket.fire('open');
+ assert.deepEqual([flat.sent,three.sent],[[2],[2]],'opened while hidden: throttled at once');
+ document.visibilityState='visible';docListeners.forEach(fn=>fn());
+ assert.deepEqual([flat.sent,three.sent],[[2,60],[2,60]]);
+ assert.deepEqual([atomic.sent,logs.sent],[[],[]],'atomic 3D frames and non-stream sockets are left alone');
+ flat.fire('close');document.visibilityState='hidden';docListeners.forEach(fn=>fn());
+ assert.deepEqual([flat.sent,three.sent],[[2,60],[2,60,2]],'a closed socket is forgotten');
+});
