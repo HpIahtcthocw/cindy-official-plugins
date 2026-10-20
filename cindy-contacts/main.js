@@ -2551,7 +2551,8 @@ async function syncCapture({ deletedContactId = null } = {}) {
         // A user-created/restored row deliberately revives its id. Ordinary edits never do.
         for (const target of targets) {
           const entry = stateRows[target] || (stateRows[target] = { alive: tick(true), fields: {} });
-          if (!entry.alive[2]) entry.alive = tick(true);
+          if (!entry.alive[2] || entry.pruned) entry.alive = tick(true);
+          delete entry.pruned;
           for (const [col, value] of Object.entries(row)) entry.fields[col] = tick(col === 'id' ? JSON.parse(target)[0] : value);
         }
         changed = true;
@@ -2596,6 +2597,12 @@ function syncValidate(remote) {
       let ids;
       try { ids = JSON.parse(key); } catch (_) { throw fail('SYNC_INVALID', '同步记录标识无效，本机资料未更改。'); }
       if (!Array.isArray(ids) || ids.length !== (table === 'contact_group_members' ? 2 : 1) || !ids.every(id => typeof id === 'string')) throw fail('SYNC_INVALID', '同步记录标识无效，本机资料未更改。');
+      if (entry.pruned !== undefined) {
+        const parents = cols.filter(c => ['contact_id', 'from_id', 'to_id'].includes(c));
+        if (!entry.alive[2] || Object.keys(entry.fields).length || !parents.length || !entry.pruned || typeof entry.pruned !== 'object' || Array.isArray(entry.pruned) ||
+            Object.keys(entry.pruned).length !== parents.length || !parents.every(c => Array.isArray(entry.pruned[c]) && entry.pruned[c].length === 2 && stamp([...entry.pruned[c], '']))) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
+        continue;
+      }
       if (!entry.alive[2] && Object.keys(entry.fields).length === 0) continue;
       // Accept old, full tombstones for migration; never retain their payload.
       if (Object.keys(entry.fields).length !== cols.length || !cols.every(c => Object.hasOwn(entry.fields, c) && stamp(entry.fields[c]))) throw fail('SYNC_INVALID', '收到的同步数据无效，本机资料未更改。');
@@ -2615,27 +2622,47 @@ function syncPruneDeletedChildren(s) {
     .filter(e => e.alive[2] && !e.fields.undone_at[2]).map(e => e.fields.source_id[2]));
   let changed = false;
   for (const entries of Object.values(s.tables)) for (const entry of Object.values(entries)) {
-    if (!entry.alive[2]) continue;
+    if (!entry.alive[2] || entry.pruned) continue;
     const deletedParents = ['contact_id', 'from_id', 'to_id'].flatMap(col => {
       const id = entry.fields[col]?.[2];
       const parent = s.tables.contacts?.[JSON.stringify([id])];
       return parent && !parent.alive[2] && !mergedSources.has(id) ? [parent.alive] : [];
     });
     if (!deletedParents.length) continue;
-    // Deterministic and later than both the parent deletion and the child's creation:
-    // replay cannot restore its fields, and either arrival order produces the same mark.
-    const latest = deletedParents.reduce((a, b) => syncCompare(a, b) >= 0 ? a : b, entry.alive);
-    if (latest[0] >= Number.MAX_SAFE_INTEGER - 2) throw fail('SYNC_CLOCK', '同步版本计数已达上限。');
-    entry.alive = [latest[0] + 1, latest[1], false]; entry.fields = {};
-    s.clock = Math.max(s.clock, entry.alive[0]); changed = true;
+    // This is derived cleanup, not an explicit deletion of the child. Keep only
+    // ownership versions, so a later legitimate reassignment can supply its payload.
+    entry.pruned = Object.fromEntries(['contact_id', 'from_id', 'to_id'].filter(c => entry.fields[c]).map(c => [c, entry.fields[c].slice(0, 2)]));
+    entry.fields = {}; changed = true;
   }
   return changed;
+}
+
+function syncMergeEntry(existing, incoming) {
+  if (!existing) return incoming.alive[2] ? syncClone(incoming) : { alive: syncClone(incoming.alive), fields: {} };
+  const order = syncCompare(incoming.alive, existing.alive);
+  const winner = order > 0 ? incoming : existing;
+  if (!winner.alive[2]) return { alive: syncClone(winner.alive), fields: {} };
+  if (existing.pruned && incoming.pruned) {
+    if (order !== 0) return syncClone(winner);
+    const pruned = Object.fromEntries(Object.keys(existing.pruned).map(c => [c, syncCompare(existing.pruned[c], incoming.pruned[c]) >= 0 ? existing.pruned[c] : incoming.pruned[c]]));
+    return syncClone({ alive: winner.alive, fields: {}, pruned });
+  }
+  if (existing.pruned || incoming.pruned) {
+    const pruned = existing.pruned ? existing : incoming, live = existing.pruned ? incoming : existing;
+    const life = syncCompare(live.alive, pruned.alive);
+    const reassigned = life === 0 && Object.entries(pruned.pruned).some(([c, version]) => syncCompare(live.fields[c], version) > 0);
+    // A cleanup from an older lifecycle or ownership cannot erase a moved record.
+    return syncClone(life > 0 || reassigned ? live : pruned);
+  }
+  const result = syncClone(existing); result.alive = syncClone(winner.alive);
+  if (incoming.alive[2]) for (const [col, field] of Object.entries(incoming.fields)) if (!result.fields[col] || syncCompare(field, result.fields[col]) > 0) result.fields[col] = syncClone(field);
+  return result;
 }
 
 /** Deterministic projection: identical identities/groups collapse, preserving all linked records. */
 function syncProject(s) {
   const live = {}, parent = new Map();
-  for (const table of Object.keys(SYNC_TABLES)) live[table] = Object.entries(s.tables[table] || {}).filter(([, e]) => e.alive[2]).map(([key, e]) => ({ key, entry: e, row: Object.fromEntries(Object.entries(e.fields).map(([c, v]) => [c, v[2]])) }));
+  for (const table of Object.keys(SYNC_TABLES)) live[table] = Object.entries(s.tables[table] || {}).filter(([, e]) => e.alive[2] && !e.pruned).map(([key, e]) => ({ key, entry: e, row: Object.fromEntries(Object.entries(e.fields).map(([c, v]) => [c, v[2]])) }));
   for (const x of live.contacts) parent.set(x.row.id, x.row.id);
   const root = (id) => { let p = id; while (parent.has(p) && parent.get(p) !== p) p = parent.get(p); return p; };
   const links = [...(s.contactLinks || [])];
@@ -2710,13 +2737,8 @@ async function syncApply(remote) {
   for (const [table, rows] of Object.entries(remote.tables)) {
     const local = s.tables[table];
     for (const [key, incoming] of Object.entries(rows)) {
-      const existing = local[key];
-      s.clock = Math.max(s.clock, incoming.alive[0], ...Object.values(incoming.fields).map(v => v[0]));
-      if (!existing) { local[key] = { alive: syncClone(incoming.alive), fields: incoming.alive[2] ? syncClone(incoming.fields) : {} }; continue; }
-      if (syncCompare(incoming.alive, existing.alive) > 0) existing.alive = syncClone(incoming.alive);
-      if (!existing.alive[2]) { existing.fields = {}; continue; }
-      // A stale full tombstone cannot reintroduce content after a deliberate restore.
-      if (incoming.alive[2]) for (const [col, field] of Object.entries(incoming.fields)) if (!existing.fields[col] || syncCompare(field, existing.fields[col]) > 0) existing.fields[col] = syncClone(field);
+      s.clock = Math.max(s.clock, incoming.alive[0], ...Object.values(incoming.fields).map(v => v[0]), ...Object.values(incoming.pruned || {}).map(v => v[0]));
+      local[key] = syncMergeEntry(local[key], incoming);
     }
   }
   s.contactLinks = syncMergeLinks(s.contactLinks || [], remote.contactLinks || []);
@@ -2743,7 +2765,7 @@ async function syncSnapshot() {
     tables[table] = {};
     for (const key of Object.keys(s.tables[table]).sort()) {
       const e = s.tables[table][key];
-      tables[table][key] = { alive: e.alive, fields: e.alive[2] ? Object.fromEntries(SYNC_TABLES[table].split(' ').map(c => [c, e.fields[c]])) : {} };
+      tables[table][key] = { alive: e.alive, fields: e.alive[2] && !e.pruned ? Object.fromEntries(SYNC_TABLES[table].split(' ').map(c => [c, e.fields[c]])) : {}, ...(e.pruned ? { pruned: e.pruned } : {}) };
     }
   }
   const text = JSON.stringify({ version: 1, tables, contactLinks: s.contactLinks });

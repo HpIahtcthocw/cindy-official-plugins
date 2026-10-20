@@ -1149,7 +1149,7 @@ test('device sync erases concurrent children of a deleted contact', async (t) =>
     for (const value of [saved, outgoing]) {
       assert.ok(!JSON.stringify(value).includes('private-'));
       assert.ok(!JSON.stringify(value).includes('private@example.test'));
-      for (const [table, key] of childKeys) { assert.equal(value.tables[table][key].alive[2], false); assert.deepEqual(value.tables[table][key].fields, {}); }
+      for (const [table, key] of childKeys) { const entry = value.tables[table][key]; assert.ok(entry.pruned, 'derived cleanup retains only ownership versions'); assert.ok(Object.values(entry.pruned).every(version => version.length === 2)); assert.deepEqual(entry.fields, {}); }
     }
     assert.equal(ok(await app.call('stats')).people, 1);
     assert.equal(ok(await app.call('get', { id: kept.id })).events[0].text, 'Keep this event');
@@ -1262,6 +1262,47 @@ test('device sync transfers multiple chunks through the plugin request/reply ent
   assert.equal(vm.runInContext('syncStatus.phase', apps.a.ctx), 'waiting');
 });
 
+
+// P1: derived cleanup must not defeat a later legitimate reassignment. Exercise
+// both arrival orders through real SQLite/sync, then replay and explicit deletion.
+test('device sync preserves a legitimately moved event regardless of cleanup arrival order', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-move-'));
+  const apps = [];
+  t.after(() => { for (const app of apps) app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const snapshot = async app => JSON.parse((await vm.runInContext('serial(syncSnapshot)', app.ctx)).text);
+  const apply = async (app, state) => { app.ctx.remoteState = structuredClone(state); return vm.runInContext('serial(() => syncApply(remoteState))', app.ctx); };
+  for (const early of [true, false]) {
+    for (const name of ['a', 'b']) fs.mkdirSync(path.join(dir, `${early}-${name}`));
+    const a = boot({ libDir: path.join(dir, `${early}-a`) }), b = boot({ libDir: path.join(dir, `${early}-b`) }); apps.push(a, b);
+    const x = ok(await a.call('save', { name: 'X' })), y = ok(await a.call('save', { name: 'Y' }));
+    await b.call('stats'); await apply(b, await snapshot(a));
+    ok(await a.call('delete', { id: x.id, confirm: true }));
+    ok(await b.call('log_event', { contact_id: x.id, text: 'Moved event payload', date: '2026-10-19' }));
+    const before = await snapshot(b);
+    let cleaned;
+    if (early) {
+      await apply(a, before); cleaned = await snapshot(a);
+      assert.ok(!JSON.stringify(cleaned).includes('Moved event payload'));
+    }
+    ok(await b.call('merge', { source_id: x.id, target_id: y.id }));
+    const moved = await snapshot(b);
+    await apply(a, moved);
+    if (cleaned) await apply(b, cleaned);
+    await apply(b, await snapshot(a)); await apply(a, before);
+    for (const app of [a, b]) {
+      const contact = ok(await app.call('get', { id: y.id }));
+      assert.deepEqual(contact.events.map(e => e.text), ['Moved event payload']);
+      assert.equal(ok(await app.call('stats')).people, 1);
+    }
+    assert.deepEqual(await snapshot(a), await snapshot(b));
+    ok(await a.call('delete', { id: y.id, confirm: true }));
+    await apply(b, await snapshot(a)); await apply(a, moved); await apply(b, moved);
+    for (const app of [a, b]) {
+      assert.equal(ok(await app.call('stats')).people, 0);
+      assert.ok(!JSON.stringify(await snapshot(app)).includes('Moved event payload'));
+    }
+  }
+});
 
 test('device sync retains an offline event added to a contact merged on another device', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-merge-sync-'));
