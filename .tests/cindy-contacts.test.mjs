@@ -1119,6 +1119,56 @@ test('device sync erases deleted payload atomically and migrates full tombstones
   assert.equal(ok(await b.call('stats')).people, 0);
 });
 
+// P1: children created offline after the other device deletes the parent were hidden
+// from SQL but retained/transmitted in CRDT. Exercise both arrival orders and restart.
+test('device sync erases concurrent children of a deleted contact', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-children-'));
+  for (const name of ['a', 'b']) fs.mkdirSync(path.join(dir, name));
+  let a = boot({ libDir: path.join(dir, 'a') });
+  const b = boot({ libDir: path.join(dir, 'b') });
+  t.after(() => { a.close(); b.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const snapshot = async app => JSON.parse((await vm.runInContext('serial(syncSnapshot)', app.ctx)).text);
+  const apply = async (app, state) => { app.ctx.remoteState = structuredClone(state); return vm.runInContext('serial(() => syncApply(remoteState))', app.ctx); };
+  const state = app => JSON.parse(app.library.db('contacts.sqlite').prepare("SELECT value FROM plugin_meta WHERE key = 'device_sync_state'").get().value);
+  const person = ok(await a.call('save', { name: 'Deleted parent' }));
+  const kept = ok(await a.call('save', { name: 'Retained parent' }));
+  await b.call('stats'); await apply(b, await snapshot(a));
+  ok(await a.call('delete', { id: person.id, confirm: true }));
+  const deleted = await snapshot(a);
+  ok(await b.call('log_event', { contact_id: person.id, text: 'private-event', date: '2026-10-19' }));
+  ok(await b.call('record', { items: [{ contact_id: person.id, title: 'private-exchange', summary: 'private-summary', occurred_at: '2026-10-19T12:00:00Z', channel: 'mail', ref: 'private-ref' }] }));
+  ok(await b.call('save', { id: person.id, identities: [{ platform: 'email', value: 'private@example.test' }], open_loops: [{ text: 'private-loop' }], groups: ['Shared group'] }));
+  ok(await b.call('relate', { from_id: kept.id, to_id: person.id, relation: 'private-relation' }));
+  ok(await b.call('log_event', { contact_id: kept.id, text: 'Keep this event', date: '2026-10-19' }));
+  const offline = await snapshot(b);
+  const childTables = ['contact_events', 'contact_interactions', 'contact_loops', 'contact_identities', 'contact_group_members', 'contact_relations'];
+  const childKeys = childTables.flatMap(table => Object.entries(offline.tables[table]).filter(([, e]) => [e.fields.contact_id?.[2], e.fields.from_id?.[2], e.fields.to_id?.[2]].includes(person.id)).map(([key]) => [table, key]));
+  assert.equal(childKeys.length, 6);
+  const assertErased = async app => {
+    const saved = state(app), outgoing = await snapshot(app);
+    for (const value of [saved, outgoing]) {
+      assert.ok(!JSON.stringify(value).includes('private-'));
+      assert.ok(!JSON.stringify(value).includes('private@example.test'));
+      for (const [table, key] of childKeys) { assert.equal(value.tables[table][key].alive[2], false); assert.deepEqual(value.tables[table][key].fields, {}); }
+    }
+    assert.equal(ok(await app.call('stats')).people, 1);
+    assert.equal(ok(await app.call('get', { id: kept.id })).events[0].text, 'Keep this event');
+  };
+  await apply(a, offline); await apply(b, deleted);
+  await assertErased(a); await assertErased(b);
+  assert.deepEqual(await snapshot(a), await snapshot(b));
+  // Old builds could persist hidden children without a business row. Snapshot creation
+  // must clean those too, rather than requiring a fresh inbound transfer.
+  const legacy = state(a);
+  for (const [table, key] of childKeys) legacy.tables[table][key] = offline.tables[table][key];
+  a.library.db('contacts.sqlite').prepare("UPDATE plugin_meta SET value = ? WHERE key = 'device_sync_state'").run(JSON.stringify(legacy));
+  a.close(); a = boot({ libDir: path.join(dir, 'a') }); await a.call('stats');
+  await snapshot(a); await assertErased(a);
+  await apply(a, offline); await apply(b, offline);
+  await assertErased(a); await assertErased(b);
+  assert.deepEqual(await snapshot(a), await snapshot(b));
+});
+
 test('device sync reconciles independently imported identities and keeps linked exchanges', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contacts-sync-'));
   for (const name of ['a', 'b', 'c']) fs.mkdirSync(path.join(dir, name));

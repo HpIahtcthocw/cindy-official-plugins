@@ -2574,6 +2574,7 @@ async function syncCapture({ deletedContactId = null } = {}) {
   for (const entries of Object.values(s.tables)) for (const entry of Object.values(entries)) {
     if (!entry.alive[2] && Object.keys(entry.fields).length) { entry.fields = {}; changed = true; }
   }
+  if (syncPruneDeletedChildren(s)) changed = true;
   s.projection = rows;
   if (changed && !deletedContactId) await batch([setMetaStmt('device_sync_state', s)]);
   return s;
@@ -2604,6 +2605,31 @@ function syncValidate(remote) {
       if (table === 'contact_group_members') { const k = JSON.parse(key); if (!Array.isArray(k) || k.length !== 2 || !k.every(x => typeof x === 'string')) throw fail('SYNC_INVALID', '同步分组标识无效。'); }
     }
   }
+}
+
+/** Remove offline additions whose parent deletion won, including old hidden rows. */
+function syncPruneDeletedChildren(s) {
+  // A manual merge tombstones its source but keeps a live redirect and undo data.
+  // Preserve those children; syncProject handles redirects and opposing-merge conflicts.
+  const mergedSources = new Set(Object.values(s.tables.contact_merges || {})
+    .filter(e => e.alive[2] && !e.fields.undone_at[2]).map(e => e.fields.source_id[2]));
+  let changed = false;
+  for (const entries of Object.values(s.tables)) for (const entry of Object.values(entries)) {
+    if (!entry.alive[2]) continue;
+    const deletedParents = ['contact_id', 'from_id', 'to_id'].flatMap(col => {
+      const id = entry.fields[col]?.[2];
+      const parent = s.tables.contacts?.[JSON.stringify([id])];
+      return parent && !parent.alive[2] && !mergedSources.has(id) ? [parent.alive] : [];
+    });
+    if (!deletedParents.length) continue;
+    // Deterministic and later than both the parent deletion and the child's creation:
+    // replay cannot restore its fields, and either arrival order produces the same mark.
+    const latest = deletedParents.reduce((a, b) => syncCompare(a, b) >= 0 ? a : b, entry.alive);
+    if (latest[0] >= Number.MAX_SAFE_INTEGER - 2) throw fail('SYNC_CLOCK', '同步版本计数已达上限。');
+    entry.alive = [latest[0] + 1, latest[1], false]; entry.fields = {};
+    s.clock = Math.max(s.clock, entry.alive[0]); changed = true;
+  }
+  return changed;
 }
 
 /** Deterministic projection: identical identities/groups collapse, preserving all linked records. */
@@ -2694,6 +2720,7 @@ async function syncApply(remote) {
     }
   }
   s.contactLinks = syncMergeLinks(s.contactLinks || [], remote.contactLinks || []);
+  syncPruneDeletedChildren(s);
   const { rows, origins } = syncProject(s);
   s.projection = rows; s.origins = origins;
   if (JSON.stringify(s).length > SYNC_MAX) throw fail('SYNC_LIMIT', '通讯录同步数据超过当前上限，本机资料保留。');
