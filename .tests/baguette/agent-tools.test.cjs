@@ -249,3 +249,22 @@ test('tap until returns as soon as the expected text is on screen, without a fix
  assert.equal(result.ui,undefined);assert.equal(result.screenshot,undefined);
  assert.ok(Date.now()-started<500);assert.equal(state.inputs.length,1);
 });
+
+// Regression: a shadowed variable made every log line fail to parse, so `logs` always returned 0 lines.
+test('logs returns the app lines, without colour codes, and match sees subsystem and category',async()=>{
+ class Failure extends Error{constructor(c,m,e){super(m);this.code=c;this.execution=e;}}
+ const entries=[{timestamp:'2026-10-22 03:00:00.123456+0800',messageType:'Error',subsystem:'com.facebook.react.log',category:'native',eventMessage:'\u001b[31mUnable to resolve module\u001b[0m x'},
+  {timestamp:'2026-10-22 03:00:01.000000+0800',messageType:'Default',subsystem:'com.apple.CFBundle',category:'',eventMessage:'loaded'}];
+ const sim=async args=>{
+  if(args[0]==='get_app_container')return {stdout:'/apps/Cindy.app'};
+  if(args.includes('show'))return {stdout:'getpwuid_r did not find a match for uid 501\n'+entries.map(e=>JSON.stringify(e)).join('\n')};
+  return {stdout:''};
+ };
+ const run=async(file)=>file.endsWith('plutil')?{stdout:'Cindy'}:{stdout:''};
+ const agent=require(path.join(node,'agent.cjs')).createAgent({binary:'/bag',deviceSet:'/set',root:os.tmpdir(),run,sim,Failure});
+ const device={udid:'00000000-0000-4000-8000-000000000001'};
+ const all=await agent.logs(device,{bundleId:'com.xd.cindy',crashes:false});
+ assert.equal(all.total,2);assert.equal(all.process,'Cindy');
+ assert.ok(!all.lines[0].includes('\u001b'));assert.match(all.lines[0],/\[error\] com\.facebook\.react\.log\/native: Unable to resolve module x/);
+ assert.equal((await agent.logs(device,{bundleId:'com.xd.cindy',crashes:false,match:'react\\.log'})).total,1);
+});

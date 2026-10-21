@@ -122,15 +122,17 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   async function describe(device, p = {}) {
     if (p.x !== undefined || p.y !== undefined) {
-      const {screen, tree: whole} = await observe(device);
+      // What is under a point: the elements whose frame contains it, innermost first.
+      // (Baguette's hit test can answer with a whole container, i.e. the page.)
+      const {screen, tree} = await observe(device, {fresh: true});
+      look(device, screen);
       const view = G.viewSize(screen);
       const vx = number(p.x, 'x', 0, view.width), vy = number(p.y, 'y', 0, view.height);
-      const n = G.toNative(screen, vx, vy), q = G.nativeToAx(screen, n.x, n.y, G.axTurned(whole, screen));
-      const hit = await readTree(device, ['--x', String(q.x), '--y', String(q.y)]);
-      // A hit-test result is a lone node: judge its frame space by the whole tree.
-      const compact = G.compactTree(hit, screen, {limit: 40, turned: G.axTurned(whole, screen)});
-      look(device, screen);
-      return {udid: device.udid, screen: viewInfo(screen), at: [vx, vy], elements: compact.elements};
+      const under = G.compactTree(tree, screen, {limit: 2000}).elements
+        .filter(e => vx >= e.frame[0] && vx <= e.frame[0] + e.frame[2] && vy >= e.frame[1] && vy <= e.frame[1] + e.frame[3])
+        .sort((a, b) => a.frame[2] * a.frame[3] - b.frame[2] * b.frame[3]);
+      return {udid: device.udid, screen: viewInfo(screen), at: [vx, vy], elements: under.slice(0, 8),
+        ...(under.length ? {} : {note: 'No accessibility element contains this point. On a game or custom-drawn screen, use screenshot with region to look closer.'})};
     }
     const {screen, tree} = await observe(device, {fresh: true});
     look(device, screen);
@@ -197,7 +199,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const divisor = known ? Math.max(1, Math.floor(known / scale)) : 1;
     const [{screen}] = await Promise.all([
       geometry(device, {maxAge: p._internal ? SCREEN_TTL_MS : 3000}),
-      bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000}),
+      // Baguette's capture occasionally fails once with an internal error; the next frame is fine.
+      bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})
+        .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000}))),
     ]);
     if (screen.target?.pixelSize?.width) densities.set(device.udid, screen.target.pixelSize.width / screen.width);
     const view = G.viewSize(screen);
@@ -716,7 +720,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     const read = applied.some(k => ['appearance', 'contrast', 'text_size'].includes(k)) ? await interfaceState(device) : null;
     return {udid: device.udid, execution: 'executed', applied, ...(read ? {current: read} : {}), ...(screen ? {screen} : {}),
-      ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'} : {})};
+      ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'}
+        : read ? {note: 'The device changed; an App that reads appearance or text size only at launch shows it after a relaunch (app action=launch). Check with a screenshot.'} : {})};
   }
 
   // Appearance, Increase Contrast and Dynamic Type as the device reports them now.
@@ -752,9 +757,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       let entry; try { entry = JSON.parse(line); } catch { continue; }
       if (!entry.eventMessage && !entry.composedMessage) continue;
       // `match` sees the line as shown: time, type, subsystem/category and message.
-      const line = formatLog(entry);
-      if (pattern && !pattern.test(line)) continue;
-      lines.push(line);
+      const shown = formatLog(entry);
+      if (pattern && !pattern.test(shown)) continue;
+      lines.push(shown);
     }
     const result = {udid: device.udid, ...(processName ? {process: processName} : {}), level, lastSeconds: last, total: lines.length, lines: lines.slice(-limit), truncated: lines.length > limit};
     if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600)).catch(() => []);

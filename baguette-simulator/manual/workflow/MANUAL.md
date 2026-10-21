@@ -44,7 +44,8 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 4. 输入文字：先点输入框确认焦点，再 `type_text text=…`。默认 `method=auto`：普通 App 里粘贴（精确，支持中文与任意 Unicode）；游戏等没有无障碍元素的界面往往不接受粘贴，改为逐键输入英文、数字与符号，设备键盘是拼音、日文等输入法时会自动切到英文（结果里会说明，Ctrl+空格切回）。粘贴后输入框仍为空就用 `method=type` 重试；游戏里要输入中文只能粘贴，不接受时如实告诉用户。提交用 `keys: ["Enter"]`，清空用 `clear=true`。按键可写 `Enter`、`esc`、`up`、`a`、`A`、`cmd+A`、`shift+Tab`。
    - 粘贴（Cmd+V）、逐键输入、`keys`、`clear` 都是硬件按键：iOS 会当作接了硬件键盘，本次开机内点输入框都不再弹出屏幕键盘（插件会在之后清掉这个记录，设备重启后恢复）。要检查“键盘弹出时按钮是否被挡住”，在开机后、发任何按键之前：点输入框看键盘，再用 `method=touch`（点编辑菜单里的「粘贴」，纯触摸，键盘保持弹出）填入文字后截图。`method=touch` 用在已聚焦的空输入框上。
    - 逐键输入时屏幕键盘不会出现，所以不能靠“键盘有没有收起”判断编辑状态；输入框可能自动大写或纠错，和真机接键盘一样。只想结束编辑就点输入框以外的空白处；游戏里 `Enter` 常常等于确认，会直接提交或翻页。
-5. 长列表找目标：`gesture kind=scroll_to text=…`，到底仍没有会报告并列出当时可见的文字，可据此修正文字（例如 iOS 27 的“隐私与安全”没有“性”字）。
+5. 按元素点击后有按下效果却没反应：有些 App（常见于 React Native 键盘避让动画之后）报给无障碍的坐标已经过期，和画面差几十到上百点。截图核对后改按截图上的坐标点，并把坐标对不上记为 App 的无障碍问题。
+6. 长列表找目标：`gesture kind=scroll_to text=…`，到底仍没有会报告并列出当时可见的文字，可据此修正文字（例如 iOS 27 的“隐私与安全”没有“性”字）。
 
 ## 5. 等待，而不是 sleep
 
@@ -71,7 +72,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 - `orientation`：`portrait`、`landscape-left`、`landscape-right`、`portrait-upside-down`。App 不支持某方向时界面不会转，以截图为准。
 - `posture`（iPhone Duo 等折叠屏）：`closed` 用外屏，`open`（130°）与 `flat`（180°）用内屏；也可传 0–180 的角度。
-- `appearance`、`contrast`、`text_size`：深色模式、增强对比度、动态字体。
+- `appearance`、`contrast`、`text_size`：深色模式、增强对比度、动态字体。设备立即生效，但只在启动时读取外观或字号的 App 要 `app action=launch` 重启后才变，以截图为准。不传任何项的 `set_state` 返回当前外观、对比度、字号和方向。
 - `network`：`lte`、`3g`、`edge`、`very-bad-network`、`100-loss`、`offline` 或 `{latency, bandwidth, loss}`；只对之后启动的 App 生效，改完用 `app action=launch` 重启 App；结束时 `network: "clear"`。
 - `location`：`{lat, lon}` 或 `clear`。
 - `status_bar: "clean"`：9:41、满格满电，适合出商店图与对比截图；`clear` 还原。
@@ -79,7 +80,8 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 ## 8. 日志与崩溃
 
-- `logs bundleId=… level=error`：最近的错误与故障；`match` 用正则过滤；`last_seconds` 控制时间窗。
+- `logs bundleId=… level=error`：最近的错误与故障；`match` 是不区分大小写的 JavaScript 正则（不支持 `(?i)` 写法），匹配整行（时间、类型、subsystem/category 与正文）；`last_seconds` 控制时间窗。`logs` 查已记录的历史，`wait_for log=` 等之后新出现的行。
+- React Native、Expo 开发版的 `console.warn`/`console.error` 显示在 Metro 终端和 App 内的提示条里，不一定进系统日志。
 - 默认附带本设备上该进程最近的崩溃摘要：异常类型、原因、崩溃线程调用栈。App 闪退、白屏、卡在启动页时先看这里。
 
 ## 9. 系统弹窗
