@@ -28,7 +28,7 @@
       "description": "スワイプとマルチタッチ。これも実タッチ。kind：swipe（from→to、または direction up/down/left/right。up は指を上へ、内容が先へ進む）、drag（hold 秒押してから to へ。ドラッグ＆ドロップや並べ替え）、pinch（center、from_spread→to_spread）、pan（2 本指で by 移動）、edge（システムの端：bottom でホーム/App 切り替え、top で通知・コントロールセンター）、scroll_to（text か id の要素が完全に見えるまでスワイプ、最後まで無ければ報告）。座標はビューポイント、observe は tap と同じ。"
     },
     "type_text": {
-      "description": "フォーカス中の入力欄に入力。text：method=auto（既定）は通常の App では貼り付け（正確、任意の言語）、アクセシビリティのないゲームでは英数字と記号を 1 キーずつ入力（ピンインなどの入力ソースは英語に切り替え）。paste か type を指定も可。keys は Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。 1 キーずつの入力では画面キーボードは表示されません。ゲームでは Enter が確定になることがあるので、編集を終えるだけなら空白をタップ。observe と until は tap と同じ。"
+      "description": "フォーカス中の入力欄に入力。text：method=auto（既定）は通常の App では貼り付け（正確、任意の言語）、アクセシビリティのないゲームでは英数字と記号を 1 キーずつ入力（ピンインなどの入力ソースは英語に切り替え）。paste か type を指定も可。keys は Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。 1 キーずつの入力では画面キーボードは表示されません。ゲームでは Enter が確定になることがあるので、編集を終えるだけなら空白をタップ。observe と until は tap と同じ。 キー入力で iOS はハードウェアキーボード接続とみなし、再起動まで画面キーボードを隠します。キーボードが隠す範囲を確かめるには、起動後に method=touch（編集メニューからタッチで貼り付け）を使います。"
     },
     "press": {
       "description": "ハードウェアボタン：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen。duration で長押し。release-input は押しっぱなしのキーを離してリピートを止めるだけで、何も再起動せず App も閉じません。"

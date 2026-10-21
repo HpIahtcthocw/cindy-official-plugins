@@ -51,7 +51,8 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
   /** Files that differ between two bundles, by size and modification time. */
   async function differences(from, to) {
     const {stdout} = await run(rsync, ['-a', '--delete', '--dry-run', '--itemize-changes', from + '/', to + '/'], {timeout: 120000, maxBuffer: 32 * 1024 * 1024});
-    return stdout.split('\n').filter(line => line && !/^\.d/.test(line)).length;
+    // A line starting with "." changes attributes only (installd resets dylib permissions); count content changes.
+    return stdout.split('\n').filter(line => line && !line.startsWith('.')).length;
   }
 
   async function info(device, p) {

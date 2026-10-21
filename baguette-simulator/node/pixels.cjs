@@ -67,10 +67,15 @@ function changedShare(a, b, rect, threshold = 24) {
   return changed / (r.width * r.height);
 }
 
-/** True when nearly every pixel is one colour (a black launch frame, a white splash). */
+/**
+ * True when nearly every pixel is one colour (a black launch frame, a white
+ * page still loading). Without a rect the top 8 % is left out: the status bar
+ * and Dynamic Island are drawn over an otherwise empty frame.
+ */
 function isBlank(image, rect) {
   if (!image) return false;
-  const r = clampRect(image, rect), ch = image.channels;
+  const top = Math.round(image.height * 0.08);
+  const r = clampRect(image, rect || {x: 0, y: top, width: image.width, height: image.height - top}), ch = image.channels;
   const i0 = (r.y * image.width + r.x) * ch, base = [image.data[i0], image.data[i0 + 1], image.data[i0 + 2]];
   let off = 0;
   for (let y = r.y; y < r.y + r.height; y++) {
@@ -79,7 +84,7 @@ function isBlank(image, rect) {
       if (Math.abs(image.data[i] - base[0]) > 20 || Math.abs(image.data[i + 1] - base[1]) > 20 || Math.abs(image.data[i + 2] - base[2]) > 20) off++;
     }
   }
-  return off / (r.width * r.height) < 0.01;
+  return off / (r.width * r.height) < 0.015;
 }
 
 module.exports = {decodePng, changedShare, isBlank};

@@ -159,6 +159,12 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     }
     if (method === 'viewer_catalog') return dispatch('environment');
     if (method === 'device_hold') return hold();
+    // Listing devices and the toolchain reads only; it never waits behind another device's operation, and works while paused.
+    if (method === 'devices') {
+      const result = await dispatch(method, params);
+      return {...result, devices: await annotate(result.devices, sessionOf(params))};
+    }
+    if (method === 'environment') return dispatch(method, params);
     const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
@@ -166,11 +172,6 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       if (method === 'close_viewer') return dispatch(method, params);
       if (method === 'settings_shutdown') return stopOne(params.udid);
       if (method === 'settings_stop_all') return stopAll('manual');
-      if (method === 'devices') {
-        const result = await dispatch(method, params);
-        return {...result, devices: await annotate(result.devices, sessionOf(params))};
-      }
-      if (method === 'environment') return dispatch(method, params);
       // Managing devices never starts one, so it works while simulators are paused.
       if (method === 'reveal_screenshot') return dispatch(method, params);
       if (method === 'delete_device' || method === 'erase_device') {

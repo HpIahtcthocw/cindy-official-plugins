@@ -7,7 +7,7 @@ const udid='00000000-0000-4000-8000-000000000001';
 
 function harness({simctlFails=false,readFails=false,stale=false,owned=true}={}) {
  const calls=[];let clipboard="";
- const context={module:{exports:{}},__dirname:path.resolve('baguette-simulator/node'),process:{platform:'darwin',arch:'arm64'},require(name){
+ const context={module:{exports:{}},setTimeout,clearTimeout,__dirname:path.resolve('baguette-simulator/node'),process:{platform:'darwin',arch:'arm64'},require(name){
   if(name==='./viewer.cjs')return {};
   if(name==='./keys.cjs')return require('../../baguette-simulator/node/keys.cjs');
   if(name==='node:fs/promises')return {mkdir:async()=>{}};

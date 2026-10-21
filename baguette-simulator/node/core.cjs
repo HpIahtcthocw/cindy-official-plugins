@@ -99,6 +99,15 @@ async function settledShot(device,p,result,startedAt=Date.now()){
   catch(error){return {...result,screenshot:{error:error.message}};}
 }
 let keyboardBusy=false;
+// Any key event makes iOS treat a hardware keyboard as attached and hide the on-screen one from then on.
+// A touch-only phone shows it on focus, so forget the hardware keyboard once typing is over
+// (iOS records it about 2 s late; clearing sooner would be overwritten).
+const softTimers=new Map();
+function softKeyboardBack(device){
+  clearTimeout(softTimers.get(device.udid));
+  const timer=setTimeout(()=>{softTimers.delete(device.udid);sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','HardwareKeyboardLastSeen','-bool','false'],{timeout:10000}).catch(()=>{});},3000);
+  timer.unref?.();softTimers.set(device.udid,timer);
+}
 async function nativeKey(device,code,modifiers=[]) {
  const [key,mask]=code?require('./keys.cjs').chord(code,modifiers):[0,0];
  const dev=(await run('/usr/bin/xcode-select',['-p'],{timeout:5000})).stdout;
@@ -113,8 +122,9 @@ async function clipboardAction(p) {
   if(p.action==='key')return await nativeKey(device,p.code,p.modifiers);
   if(p.action==='paste') {
     const text=string(p.text,'text',8000);
-    // First release any existing repeat before replacing its clipboard payload.
-    await nativeKey(device,null);
+    // First release any existing repeat before replacing its clipboard payload
+    // (not for a touch paste: any key event hides the on-screen keyboard).
+    if(!p.touch)await nativeKey(device,null);
     // CoreDevice (devicectl) cannot see a private device set, so write with
     // simctl --set. Xcode 27 pbcopy has been seen to exit 0 without changing the
     // guest clipboard: compare exact UTF-8 text (whitespace kept) before pasting.
@@ -126,7 +136,7 @@ async function clipboardAction(p) {
       throw new Failure('CLIPBOARD_UNVERIFIED','Could not confirm guest clipboard contents; paste was not sent','unknown');
     }
     if(actual.stdout!==text)throw new Failure('CLIPBOARD_UNVERIFIED','Guest clipboard did not match requested text; paste was not sent','unknown');
-    await nativeKey(device,'KeyV',['command']);
+    if(!p.touch)await nativeKey(device,'KeyV',['command']);
   } else if(p.action==='copy') {
     await nativeKey(device,'KeyC',['command']);
     await new Promise(resolve=>setTimeout(resolve,250));
@@ -198,6 +208,8 @@ async function dispatch(method,p={}) {
     const ready=await sim(['bootstatus',device.udid,'-b'],{timeout:90000,mutation:true});
     // Baguette always warns about Simulator.app's lifetime setting; it does not apply to these headless devices.
     const warnings=(started?.warnings||ready.warnings||'').split('\n').filter(l=>l.trim()&&!/lifetime|^\[baguette\] Booted /.test(l)).join('\n');
+    // A fresh device shows the slide-to-type introduction over the keyboard the first time it appears; it is not part of any App.
+    if(started)await sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','DidShowContinuousPathIntroduction','-bool','true'],{timeout:10000,mutation:true}).catch(()=>{});
     return settledShot(device,p,{udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'},bootStarted);
   }
   if(method==='shutdown') {
@@ -223,7 +235,7 @@ async function dispatch(method,p={}) {
   if(method==='type_text') {
     if(p.text===undefined&&p.keys===undefined&&p.clear!==true)throw new Failure('INVALID_ARGUMENT','Pass text, keys or clear');
     const how=p.method??'auto';
-    if(!['auto','paste','type'].includes(how))throw new Failure('INVALID_ARGUMENT','method must be auto, paste or type');
+    if(!['auto','paste','type','touch'].includes(how))throw new Failure('INVALID_ARGUMENT','method must be auto, paste, type or touch');
     const {parseKey,typeable}=require('./keys.cjs');
     // Every key is checked before anything is sent.
     const rawKeys=p.keys===undefined?[]:Array.isArray(p.keys)?p.keys:[p.keys];
@@ -238,14 +250,18 @@ async function dispatch(method,p={}) {
       // Paste is exact and works with any input method; games often ignore it, so they get keystrokes.
       used=how==='auto'?(typeable(text)&&text.length<=300&&!(await agent().hasAccessibility(device))?'type':'paste'):how;
       if(used==='type')typed=await agent().typeText(device,text);
+      else if(used==='touch'){await clipboardAction({udid:device.udid,action:'paste',text,touch:true});typed=await agent().pasteByTouch(device);}
       else await clipboardAction({udid:device.udid,action:'paste',text});
     }
     for(const key of keys)await clipboardAction({udid:device.udid,action:'key',code:key.code,modifiers:key.modifiers});
     agentImpl?.forgetTree(device.udid);
-    const notes=['Keyboard events were delivered; observe the UI to confirm the result.'];
+    const keyEvents=keys.length||p.clear===true||(used&&used!=='touch');
+    if(keyEvents)softKeyboardBack(device);
+    const notes=['Input was delivered; observe the UI to confirm the result.'];
     if(used==='paste')notes.push('Text was pasted (Cmd+V). If the field stayed empty (some games ignore paste), retry with method=type.');
     if(used==='type')notes.push('Text was typed key by key; text fields may auto-capitalise or autocorrect it, as with a real keyboard.');
-    if(used)notes.push('Keyboard input works like an attached hardware keyboard: the on-screen keyboard stays hidden, so it cannot show whether a field is still being edited. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
+    if(used==='touch')notes.push('Pasted through the edit menu by touch; the on-screen keyboard stays as it was.');
+    if(keyEvents)notes.push('Key events work like an attached hardware keyboard: iOS hides the on-screen keyboard for the rest of this boot (it returns after the device restarts). To check what the keyboard covers, use method=touch from a fresh boot. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
     const typedResult={udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
     // Like tap: optionally wait for text and/or look at the result in the same call.
     return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline},typedResult);

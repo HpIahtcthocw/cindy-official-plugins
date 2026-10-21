@@ -169,7 +169,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         const b = o.part || o.box, frame = [b[0] * width, b[1] * height, b[2] * width, b[3] * height].map(round);
         return {role: 'text', label: o.text.trim(), frame, center: [round(frame[0] + frame[2] / 2), round(frame[1] + frame[3] / 2)], confidence: o.confidence};
       }).sort((a, b) => (Math.abs(a.frame[1] - b.frame[1]) < 6 ? a.frame[0] - b.frame[0] : a.frame[1] - b.frame[1]));
-      if (!find) texts.set(device.udid, {elements, at: now(), shape: shape(shot._screen)});
+      texts.set(device.udid, {elements, at: now(), shape: shape(shot._screen)});
       return {screen: shot._screen, elements};
     } finally { await fs.rm(shot.path, {force: true}); }
   }
@@ -561,6 +561,31 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     } finally { session.close(); }
   }
 
+  // The edit menu's Paste item, as iOS labels it in common languages.
+  const PASTE = new Set(['粘贴', '貼上', 'Paste', '貼り付け', '붙여넣기', 'Coller', 'Einfügen', 'Pegar', 'Incolla', 'Вставить', 'Colar', 'Plakken']);
+  /**
+   * Paste the clipboard into the focused field through its edit menu, by touch
+   * only: no key event, so the on-screen keyboard stays (keyboard layout checks).
+   */
+  async function pasteByTouch(device) {
+    const items = async () => { const {screen, tree} = await observe(device, {fresh: true}); return {screen, elements: G.compactTree(tree, screen, {limit: 1000}).elements}; };
+    const pasteItem = list => list.find(e => PASTE.has((e.label || '').trim()));
+    let {screen, elements} = await items();
+    const field = elements.find(e => e.focused);
+    if (!field) throw failure('NO_FOCUSED_FIELD', 'No focused text field. Tap the field first (its on-screen keyboard appears), then type with method=touch.');
+    let item = pasteItem(elements);
+    // A tap on the focused field opens its edit menu; a press-and-hold does where a tap only moves the cursor.
+    for (const hold of [undefined, 0.8]) {
+      if (item) break;
+      await act(device, screen, {kind: 'tap', x: field.center[0], y: field.center[1], duration: hold});
+      for (let i = 0; i < 6 && !item; i++) { await sleep(250); ({screen, elements} = await items()); item = pasteItem(elements); }
+    }
+    if (!item) throw failure('PASTE_MENU', 'The edit menu with Paste did not appear on the focused field. Use method=paste (hides the on-screen keyboard).', 'executed');
+    await act(device, screen, {kind: 'tap', x: item.center[0], y: item.center[1]});
+    forgetTree(device.udid);
+    return {pastedInto: field.label || field.id || field.role};
+  }
+
   // ---- capturing a transition ----
   async function capture(device, p, perform) {
     const seconds = number(p.seconds, 'seconds', 0.5, 15, 3), fps = number(p.fps, 'fps', 1, 20, 10), maxFrames = number(p.max_frames, 'max_frames', 2, 30, 12);
@@ -677,15 +702,28 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       await sim(args, {mutation: true});
       applied.push('privacy');
     }
-    if (!applied.length) throw failure('INVALID_ARGUMENT', 'Nothing to change. Pass orientation, posture, appearance, contrast, text_size, network, location, status_bar or privacy.');
+    // Nothing to change: report the current state (what `set_state` would otherwise have to be trusted for).
+    if (!applied.length) {
+      const screen = await geometry(device, {maxAge: 0}).then(g => g.screen, () => null);
+      if (screen) look(device, screen);
+      return {udid: device.udid, execution: 'not_executed', current: {...await interfaceState(device), ...(screen ? {orientation: screen.orientation} : {})}, ...(screen ? {screen: viewInfo(screen)} : {})};
+    }
     forget(device.udid);
     let screen = null;
     if (applied.includes('orientation') || applied.includes('posture')) {
       await sleep(700);
       try { const turned = (await geometry(device, {maxAge: 0})).screen; look(device, turned); screen = viewInfo(turned); } catch {}
     }
-    return {udid: device.udid, execution: 'executed', applied, ...(screen ? {screen} : {}),
+    const read = applied.some(k => ['appearance', 'contrast', 'text_size'].includes(k)) ? await interfaceState(device) : null;
+    return {udid: device.udid, execution: 'executed', applied, ...(read ? {current: read} : {}), ...(screen ? {screen} : {}),
       ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'} : {})};
+  }
+
+  // Appearance, Increase Contrast and Dynamic Type as the device reports them now.
+  async function interfaceState(device) {
+    const read = async what => { try { return (await bag(['interface', what], device, [], {timeout: 10000})).stdout.trim().split('\n').pop().trim() || null; } catch { return null; } };
+    const [appearance, contrast, textSize] = await Promise.all([read('appearance'), read('contrast'), read('text-size')]);
+    return {appearance, contrast, text_size: textSize};
   }
 
   // ---- logs and crashes ----
@@ -713,8 +751,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     for (const line of out.stdout.split('\n')) {
       let entry; try { entry = JSON.parse(line); } catch { continue; }
       if (!entry.eventMessage && !entry.composedMessage) continue;
-      if (pattern && !pattern.test(entry.eventMessage || entry.composedMessage)) continue;
-      lines.push(formatLog(entry));
+      // `match` sees the line as shown: time, type, subsystem/category and message.
+      const line = formatLog(entry);
+      if (pattern && !pattern.test(line)) continue;
+      lines.push(line);
     }
     const result = {udid: device.udid, ...(processName ? {process: processName} : {}), level, lastSeconds: last, total: lines.length, lines: lines.slice(-limit), truncated: lines.length > limit};
     if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600)).catch(() => []);
@@ -744,7 +784,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return reports.sort((a, b) => String(b.time).localeCompare(String(a.time)));
   }
 
-  return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, hasAccessibility, after};
+  return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, pasteByTouch, hasAccessibility, after};
 }
 
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9]);
@@ -761,11 +801,13 @@ function directionVector(direction, view, distance) {
     default: throw Object.assign(new Error('direction must be up, down, left or right'), {code: 'INVALID_ARGUMENT'});
   }
 }
+// Metro and other tools colour their messages; control characters are not text.
+const plain = text => String(text).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 function formatLog(entry) {
   const time = (entry.timestamp || '').replace(/^.*?(\d\d:\d\d:\d\d\.\d{3}).*$/, '$1');
   const type = entry.messageType && entry.messageType !== 'Default' ? `[${entry.messageType.toLowerCase()}] ` : '';
   const where = [entry.subsystem, entry.category].filter(Boolean).join('/');
-  const message = (entry.eventMessage || entry.composedMessage || '').replace(/\s+/g, ' ').slice(0, 600);
+  const message = plain(entry.eventMessage || entry.composedMessage || '').replace(/\s+/g, ' ').slice(0, 600);
   return `${time} ${type}${where ? where + ': ' : ''}${message}`;
 }
 

@@ -479,7 +479,7 @@
     },
     {
       "name": "type_text",
-      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。",
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键会让 iOS 当作接了硬件键盘，本次开机内不再弹屏幕键盘；要检查键盘遮挡，开机后用 method=touch。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -510,9 +510,10 @@
             "enum": [
               "auto",
               "paste",
-              "type"
+              "type",
+              "touch"
             ],
-            "description": "auto（默认）：普通 App 粘贴，游戏逐键输入；paste 粘贴任意文字；type 逐键输入英文、数字与符号"
+            "description": "auto（默认）：普通 App 粘贴，游戏逐键输入；paste 粘贴任意文字；type 逐键输入英文、数字与符号；touch 先点「粘贴」菜单，纯触摸、不收起屏幕键盘（查键盘遮挡时用，在已聚焦的空输入框上）"
           },
           "observe": {
             "type": "string",

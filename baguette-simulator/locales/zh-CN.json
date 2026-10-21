@@ -28,7 +28,7 @@
       "description": "滑动与多指手势，同样是真实触摸。kind：swipe（from→to，或 direction=up/down/left/right，up 表示手指上滑、内容往后翻）；drag（按住 hold 秒后拖到 to，用于拖放与排序）；pinch（双指缩放：center、from_spread→to_spread）；pan（双指平移 by）；edge（系统边缘手势：bottom 回主屏/切换 App，top 下拉通知或控制中心）；scroll_to（反复滑动直到 text 或 id 元素完整出现，到底仍没有则报告）。坐标为视图点；observe 同 tap。"
     },
     "type_text": {
-      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。"
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键会让 iOS 当作接了硬件键盘，本次开机内不再弹屏幕键盘；要检查键盘遮挡，开机后用 method=touch（通过编辑菜单触摸粘贴）。"
     },
     "press": {
       "description": "硬件按钮：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen；duration 为按住秒数。release-input：只释放卡住的按键、停止重复输入，不重启系统也不关闭 App。"
