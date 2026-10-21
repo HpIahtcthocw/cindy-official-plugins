@@ -89,9 +89,13 @@ function bundleId(value){const id=string(value,'bundleId');if(!BUNDLE_ID.test(id
 async function settledShot(device,p,result,startedAt=Date.now()){
   if(p.screenshot!==true)return result;
   // Stay inside the host's 120 s per call: the boot itself may have used most of it.
-  const left=Math.floor((100000-(Date.now()-startedAt))/1000);
-  if(left>=2){try{await agent().waitFor(device,{stable:1,timeout:Math.min(20,left)});}catch{}}
-  try{const {_modelImages,...shot}=await agent().screenshot(device,{_inline:p._inline});return {...result,screenshot:shot,...(_modelImages?{_modelImages}:{})};}
+  // Past the black launch frame, until the screen stops moving (an animated menu after a few seconds).
+  const left=100000-(Date.now()-startedAt);
+  let settled=null;
+  if(left>=2000){try{settled=await agent().settle(device,{timeout:Math.min(20000,left)});}catch{}}
+  try{const {_modelImages,...shot}=await agent().screenshot(device,{_inline:p._inline});
+    if(settled&&!settled.settled)shot.note=`${settled.blank?'The screen was still blank (loading) when this was taken; wait_for stable=1 and look again. ':settled.animated?'The screen keeps animating; this is its state after a few seconds. ':'The screen was still changing when this was taken. '}${shot.note}`;
+    return {...result,screenshot:shot,...(_modelImages?{_modelImages}:{})};}
   catch(error){return {...result,screenshot:{error:error.message}};}
 }
 let keyboardBusy=false;
@@ -218,15 +222,31 @@ async function dispatch(method,p={}) {
   }
   if(method==='type_text') {
     if(p.text===undefined&&p.keys===undefined&&p.clear!==true)throw new Failure('INVALID_ARGUMENT','Pass text, keys or clear');
+    const how=p.method??'auto';
+    if(!['auto','paste','type'].includes(how))throw new Failure('INVALID_ARGUMENT','method must be auto, paste or type');
+    const {parseKey,typeable}=require('./keys.cjs');
+    // Every key is checked before anything is sent.
+    const rawKeys=p.keys===undefined?[]:Array.isArray(p.keys)?p.keys:[p.keys];
+    if(rawKeys.length>40)throw new Failure('INVALID_ARGUMENT','At most 40 keys per call','not_executed');
+    const keys=rawKeys.map(k=>{try{return parseKey(k);}catch(error){throw new Failure('INVALID_ARGUMENT',error.message);}});
+    const text=p.text===undefined?undefined:string(p.text,'text (1–8000 characters)',8000);
+    if(how==='type'&&text!==undefined&&!typeable(text))throw new Failure('INVALID_ARGUMENT','method=type types US-keyboard characters only (letters, digits, punctuation, space, newline). Use paste for other text such as Chinese.');
+    if(how==='type'&&text!==undefined&&text.length>300)throw new Failure('INVALID_ARGUMENT','method=type is limited to 300 characters per call (about 0.1 s each); split the text or use paste.');
     if(p.clear===true){await clipboardAction({udid:device.udid,action:'key',code:'KeyA',modifiers:['command']});await clipboardAction({udid:device.udid,action:'key',code:'Backspace',modifiers:[]});}
-    if(p.text!==undefined)await clipboardAction({udid:device.udid,action:'paste',text:p.text});
-    const keys=p.keys===undefined?[]:Array.isArray(p.keys)?p.keys:[p.keys];
-    if(keys.length>40)throw new Failure('INVALID_ARGUMENT','At most 40 keys per call','not_executed');
-    for(const key of keys){
-      const [code,...mods]=String(key).split('+').reverse();
-      await clipboardAction({udid:device.udid,action:'key',code,modifiers:mods.map(m=>({cmd:'command',ctrl:'control',alt:'option',opt:'option'})[m.toLowerCase()]||m.toLowerCase())});
+    let used=null,typed=null;
+    if(text!==undefined){
+      // Paste is exact and works with any input method; games often ignore it, so they get keystrokes.
+      used=how==='auto'?(typeable(text)&&text.length<=300&&!(await agent().hasAccessibility(device))?'type':'paste'):how;
+      if(used==='type')typed=await agent().typeText(device,text);
+      else await clipboardAction({udid:device.udid,action:'paste',text});
     }
-    return {udid:device.udid,execution:'executed',note:'Keyboard events acknowledged by the simulator input transport; observe the UI to confirm the result.'};
+    for(const key of keys)await clipboardAction({udid:device.udid,action:'key',code:key.code,modifiers:key.modifiers});
+    agentImpl?.forgetTree(device.udid);
+    const notes=['Keyboard events were delivered; observe the UI to confirm the result.'];
+    if(used==='paste')notes.push('Text was pasted (Cmd+V). If the field stayed empty (some games ignore paste), retry with method=type.');
+    if(used==='type')notes.push('Text was typed key by key; text fields may auto-capitalise or autocorrect it, as with a real keyboard.');
+    if(used)notes.push('Hardware keyboard input hides the on-screen keyboard, as on a real iPad or iPhone with a keyboard attached.');
+    return {udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
   }
   if(method==='press'&&p.button==='release-input') {
     await clipboardAction({udid:device.udid,action:'release'});

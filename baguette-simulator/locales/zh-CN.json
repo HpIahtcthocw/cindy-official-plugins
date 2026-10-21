@@ -19,22 +19,22 @@
       "description": "截取当前画面：图片直接附在结果里给你看（旧版 Cindy 只返回 path，再用读图工具打开）。图片已按用户看到的方向摆正，带屏幕圆角与灵动岛；默认 1 像素 = 1 视图点，图上读到的坐标可直接传给 tap 与 gesture。grid=true 叠加带刻度的坐标网格；region 截取局部（看小字、核对边框与安全区）；scale 2–3 更清晰（坐标除以 scale）。"
     },
     "describe_ui": {
-      "description": "读取当前界面元素（无障碍树）。默认返回精简列表：角色、文字、id、frame 与 center（视图点，可直接点击），按阅读顺序排列。query/role 过滤；x、y 查询某一点下的元素；mode=full 返回完整树。列表为空多见于游戏或自绘界面，改用 screenshot（grid=true）按坐标操作。"
+      "description": "读取当前界面元素（无障碍树）。默认返回精简列表：角色、文字、id、frame 与 center（视图点，可直接点击），按阅读顺序排列。query/role 过滤；x、y 查询某一点下的元素；mode=full 返回完整树。游戏或自绘界面没有无障碍元素时，自动改为识别画面上的文字（source=ocr），同样带坐标；没有文字的图标用 screenshot 看。"
     },
     "tap": {
-      "description": "真实触摸点击：走模拟器的系统触摸通道，不依赖窗口，Mac 锁屏也能用，App 收到的就是手指触摸。按 text 或 id（可加 role、nth）点元素，或按 x、y 视图点点击。count=2 双击；duration≥0.5 长按。默认点击后约 0.6 秒返回新的界面元素（observe=ui）。验证交互要用它，不要往 App 进程里注入事件，那样会绕过真实触摸链路。"
+      "description": "真实触摸点击：走模拟器的系统触摸通道，不依赖窗口，Mac 锁屏也能用，App 收到的就是手指触摸。按 text 或 id（可加 role、nth）点元素，游戏里 text 按画面上识别出的文字点；或按 x、y 视图点点击（屏幕转向后会要求重新看图，不会点错位置）。count=2 双击；duration≥0.5 长按。默认点击后约 0.6 秒返回新的界面元素（observe=ui），observe=screenshot 直接附上截图。验证交互要用它，不要往 App 进程里注入事件。"
     },
     "gesture": {
       "description": "滑动与多指手势，同样是真实触摸。kind：swipe（from→to，或 direction=up/down/left/right，up 表示手指上滑、内容往后翻）；drag（按住 hold 秒后拖到 to，用于拖放与排序）；pinch（双指缩放：center、from_spread→to_spread）；pan（双指平移 by）；edge（系统边缘手势：bottom 回主屏/切换 App，top 下拉通知或控制中心）；scroll_to（反复滑动直到 text 或 id 元素完整出现，到底仍没有则报告）。坐标为视图点；observe 同 tap。"
     },
     "type_text": {
-      "description": "向当前聚焦的输入框输入。text 支持中文与任意 Unicode（经模拟器剪贴板粘贴，会替换其中内容）；keys 发送按键，如 Enter、Backspace、Tab、Escape、ArrowDown、cmd+A；clear=true 先全选删除。输入前确认焦点在目标输入框，之后观察结果；按键回执不代表 App 已处理完。"
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。"
     },
     "press": {
       "description": "硬件按钮：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen；duration 为按住秒数。release-input：只释放卡住的按键、停止重复输入，不重启系统也不关闭 App。"
     },
     "wait_for": {
-      "description": "等条件成立再返回（最长 90 秒），代替固定 sleep 加反复截图。text 或 id 出现（gone=true 时等它消失）；stable=秒数：等画面静止这么久（加载、动画结束）；log=正则：等 App 日志出现匹配行（配合 bundleId）。screenshot=true 时附上条件成立时的截图。超时会报告当时屏幕上有什么。"
+      "description": "等条件成立再返回（最长 90 秒），代替固定 sleep 加反复截图。text 或 id 出现（gone=true 时等它消失；游戏里按识别出的文字判断）；stable=秒数：画面变化低于 tolerance（像素百分比，默认 0.5）持续这么久，可用 region 只看局部；log=正则：App 日志出现匹配行（配合 bundleId）。screenshot=true 附上成立时的截图。没等到返回 met=false、原因与当时截图，游戏动画会给出建议的 tolerance。"
     },
     "capture": {
       "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。联系表图片同样直接附在结果里。"

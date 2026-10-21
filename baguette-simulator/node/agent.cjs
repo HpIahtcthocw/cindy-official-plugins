@@ -8,14 +8,19 @@ const crypto = require('node:crypto');
 const {spawn} = require('node:child_process');
 const G = require('./geometry.cjs');
 const input = require('./input.cjs');
+const pixels = require('./pixels.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SCREEN_TTL_MS = 8000;
+// An app with no accessibility elements (a game) is read with OCR first for this long.
+const NO_AX_TTL_MS = 60000;
 // Cindy's inline image budget per tool result (ghostModelImages.ts in the host), with headroom.
 const INLINE_BYTES = 130000;
 
 function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = spawn, now = Date.now}) {
-  const screens = new Map(); // udid → {screen, tree, at}
+  const screens = new Map(); // udid → {screen, at (screen confirmed), tree, treeAt}
+  const seen = new Map(); // udid → the screen the model last looked at (orientation and size)
+  const noAx = new Map(); // udid → when the screen last had no accessibility elements
   const corners = new Map(); // `${udid}|${panel}` → radius in points
   const dargs = device => ['--udid', device.udid, '--device-set', deviceSet];
   const bag = (words, device, args = [], options) => run(binary, [...words, ...dargs(device), ...args], options);
@@ -38,7 +43,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   /** Current screen geometry (and tree). Cached briefly so taps stay fast. */
   async function observe(device, {fresh = false} = {}) {
     const cached = screens.get(device.udid);
-    if (!fresh && cached?.tree && now() - cached.at < SCREEN_TTL_MS) return cached;
+    if (!fresh && cached?.tree && now() - cached.treeAt < SCREEN_TTL_MS) return cached;
     let tree;
     try { tree = await readTree(device); }
     catch (error) {
@@ -49,9 +54,23 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     const screen = tree?.screen;
     if (!screen || !(screen.width > 0) || !(screen.height > 0)) throw failure('SCREEN_UNAVAILABLE', 'The simulator did not report its screen. Retry after the App finishes launching.');
-    const entry = {screen: {width: screen.width, height: screen.height, orientation: screen.orientation || 'portrait', target: screen.target}, tree, at: now()};
+    const entry = {screen: screenOf(screen), tree, at: now(), treeAt: now()};
     screens.set(device.udid, entry);
+    if (G.compactTree(tree, entry.screen, {limit: 1}).total) noAx.delete(device.udid); else noAx.set(device.udid, now());
     return entry;
+  }
+  const screenOf = screen => ({width: screen.width, height: screen.height, orientation: screen.orientation || 'portrait', target: screen.target});
+  // What Baguette's `input --expected-screen` checks: the screen we planned against.
+  const pinned = screen => screen.target?.pixelSize && screen.target.screenId !== undefined
+    ? ['--expected-screen', JSON.stringify({width: screen.width, height: screen.height, orientation: screen.orientation, target: {screenId: screen.target.screenId, litPanel: screen.target.litPanel, pixelSize: screen.target.pixelSize}})] : [];
+  /**
+   * Is a cached screen still the live one? An input session pinned to it binds
+   * only if it is (about 0.3 s, nothing is sent), versus about 2 s for a probe.
+   */
+  async function confirm(device, screen) {
+    const pin = pinned(screen);
+    if (!pin.length) return false;
+    try { await bag(['input'], device, pin, {timeout: 5000}); return true; } catch { return false; }
   }
   /**
    * Screen geometry only (orientation, size, lit panel), for screenshots and
@@ -61,6 +80,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   async function geometry(device, {maxAge = SCREEN_TTL_MS} = {}) {
     const cached = screens.get(device.udid);
     if (cached && now() - cached.at < maxAge) return cached;
+    if (cached && await confirm(device, cached.screen)) { cached.at = now(); return cached; }
     let probe;
     try { probe = await readTree(device, ['--x', '1', '--y', '1']); }
     catch (error) {
@@ -69,11 +89,20 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     const screen = probe?.screen;
     if (!screen || !(screen.width > 0) || !(screen.height > 0)) throw failure('SCREEN_UNAVAILABLE', 'The simulator did not report its screen. Retry after the App finishes launching.');
-    const entry = {screen: {width: screen.width, height: screen.height, orientation: screen.orientation || 'portrait', target: screen.target}, tree: null, at: now()};
+    const entry = {screen: screenOf(screen), tree: null, at: now(), treeAt: 0};
     screens.set(device.udid, entry);
     return entry;
   }
-  function forget(udid) { screens.delete(udid); }
+  function forget(udid) { screens.delete(udid); noAx.delete(udid); }
+  // The screen content changed (a tap), its geometry most likely did not.
+  function forgetTree(udid) { const entry = screens.get(udid); if (entry) { entry.tree = null; entry.treeAt = 0; } }
+  const shape = screen => { const v = G.viewSize(screen); return `${v.width}×${v.height} ${screen.orientation}${screen.target?.litPanel && screen.target.litPanel !== 'primary' ? ` (${screen.target.litPanel} panel)` : ''}`; };
+  function look(device, screen) { seen.set(device.udid, shape(screen)); }
+  // A point read off an older screenshot means something else once the screen turned.
+  function sameAsSeen(device, screen) {
+    const last = seen.get(device.udid), current = shape(screen);
+    if (last && last !== current) throw failure('SCREEN_CHANGED', `The screen is now ${current}; it was ${last} when you last looked. Take a screenshot and choose the point again.`);
+  }
   // Pixels per point of each device's screen, learned from its geometry (raw captures start at that density).
   const densities = new Map();
   const viewInfo = screen => ({...G.viewSize(screen), orientation: screen.orientation, ...(screen.target?.litPanel && screen.target.litPanel !== 'primary' ? {panel: screen.target.litPanel} : {})});
@@ -99,9 +128,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const hit = await readTree(device, ['--x', String(q.x), '--y', String(q.y)]);
       // A hit-test result is a lone node: judge its frame space by the whole tree.
       const compact = G.compactTree(hit, screen, {limit: 40, turned: G.axTurned(whole, screen)});
+      look(device, screen);
       return {udid: device.udid, screen: viewInfo(screen), at: [vx, vy], elements: compact.elements};
     }
     const {screen, tree} = await observe(device, {fresh: true});
+    look(device, screen);
     if (p.mode === 'full') {
       const turned = G.axTurned(tree, screen);
       const convert = node => node && typeof node === 'object' ? {...node, screen: undefined, frame: node.frame ? G.frameToView(screen, G.axFrameToNative(screen, node.frame, turned)) : node.frame, children: Array.isArray(node.children) ? node.children.map(convert) : node.children} : node;
@@ -110,8 +141,35 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     const limit = number(p.limit, 'limit', 1, 600, 250);
     const result = G.compactTree(tree, screen, {query: p.query, role: p.role, limit});
+    // No accessibility at all (a game, an engine-drawn UI): read the text off the pixels instead.
+    if (!result.total && (p.role === undefined || p.role === 'text') && noAx.has(device.udid)) {
+      const read = await readText(device).catch(() => null);
+      if (read) {
+        const q = typeof p.query === 'string' ? p.query.trim().toLowerCase() : '';
+        const elements = q ? read.elements.filter(e => e.label.toLowerCase().includes(q)) : read.elements;
+        return {udid: device.udid, screen: viewInfo(read.screen), source: 'ocr', elements: elements.slice(0, limit), total: elements.length, truncated: elements.length > limit,
+          note: 'No accessibility elements (a game or custom-drawn UI). These are text lines read from the screen image (OCR); tap text=… and wait_for text=… work on them. Icons and art without text are not listed: use screenshot for those.'};
+      }
+    }
     return {udid: device.udid, screen: viewInfo(screen), ...result,
       ...(!result.total && !p.query && !p.role ? {note: 'No accessibility elements: a game or custom-drawn UI. Use screenshot (grid on) and tap by coordinates.'} : {})};
+  }
+
+  /**
+   * Text on the screen image, via Vision on this Mac, as view-point elements.
+   * With `find`, a longer line containing it is located by just that part.
+   */
+  async function readText(device, {find} = {}) {
+    const shot = await screenshot(device, {scale: 2, corners: false, format: 'png', _internal: true});
+    try {
+      const items = JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'ocr.jxa.js'), shot.path, JSON.stringify(typeof find === 'string' && find.trim() ? {find: find.trim()} : {})], {timeout: 40000})).stdout);
+      const {width, height} = G.viewSize(shot._screen);
+      const elements = items.filter(o => o.text && o.text.trim()).map(o => {
+        const b = o.part || o.box, frame = [b[0] * width, b[1] * height, b[2] * width, b[3] * height].map(round);
+        return {role: 'text', label: o.text.trim(), frame, center: [round(frame[0] + frame[2] / 2), round(frame[1] + frame[3] / 2)], confidence: o.confidence};
+      }).sort((a, b) => (Math.abs(a.frame[1] - b.frame[1]) < 6 ? a.frame[0] - b.frame[0] : a.frame[1] - b.frame[1]));
+      return {screen: shot._screen, elements};
+    } finally { await fs.rm(shot.path, {force: true}); }
   }
 
   async function shotsDir(kind = 'screenshots') {
@@ -136,7 +194,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const known = densities.get(device.udid);
     const divisor = known ? Math.max(1, Math.floor(known / scale)) : 1;
     const [{screen}] = await Promise.all([
-      geometry(device, {maxAge: 3000}),
+      geometry(device, {maxAge: p._internal ? SCREEN_TTL_MS : 3000}),
       bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000}),
     ]);
     if (screen.target?.pixelSize?.width) densities.set(device.udid, screen.target.pixelSize.width / screen.width);
@@ -153,6 +211,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const options = {rotate: G.rotation(screen), view, scale, region, radius, grid, format: p.format === 'png' ? 'png' : 'jpeg', quality: 0.82};
       const render = async (out, extra) => JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, out, JSON.stringify({...options, ...extra})], {timeout: 20000})).stdout);
       const size = await render(file, {});
+      if (p._internal) return {path: file, _screen: screen};
+      look(device, screen);
       // Shown to the model inline when it asked for the screenshot: a JPEG copy
       // within the host's inline budget, lowering quality but never the pixel
       // size (pixels are points), whatever format the saved file is.
@@ -173,41 +233,67 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   }
 
   // ---- acting ----
+  // Text on screen that has an element with no accessibility behind it: read it off the pixels.
+  async function findByText(device, p, nth) {
+    if (typeof p.text !== 'string' || (p.role !== undefined && p.role !== 'text')) return null;
+    const read = await readText(device, {find: p.text}).catch(() => null);
+    if (!read) return null;
+    const {element, matches} = G.findElement(read.elements, {text: p.text, nth, view: G.viewSize(read.screen)});
+    return {read, element, matches};
+  }
+
   async function resolveTarget(device, p) {
     if (typeof p.text === 'string' || typeof p.id === 'string') {
+      const nth = number(p.nth, 'nth', 0, 200, 0);
+      const target = element => ({x: element.center[0], y: element.center[1]});
+      // Recently a screen without accessibility (a game): try the pixels first.
+      if (noAx.has(device.udid) && now() - noAx.get(device.udid) < NO_AX_TTL_MS && typeof p.id !== 'string') {
+        const hit = await findByText(device, p, nth);
+        if (hit?.element) return {screen: hit.read.screen, ...target(hit.element), element: {label: hit.element.label, role: 'text', frame: hit.element.frame, source: 'ocr'}, matches: hit.matches};
+      }
       const {screen, tree} = await observe(device, {fresh: true});
       const {elements} = G.compactTree(tree, screen, {limit: 1000});
-      const nth = number(p.nth, 'nth', 0, 200, 0);
       const {element, matches} = G.findElement(elements, {text: p.text, id: p.id, role: p.role, nth, view: G.viewSize(screen)});
-      if (!element) {
-        const visible = elements.filter(e => e.label || e.id || e.value).slice(0, 25).map(e => `${e.label || e.value || e.id} (${e.role})`);
-        throw failure('ELEMENT_NOT_FOUND', `No visible element matches ${JSON.stringify(p.text ?? p.id)}. Visible: ${JSON.stringify(visible)}. Scroll (gesture kind=scroll_to) or use coordinates.`);
-      }
-      return {screen, x: element.center[0], y: element.center[1], element: {label: element.label, id: element.id, role: element.role, frame: element.frame}, matches};
+      if (element) return {screen, ...target(element), element: {label: element.label, id: element.id, role: element.role, frame: element.frame}, matches};
+      const hit = noAx.has(device.udid) || !elements.length ? await findByText(device, p, nth) : null;
+      if (hit?.element) return {screen: hit.read.screen, ...target(hit.element), element: {label: hit.element.label, role: 'text', frame: hit.element.frame, source: 'ocr'}, matches: hit.matches};
+      const visible = elements.length ? elements.filter(e => e.label || e.id || e.value).slice(0, 25).map(e => `${e.label || e.value || e.id} (${e.role})`)
+        : (hit?.read.elements || []).slice(0, 25).map(e => e.label);
+      throw failure('ELEMENT_NOT_FOUND', `No visible ${elements.length ? 'element' : 'text'} matches ${JSON.stringify(p.text ?? p.id)}. ${elements.length ? 'Visible' : 'Text read from the screen'}: ${JSON.stringify(visible)}. ${elements.length ? 'Scroll (gesture kind=scroll_to) or use coordinates.' : 'Icons and art have no text: take a screenshot and tap by coordinates.'}`);
     }
     const {screen} = await geometry(device);
+    sameAsSeen(device, screen);
     const view = G.viewSize(screen);
     return {screen, x: number(p.x, 'x', 0, view.width), y: number(p.y, 'y', 0, view.height)};
   }
 
   async function act(device, screen, gesture) {
     const steps = input.plan(screen, gesture);
-    const session = input.openSession(binary, dargs(device), {spawnImpl});
-    try { return await input.perform(session, steps); } finally { session.close(); }
+    // Pinned to the screen the points were planned on: Baguette refuses if it turned meanwhile.
+    const session = input.openSession(binary, [...dargs(device), ...pinned(screen)], {spawnImpl});
+    try { return await input.perform(session, steps); }
+    catch (error) {
+      if (error.execution === 'not_executed' && /changed|observe again/.test(error.message)) {
+        forget(device.udid);
+        throw failure('SCREEN_CHANGED', 'The screen turned or changed panel just now; nothing was sent. Take a screenshot and try again.');
+      }
+      throw error;
+    } finally { session.close(); }
   }
 
   async function after(device, p, result) {
     const observeMode = p.observe ?? 'ui';
     if (observeMode === 'none') return result;
     await sleep(number(p.settle, 'settle', 0, 5, 0.6) * 1000);
-    forget(device.udid);
+    forgetTree(device.udid);
     const out = {...result};
     if (observeMode === 'ui' || observeMode === 'both') {
-      try { const ui = await describe(device, {limit: 120}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.note ? {note: ui.note} : {})}; }
+      try { const ui = await describe(device, {limit: 120}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.source ? {source: ui.source} : {}), ...(ui.note ? {note: ui.note} : {})}; }
       catch (error) { out.ui = {error: error.message}; }
     }
     if (observeMode === 'screenshot' || observeMode === 'both') {
-      try { out.screenshot = await screenshot(device, {}); } catch (error) { out.screenshot = {error: error.message}; }
+      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline}); out.screenshot = shot; if (_modelImages) out._modelImages = _modelImages; }
+      catch (error) { out.screenshot = {error: error.message}; }
     }
     return out;
   }
@@ -224,6 +310,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const kind = p.kind;
     if (kind === 'scroll_to') return scrollTo(device, p);
     const {screen} = await geometry(device);
+    if (p.from || p.to || p.center || kind === 'pan') sameAsSeen(device, screen);
     const view = G.viewSize(screen);
     const g = {kind, duration: number(p.duration, 'duration', 0.05, 10, undefined)};
     if (kind === 'swipe' || kind === 'drag') {
@@ -273,37 +360,103 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   }
 
   // ---- waiting ----
+  // A small PNG of the whole screen in native orientation (about 270 px wide on iPad).
+  async function frame(device) {
+    const {stdout} = await run(binary, ['screenshot', ...dargs(device), '--format', 'png', '--scale', '6'], {timeout: 10000, trimOutput: false, encoding: 'buffer'}).catch(() => ({stdout: null}));
+    return stdout && stdout.length ? {bytes: stdout, image: pixels.decodePng(stdout)} : null;
+  }
+  // A view-point region as a rectangle on that native-orientation frame.
+  function frameRect(screen, image, region) {
+    if (!region || !image) return null;
+    const corners = [[region.x, region.y], [region.x + region.width, region.y], [region.x, region.y + region.height], [region.x + region.width, region.y + region.height]].map(([x, y]) => G.toNative(screen, x, y));
+    const k = image.width / screen.width, xs = corners.map(c => c.x * k), ys = corners.map(c => c.y * k);
+    return {x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys)};
+  }
+  function viewRegion(screen, r) {
+    if (r === undefined) return null;
+    const view = G.viewSize(screen);
+    const x = number(r?.x, 'region.x', 0, view.width), y = number(r?.y, 'region.y', 0, view.height);
+    return {x, y, width: number(r.width, 'region.width', 1, view.width - x), height: number(r.height, 'region.height', 1, view.height - y)};
+  }
+  const share = (a, b, rect) => (a.image && b.image ? pixels.changedShare(a.image, b.image, rect) : a.bytes.equals(b.bytes) ? 0 : 1);
+
+  /**
+   * After boot or launch: wait until the frame is no longer a single colour (a
+   * black launch frame) and has stopped moving; an animated scene (a game menu)
+   * is accepted after a few seconds of content.
+   */
+  async function settle(device, {timeout = 20000} = {}) {
+    const started = now();
+    let prev = null, since = now(), content = null;
+    while (now() - started < timeout) {
+      const f = await frame(device);
+      if (f && !(f.image && pixels.isBlank(f.image))) {
+        content ??= now();
+        if (!prev || share(prev, f) > 0.02) since = now();
+        else if (now() - since >= 1000) return {settled: true, waitedMs: now() - started};
+        if (now() - content >= 6000) return {settled: false, animated: true, waitedMs: now() - started};
+        prev = f;
+      } else { prev = null; content = null; }
+      await sleep(200);
+    }
+    return {settled: false, waitedMs: now() - started, ...(content ? {} : {blank: true})};
+  }
+
   async function waitFor(device, p) {
     const timeout = number(p.timeout, 'timeout', 1, 90, 15) * 1000, started = now();
     const done = extra => ({udid: device.udid, met: true, waitedMs: now() - started, ...extra});
-    const finish = async result => p.screenshot ? {...result, screenshot: await screenshot(device, {}).catch(error => ({error: error.message}))} : result;
-    if (typeof p.log === 'string') return finish(await waitForLog(device, p, timeout, started, done));
+    // A screenshot when asked, and always when the wait ran out: what is on screen is the next question.
+    const finish = async (result, look = p.screenshot === true) => {
+      if (!look) return result;
+      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline}); return {...result, screenshot: shot, ...(_modelImages ? {_modelImages} : {})}; }
+      catch (error) { return {...result, screenshot: {error: error.message}}; }
+    };
+    const unmet = (reason, extra = {}) => finish({udid: device.udid, met: false, waitedMs: now() - started, reason, ...extra}, true);
+    if (typeof p.log === 'string') {
+      try { return await finish(await waitForLog(device, p, timeout, started, done)); }
+      catch (error) { if (error.code === 'WAIT_TIMEOUT') return finish({udid: device.udid, met: false, waitedMs: now() - started, reason: error.message}); throw error; }
+    }
     if (p.stable !== undefined) {
-      const quiet = number(p.stable, 'stable', 0.2, 30, 1) * 1000;
-      let lastHash = null, since = now();
+      const quiet = number(p.stable, 'stable', 0.2, 30, 1) * 1000, tolerance = number(p.tolerance, 'tolerance', 0, 50, 0.5) / 100;
+      const {screen} = p.region !== undefined ? await geometry(device) : {screen: null};
+      const region = screen ? viewRegion(screen, p.region) : null;
+      let prev = null, since = now(), rect = null;
+      const changes = [];
       while (now() - started < timeout) {
-        const {stdout} = await run(binary, ['screenshot', ...dargs(device), '--format', 'jpg', '--quality', '0.5', '--scale', '6'], {timeout: 10000, trimOutput: false, encoding: 'buffer'}).catch(() => ({stdout: ''}));
-        const hash = crypto.createHash('sha1').update(stdout || '').digest('hex');
-        if (hash !== lastHash) { lastHash = hash; since = now(); }
-        else if (now() - since >= quiet) return finish(done({stableMs: now() - since}));
+        const f = await frame(device);
+        if (f) {
+          if (region && f.image && !rect) rect = frameRect(screen, f.image, region);
+          const moved = prev ? share(prev, f, rect) : 1;
+          if (prev) changes.push(moved);
+          if (moved > tolerance) since = now();
+          else if (now() - since >= quiet) return finish(done({stableMs: now() - since, ...(f.image && pixels.isBlank(f.image, rect) ? {blank: true, note: 'The screen is a single colour (blank, or still loading).'} : {})}));
+          prev = f;
+        }
         await sleep(150);
       }
-      throw failure('WAIT_TIMEOUT', `The screen kept changing for ${Math.round(timeout / 1000)} s.`);
+      const typical = changes.length ? [...changes].sort((a, b) => a - b)[Math.floor(changes.length / 2)] * 100 : null;
+      const ambient = typical !== null && typical < 15;
+      return unmet(`The ${region ? 'region' : 'screen'} kept changing for ${Math.round(timeout / 1000)} s${typical !== null ? `, typically ${typical.toFixed(1)}% of pixels per frame` : ''}.${ambient ? ` That looks like ongoing animation (a game scene); if so, wait with tolerance=${Math.min(50, Math.ceil(typical * 1.5 + 1))} or watch a calm region.` : ''} The current screen is attached.`);
     }
     if (typeof p.text !== 'string' && typeof p.id !== 'string') throw failure('INVALID_ARGUMENT', 'wait_for needs text, id, stable or log');
     const gone = p.gone === true;
-    let seen = [];
+    let seenText = [], source = 'ui';
     while (now() - started < timeout) {
       try {
         const {screen, tree} = await observe(device, {fresh: true});
         const {elements} = G.compactTree(tree, screen, {limit: 1000});
-        const {element} = G.findElement(elements, {text: p.text, id: p.id, role: p.role});
-        if (gone ? !element : element) return finish(done(element ? {element: {label: element.label, id: element.id, role: element.role, frame: element.frame, center: element.center}} : {}));
-        seen = elements.filter(e => e.label).slice(0, 20).map(e => e.label);
+        let {element} = G.findElement(elements, {text: p.text, id: p.id, role: p.role});
+        seenText = elements.filter(e => e.label).slice(0, 20).map(e => e.label);
+        // No accessibility (a game): look for the text in the pixels.
+        if (!element && !elements.length && typeof p.text === 'string') {
+          const hit = await findByText(device, p, 0);
+          if (hit) { source = 'ocr'; element = hit.element; seenText = hit.read.elements.slice(0, 20).map(e => e.label); }
+        }
+        if (gone ? !element : element) return finish(done(element ? {element: {label: element.label, id: element.id, role: element.role, frame: element.frame, center: element.center}, ...(source === 'ocr' ? {source} : {})} : {}));
       } catch {}
       await sleep(400);
     }
-    throw failure('WAIT_TIMEOUT', `${gone ? 'Still visible' : 'Not visible'} after ${Math.round(timeout / 1000)} s: ${JSON.stringify(p.text ?? p.id)}. On screen: ${JSON.stringify(seen)}.`);
+    return unmet(`${gone ? 'Still visible' : 'Not visible'} after ${Math.round(timeout / 1000)} s: ${JSON.stringify(p.text ?? p.id)}. On screen${source === 'ocr' ? ' (text read from the image)' : ''}: ${JSON.stringify(seenText)}. The current screen is attached.`);
   }
 
   async function waitForLog(device, p, timeout, started, done) {
@@ -329,6 +482,61 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       });
       child.on('error', error => end(reject, failure('LOGS_UNAVAILABLE', error.message)));
     });
+  }
+
+  // ---- typing ----
+  /** Whether the current screen exposes accessibility elements (false for most games). */
+  async function hasAccessibility(device) {
+    const at = noAx.get(device.udid);
+    if (at && now() - at < NO_AX_TTL_MS) return false;
+    const cached = screens.get(device.udid);
+    if (cached?.tree && now() - cached.treeAt < NO_AX_TTL_MS) return true;
+    try { await observe(device, {fresh: true}); } catch { return true; }
+    return !noAx.has(device.udid);
+  }
+  // The input source the hardware keyboard types through, e.g. "en_US@sw=QWERTY;hw=Automatic".
+  async function inputSource(device) {
+    try {
+      const {stdout} = await sim(['spawn', device.udid, 'defaults', 'read', 'com.apple.keyboard.preferences', 'KeyboardsCurrentAndNext'], {timeout: 5000});
+      const first = stdout.replace(/^\s*\(\s*/, '').split(/,|\)/)[0].trim().replace(/^"|"$/g, '');
+      return first || null;
+    } catch { return null; }
+  }
+  // US key codes type US characters only through an English layout; Pinyin, Kana
+  // and the like would compose them into candidates instead.
+  const english = source => !source || /^en(_[A-Z]{2})?@sw=QWERTY(;|$)/.test(source);
+
+  /**
+   * Type US-keyboard text key by key, as a hardware keyboard would. Reaches
+   * fields that ignore paste (games). A Pinyin, Kana or similar input source
+   * would turn the keys into candidates, so it first switches to English with
+   * Ctrl+Space (as on a Mac) and leaves it there: iOS records the switch about
+   * 2 s late, and switching back would make the next call read a stale source.
+   */
+  async function typeText(device, text) {
+    const session = input.openSession(binary, dargs(device), {spawnImpl});
+    let switched = false, typed = 0;
+    const send = async envelope => {
+      const ack = await session.send(envelope);
+      if (!ack.ok) throw failure('INPUT_FAILED', `Typing stopped: ${ack.error || 'rejected'}`, typed ? 'unknown' : 'not_executed');
+    };
+    try {
+      let source = await inputSource(device);
+      for (let i = 0; i < 4 && !english(source); i++) {
+        await send({type: 'key', code: 'Space', modifiers: ['control']});
+        switched = true;
+        const before = source, until = now() + 3500;
+        do { await sleep(250); source = await inputSource(device); } while (source === before && now() < until);
+        if (source === before) break;
+      }
+      if (!english(source)) throw failure('INPUT_SOURCE', `The simulator keyboard is set to ${source} and Ctrl+Space did not reach an English input source. Use method=paste, or add an English keyboard in Settings.`, switched ? 'executed' : 'not_executed');
+      // Newlines and tabs are keys; the rest goes in short runs (about 0.1 s per character).
+      for (const part of text.split(/(\n|\t)/)) {
+        if (part === '\n' || part === '\t') { await send({type: 'key', code: part === '\n' ? 'Enter' : 'Tab'}); typed++; continue; }
+        for (let i = 0; i < part.length; i += 30) { await send({type: 'type', text: part.slice(i, i + 30)}); typed += Math.min(30, part.length - i); }
+      }
+      return {typed, ...(switched ? {inputSource: 'The simulator keyboard was switched to English for typing (Ctrl+Space switches back).'} : {})};
+    } finally { session.close(); }
   }
 
   // ---- capturing a transition ----
@@ -452,7 +660,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let screen = null;
     if (applied.includes('orientation') || applied.includes('posture')) {
       await sleep(700);
-      try { screen = viewInfo((await geometry(device, {maxAge: 0})).screen); } catch {}
+      try { const turned = (await geometry(device, {maxAge: 0})).screen; look(device, turned); screen = viewInfo(turned); } catch {}
     }
     return {udid: device.udid, execution: 'executed', applied, ...(screen ? {screen} : {}),
       ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'} : {})};
@@ -514,7 +722,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return reports.sort((a, b) => String(b.time).localeCompare(String(a.time)));
   }
 
-  return {observe, geometry, forget, describe, screenshot, tap, gesture, waitFor, capture, setState, logs, executableOf};
+  return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, hasAccessibility};
 }
 
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9]);

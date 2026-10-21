@@ -19,22 +19,22 @@
       "description": "現在の画面を撮影します。画像は結果に直接添付されます（旧版 Cindy は path のみ返すので画像ツールで開く）。ユーザーが見る向きに補正され、画面の角丸とダイナミックアイランド付き。既定で 1 ピクセル = 1 ビューポイントなので、画像上の座標をそのまま tap と gesture に渡せます。grid=true で目盛り付きグリッド、region で一部を切り出し（小さな文字、枠、セーフエリア）、scale 2–3 で高精細（座標は scale で割る）。"
     },
     "describe_ui": {
-      "description": "画面上の要素（アクセシビリティツリー）を読み取ります。既定は読み順の簡易リストで、役割、テキスト、id、ビューポイントの frame と center（center をそのままタップ可能）。query/role で絞り込み、x,y でその点の要素、mode=full で全ツリー。空の場合はゲームや独自描画の UI が多いので、grid 付き screenshot と座標で操作。"
+      "description": "画面上の要素（アクセシビリティツリー）を読み取ります。既定は読み順の簡易リストで、役割、テキスト、id、ビューポイントの frame と center（center をそのままタップ可能）。query/role で絞り込み、x,y でその点の要素、mode=full で全ツリー。アクセシビリティのないゲームや独自描画の UI では、画面上の文字を読み取って位置付きで返します（source=ocr）。文字のないアイコンは screenshot で確認。"
     },
     "tap": {
-      "description": "シミュレーターのシステムタッチ経路による実タッチ。ウィンドウ不要で Mac がロック中でも動作し、App には指のタッチとして届きます。text か id（role、nth も可）で要素を、または x,y のビューポイントを指定。count=2 でダブルタップ、duration≥0.5 で長押し。既定で約 0.6 秒後の新しい画面要素を返します（observe=ui）。操作の検証にはこれを使い、App プロセスへのイベント注入は実タッチの経路を迂回するので行わないこと。"
+      "description": "シミュレーターのシステムタッチ経路による実タッチ。ウィンドウ不要で Mac がロック中でも動作し、App には指のタッチとして届きます。text か id（role、nth も可）で要素を指定（ゲームでは画面から読み取った文字に一致）、または x,y のビューポイント（見た後に画面が回転した場合は誤タップせず再確認を求めます）。count=2 でダブルタップ、duration≥0.5 で長押し。既定で約 0.6 秒後の新しい要素を返し（observe=ui）、observe=screenshot でスクリーンショットを添付。App プロセスへのイベント注入はしないこと。"
     },
     "gesture": {
       "description": "スワイプとマルチタッチ。これも実タッチ。kind：swipe（from→to、または direction up/down/left/right。up は指を上へ、内容が先へ進む）、drag（hold 秒押してから to へ。ドラッグ＆ドロップや並べ替え）、pinch（center、from_spread→to_spread）、pan（2 本指で by 移動）、edge（システムの端：bottom でホーム/App 切り替え、top で通知・コントロールセンター）、scroll_to（text か id の要素が完全に見えるまでスワイプ、最後まで無ければ報告）。座標はビューポイント、observe は tap と同じ。"
     },
     "type_text": {
-      "description": "フォーカス中の入力欄に入力。text は中国語を含む任意の Unicode（シミュレーターのクリップボード経由で貼り付け、内容を置き換え）。keys は Enter、Backspace、Tab、Escape、ArrowDown、cmd+A などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。キーの受領は App の処理完了ではありません。"
+      "description": "フォーカス中の入力欄に入力。text：method=auto（既定）は通常の App では貼り付け（正確、任意の言語）、アクセシビリティのないゲームでは英数字と記号を 1 キーずつ入力（ピンインなどの入力ソースは英語に切り替え）。paste か type を指定も可。keys は Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。"
     },
     "press": {
       "description": "ハードウェアボタン：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen。duration で長押し。release-input は押しっぱなしのキーを離してリピートを止めるだけで、何も再起動せず App も閉じません。"
     },
     "wait_for": {
-      "description": "条件が成立したら戻ります（最長 90 秒）。固定の sleep と繰り返しのスクリーンショットの代わり。text か id の出現（gone=true で消えるまで）、stable=秒数で画面がその間変化しないこと（読み込みやアニメーションの終了）、log=正規表現で App ログに一致行（bundleId と併用）。screenshot=true で成立時の画面を添付。タイムアウト時は画面に何があったか報告します。"
+      "description": "条件が成立したら戻ります（最長 90 秒）。固定の sleep と繰り返しのスクリーンショットの代わり。text か id の出現（gone=true で消えるまで。ゲームでは画面から読み取った文字）、stable=秒数で画面の変化が tolerance（ピクセルの割合 %、既定 0.5）未満の状態がその間続くこと（region で一部だけ監視可）、log=正規表現で App ログに一致行（bundleId と併用）。screenshot=true で画面を添付。成立しなければ met=false、理由と現在の画面。ゲームのアニメーションには推奨 tolerance を示します。"
     },
     "capture": {
       "description": "変化を記録：フレーム記録を開始し、action（tool は tap、gesture、press、type_text、open_url、app_launch、args はその引数）を実行して seconds 秒（15 以下）続け、重複を除いたフレームを時系列・ミリ秒付きの一覧画像 1 枚にまとめ、各フレームのファイルも返します。画面遷移、アニメーション、一瞬のトースト、読み込みやスケルトン画面に。action なしなら変化だけを記録。一覧画像も結果に直接添付されます。"

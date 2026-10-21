@@ -146,3 +146,96 @@ test('iPhone Duo unfolded: SpringBoard frames are turned a quarter, app frames a
  assert.deepEqual(G.nativeToAx(screen,90,410,true),{x:410,y:861});
  assert.equal(G.axTurned(springboard,{...screen,target:{litPanel:'primary'}}),false);
 });
+
+// Replay of a game task: models wrote "shift+T", "t" and "cmd+A"; only W3C codes were accepted and the error named none.
+test('keys accept what models write and name the accepted forms when one is unknown',()=>{
+ const {parseKey,typeable}=require(path.join(node,'keys.cjs'));
+ assert.deepEqual(parseKey('t'),{code:'KeyT',modifiers:[]});
+ assert.deepEqual(parseKey('T'),{code:'KeyT',modifiers:['shift']});
+ assert.deepEqual(parseKey('shift+T'),{code:'KeyT',modifiers:['shift']});
+ assert.deepEqual(parseKey('cmd+A'),{code:'KeyA',modifiers:['command']});
+ assert.deepEqual(parseKey('Ctrl+Space'),{code:'Space',modifiers:['control']});
+ assert.deepEqual(parseKey('esc'),{code:'Escape',modifiers:[]});
+ assert.deepEqual(parseKey('return'),{code:'Enter',modifiers:[]});
+ assert.deepEqual(parseKey('up'),{code:'ArrowUp',modifiers:[]});
+ assert.deepEqual(parseKey('KeyA'),{code:'KeyA',modifiers:[]});
+ assert.deepEqual(parseKey('?'),{code:'Slash',modifiers:['shift']});
+ assert.equal(parseKey('cmd++').code,'Equal');assert.deepEqual(parseKey('cmd++').modifiers.sort(),['command','shift']);
+ assert.throws(()=>parseKey('F13'),e=>e.code==='INVALID_ARGUMENT'&&/cmd\+a/.test(e.message));
+ assert.throws(()=>parseKey('hyper+a'),e=>e.code==='INVALID_ARGUMENT'&&/cmd, ctrl, option or shift/.test(e.message));
+ assert.equal(typeable('Test Hero 2\n'),true);assert.equal(typeable('王五'),false);
+});
+
+// Minimal PNG writer using every row filter, so the decoder is checked against real encodings.
+function png(width,height,pixel){
+ const zlib=require('node:zlib'),rows=[];
+ for(let y=0;y<height;y++){
+  const filter=y%5,line=Buffer.alloc(width*4),prev=Buffer.alloc(width*4),out=Buffer.alloc(width*4);
+  for(let x=0;x<width;x++){line.set(pixel(x,y),x*4);if(y)prev.set(pixel(x,y-1),x*4);}
+  for(let i=0;i<line.length;i++){
+   const a=i>=4?line[i-4]:0,b=y?prev[i]:0,c=y&&i>=4?prev[i-4]:0;
+   const p=a+b-c,pa=Math.abs(p-a),pb=Math.abs(p-b),pc=Math.abs(p-c);
+   out[i]=(line[i]-[0,a,b,(a+b)>>1,pa<=pb&&pa<=pc?a:pb<=pc?b:c][filter])&0xff;
+  }
+  rows.push(Buffer.from([filter]),out);
+ }
+ const chunk=(type,data)=>{const len=Buffer.alloc(4);len.writeUInt32BE(data.length);return Buffer.concat([len,Buffer.from(type,'latin1'),data,Buffer.alloc(4)]);};
+ const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(width,0);ihdr.writeUInt32BE(height,4);ihdr[8]=8;ihdr[9]=6;
+ return Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),chunk('IHDR',ihdr),chunk('IDAT',zlib.deflateSync(Buffer.concat(rows))),chunk('IEND',Buffer.alloc(0))]);
+}
+
+// A game menu animates about 5 % of its pixels every frame, so "no byte changed" never came (60 s timeout in the replay).
+test('frames decode, small animation stays under a tolerance, a launch frame of one colour reads as blank',()=>{
+ const P=require(path.join(node,'pixels.cjs'));
+ const scene=t=>(x,y)=>[(x*7+y*3)%256,(x*y)%256,y<4&&x<4?(t*90)%256:(x+y)%256,255];
+ const a=P.decodePng(png(20,20,scene(0))),b=P.decodePng(png(20,20,scene(1)));
+ assert.deepEqual(Array.from(a.data.subarray(0,4)),[0,0,90*0,255]);
+ assert.deepEqual(Array.from(a.data.subarray((19*20+19)*4,(19*20+19)*4+4)),[(19*7+19*3)%256,(19*19)%256,38,255]);
+ assert.equal(P.changedShare(a,b),16/400);
+ assert.equal(P.changedShare(a,b,{x:10,y:10,width:10,height:10}),0);
+ assert.equal(P.isBlank(P.decodePng(png(20,20,()=>[0,0,0,255]))),true);
+ assert.equal(P.isBlank(a),false);
+ assert.equal(P.decodePng(Buffer.from('not a png')),null);
+});
+
+function fakeAgent(){
+ const state={orientation:'portrait',t:0,inputs:[]};
+ const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',pixelSize:{width:1206,height:2622},screenId:1}});
+ class Failure extends Error{constructor(c,m,e){super(m);this.code=c;this.execution=e;}}
+ const run=async(file,args)=>{
+  if(args[0]==='describe-ui')return {stdout:JSON.stringify({role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen:screen(),children:[{role:'AXButton',label:'OK',frame:{x:100,y:100,width:50,height:40}}]})};
+  if(args[0]==='input'){const pin=JSON.parse(args[args.indexOf('--expected-screen')+1]);if(pin.orientation!==state.orientation)throw new Failure('COMMAND_FAILED','display bind failed: changed');return {stdout:''};}
+  return {stdout:''};
+ };
+ // An input session: pinned to a screen that no longer matches, Baguette exits before reading anything.
+ const spawnImpl=(file,args)=>{
+  const {EventEmitter}=require('node:events');const child=new EventEmitter();
+  child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+  const pin=JSON.parse(args[args.indexOf('--expected-screen')+1]);
+  const stale=pin.orientation!==state.orientation;
+  child.stdin={on(){},end(){},write(line){
+   if(stale){setImmediate(()=>{child.stderr.emit('data','[baguette] display bind failed: changed\n');child.emit('exit',1);});return;}
+   state.inputs.push(JSON.parse(line));setImmediate(()=>child.stdout.emit('data','{"ok":true}\n'));}};
+  child.kill=()=>{};return child;
+ };
+ const agent=require(path.join(node,'agent.cjs')).createAgent({binary:'/bag',deviceSet:'/set',root:os.tmpdir(),run,sim:run,Failure,spawnImpl,now:()=>state.t});
+ return {agent,state,device:{udid:'00000000-0000-4000-8000-000000000001'}};
+}
+
+test('coordinates are pinned to the screen they were read on; a turned screen is refused, never tapped elsewhere',async()=>{
+ const {agent,state,device}=fakeAgent();
+ await agent.describe(device,{});
+ await agent.tap(device,{x:120,y:120,observe:'none'});
+ assert.equal(state.inputs.length,1);
+ // Turned within the cache window: Baguette refuses the pinned session, nothing is sent.
+ state.orientation='landscape-left';
+ await assert.rejects(agent.tap(device,{x:120,y:120,observe:'none'}),e=>e.code==='SCREEN_CHANGED'&&e.execution==='not_executed');
+ // Later, the turned screen is detected first and the model is asked to look again.
+ state.t+=60000;
+ await assert.rejects(agent.tap(device,{x:120,y:120,observe:'none'}),e=>e.code==='SCREEN_CHANGED'&&/874×402 landscape-left/.test(e.message));
+ assert.equal(state.inputs.length,1);
+ // After looking at the new screen, the same point is accepted.
+ await agent.describe(device,{});
+ await agent.tap(device,{x:120,y:120,observe:'none'});
+ assert.equal(state.inputs.length,2);
+});

@@ -33,7 +33,7 @@ function harness({simctlFails=false,readFails=false,stale=false,owned=true}={}) 
 
 test('paste writes the private device set with simctl and keeps Unicode text out of command arguments',async()=>{
  // CoreDevice cannot see a private device set (devicectl: "device was not found"), so it is never tried.
- const h=harness();await h.dispatch('type_text',{udid,text:'你好 Duo 🥖'});
+ const h=harness();await h.dispatch('type_text',{udid,text:'你好 Duo 🥖',method:'paste'});
  assert.ok(!h.calls.some(c=>c.args[0]==='devicectl'));
  const write=h.calls.find(c=>c.args.includes('pbcopy'));
  assert.equal(write.args[0],'simctl');assert.equal(write.args[1],'--set');
@@ -47,21 +47,21 @@ test('paste writes the private device set with simctl and keeps Unicode text out
 
 test('failed clipboard writes never paste stale text, and foreign devices never mutate',async()=>{
  const h=harness({simctlFails:true});
- await assert.rejects(h.dispatch('type_text',{udid,text:'new'}),e=>e.execution==='unknown');
+ await assert.rejects(h.dispatch('type_text',{udid,text:'new',method:'paste'}),e=>e.execution==='unknown');
  // The only keyboard call is the existing key-release step, before any write.
  assert.equal(h.calls.filter(c=>c.file.endsWith('/native/keyboard')).length,1);
  const foreign=harness({owned:false});
- await assert.rejects(foreign.dispatch('type_text',{udid,text:'new'}),e=>e.code==='DEVICE_NOT_OWNED');
+ await assert.rejects(foreign.dispatch('type_text',{udid,text:'new',method:'paste'}),e=>e.code==='DEVICE_NOT_OWNED');
  assert.ok(!foreign.calls.some(c=>c.args[0]==='devicectl'||c.args.includes('pbcopy')||c.file.endsWith('/native/keyboard')));
 });
 
 for(const behavior of [{stale:true},{readFails:true}])test('an unconfirmed clipboard write never sends Command-V '+JSON.stringify(behavior),async()=>{
  const h=harness({...behavior});
- await assert.rejects(h.dispatch('type_text',{udid,text:'new'}),e=>e.code==='CLIPBOARD_UNVERIFIED'&&e.execution==='unknown');
+ await assert.rejects(h.dispatch('type_text',{udid,text:'new',method:'paste'}),e=>e.code==='CLIPBOARD_UNVERIFIED'&&e.execution==='unknown');
  assert.equal(h.calls.filter(c=>c.file.endsWith('/native/keyboard')).length,1);
 });
 test('clipboard verification preserves leading/trailing whitespace and Unicode',async()=>{
- const h=harness();await h.dispatch('type_text',{udid,text:' 你好 🥖\n'});
+ const h=harness();await h.dispatch('type_text',{udid,text:' 你好 🥖\n',method:'paste'});
  const read=h.calls.find(c=>c.args.includes('pbpaste'));
  assert.deepEqual(Array.from(read.args.slice(0,3)),Array.from(h.calls.find(c=>c.args.includes('pbcopy')).args.slice(0,3)));
  assert.ok(h.calls.at(-1).file.endsWith('/native/keyboard'));
