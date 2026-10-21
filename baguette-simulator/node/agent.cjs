@@ -11,6 +11,8 @@ const input = require('./input.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SCREEN_TTL_MS = 8000;
+// Cindy's inline image budget per tool result (ghostModelImages.ts in the host), with headroom.
+const INLINE_BYTES = 130000;
 
 function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = spawn, now = Date.now}) {
   const screens = new Map(); // udid → {screen, tree, at}
@@ -123,8 +125,21 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000});
       const radius = p.corners === false ? 0 : await cornerRadius(device, screen);
       const options = {rotate: G.rotation(screen), view, scale, region, radius, grid, format: p.format === 'png' ? 'png' : 'jpeg', quality: 0.82};
-      const size = JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, file, JSON.stringify(options)], {timeout: 20000})).stdout);
+      const render = async quality => JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, file, JSON.stringify({...options, quality})], {timeout: 20000})).stdout);
+      let size = await render(options.quality);
+      // Shown to the model inline when it asked for the screenshot: fit the host's
+      // inline budget by lowering JPEG quality, never the pixel size (pixels are points).
+      let inline = null;
+      if (p._inline) {
+        for (const quality of [null, 0.6, 0.45]) {
+          if (quality) size = await render(quality);
+          const bytes = await fs.readFile(file);
+          if (bytes.length <= INLINE_BYTES) { inline = bytes.toString('base64'); break; }
+          if (options.format === 'png') break;
+        }
+      }
       return {udid: device.udid, path: file, mimeType: p.format === 'png' ? 'image/png' : 'image/jpeg', pixels: size, scale, screen: viewInfo(screen),
+        ...(inline ? {_modelImages: [{data: inline}]} : {}),
         ...(region ? {region} : {}), note: `Open with your image tool. ${scale === 1 ? 'Image pixels are view points' : `Divide pixels by ${scale} for view points`}${region ? ` and add the region origin (${region.x}, ${region.y})` : ''}; pass view points to tap and gesture.`};
     } finally { await fs.rm(raw, {force: true}); }
   }
@@ -342,7 +357,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const cellWidth = Math.min(view.width, Math.floor(1560 / columns)), cellHeight = Math.round(cellWidth * view.height / view.width);
     const sheet = path.join(dir, 'sheet.jpg');
     await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], {timeout: 30000});
+    // The contact sheet is what the model asked for; the host may scale it to fit (no coordinates on it).
+    const sheetBytes = await fs.readFile(sheet).catch(() => null);
     return {udid: device.udid, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
+      ...(sheetBytes && sheetBytes.length <= 600 * 1024 ? {_modelImages: [{data: sheetBytes.toString('base64')}]} : {}),
       screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: actionError.message} : {}),
       note: 'Open sheet with your image tool: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.'};
   }

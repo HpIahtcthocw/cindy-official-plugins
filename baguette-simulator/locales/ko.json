@@ -16,7 +16,7 @@
       "description": "App 수명 주기. install: 로컬에서 빌드한 시뮬레이터용 .app(절대 경로 appPath, 빌드는 프로젝트의 Xcode 절차로) 설치. 설치된 것과 같으면 건너뛰고, 바뀐 파일이 적으면 차이만 동기화하며, 오래 걸리면 job을 반환(install_status로 대기). info: 설치된 버전, 빌드 번호, 실행 파일 지문. appPath를 주면 matchesLocal로 이번 빌드인지 확인. launch: 실행(기본은 재실행, arguments·env 가능)하고 이 작업 사이드바에 실시간 화면을 엽니다. viewer.previewOpened 확인(화면 기능은 viewer 참고). terminate, uninstall(데이터도 삭제), open_url(딥 링크, 다른 App 열기 확인이 뜨면 스크린샷 후 탭)."
     },
     "screenshot": {
-      "description": "현재 화면을 이미지로 저장하고 경로를 반환합니다. 이미지 도구로 여세요. 사용자가 보는 방향으로 바로 세우고 화면 모서리와 다이내믹 아일랜드를 포함합니다. 기본적으로 1픽셀 = 1뷰 포인트라 이미지에서 읽은 좌표를 그대로 tap과 gesture에 쓸 수 있습니다. grid=true는 눈금 격자, region은 일부 영역(작은 글자, 테두리, 안전 영역), scale 2–3은 고해상도(좌표는 scale로 나눔)."
+      "description": "현재 화면을 캡처합니다. 이미지는 결과에 바로 첨부됩니다(이전 Cindy는 path만 반환하니 이미지 도구로 여세요). 사용자가 보는 방향으로 바로 세우고 화면 모서리와 다이내믹 아일랜드를 포함합니다. 기본적으로 1픽셀 = 1뷰 포인트라 이미지에서 읽은 좌표를 그대로 tap과 gesture에 쓸 수 있습니다. grid=true는 눈금 격자, region은 일부 영역(작은 글자, 테두리, 안전 영역), scale 2–3은 고해상도(좌표는 scale로 나눔)."
     },
     "describe_ui": {
       "description": "화면의 요소(접근성 트리)를 읽습니다. 기본은 읽는 순서의 간단한 목록으로 역할, 텍스트, id, 뷰 포인트 frame과 center(center를 바로 탭 가능). query/role로 거르고, x,y는 그 지점의 요소, mode=full은 전체 트리. 비어 있으면 대개 게임이나 직접 그린 UI이니 grid가 있는 screenshot과 좌표를 쓰세요."
@@ -37,7 +37,7 @@
       "description": "조건이 충족되면 반환합니다(최대 90초). 고정 sleep과 반복 스크린샷 대신 쓰세요. text나 id가 나타남(gone=true면 사라짐), stable=초: 그동안 화면이 바뀌지 않음(로딩, 애니메이션 종료), log=정규식: App 로그에 일치하는 줄(bundleId와 함께). screenshot=true면 충족 시점 화면을 첨부. 시간 초과 시 화면에 무엇이 있었는지 보고합니다."
     },
     "capture": {
-      "description": "변화를 포착: 프레임 기록을 시작하고 action(tool은 tap, gesture, press, type_text, open_url, app_launch, args는 그 인수)을 실행한 뒤 seconds초(15 이하) 동안 이어서, 중복 프레임을 뺀 시간순·밀리초 표기 목록 이미지 한 장과 각 프레임 파일을 반환합니다. 화면 전환, 애니메이션, 잠깐 뜨는 토스트, 로딩과 스켈레톤 화면에. action이 없으면 변화만 기록."
+      "description": "변화를 포착: 프레임 기록을 시작하고 action(tool은 tap, gesture, press, type_text, open_url, app_launch, args는 그 인수)을 실행한 뒤 seconds초(15 이하) 동안 이어서, 중복 프레임을 뺀 시간순·밀리초 표기 목록 이미지 한 장과 각 프레임 파일을 반환합니다. 화면 전환, 애니메이션, 잠깐 뜨는 토스트, 로딩과 스켈레톤 화면에. action이 없으면 변화만 기록. 목록 이미지도 결과에 바로 첨부됩니다."
     },
     "set_state": {
       "description": "기기 상태 변경(여러 개 동시 가능): orientation, 폴더블 posture(closed/open/flat 또는 각도), appearance light/dark, contrast, text_size(Dynamic Type), network(프로필 이름, offline, clear 또는 {latency, bandwidth, loss}. 이후 실행한 App에 적용), location {lat, lon} 또는 clear, status_bar clean(9:41, 신호와 배터리 가득, 스크린샷용) 또는 clear, privacy {action grant/revoke/reset, service, bundleId}로 권한 창을 미리 처리. 방향이나 자세를 바꾸면 새 화면 크기와 방향을 반환합니다. 권한을 바꾸면 해당 App이 종료되니 실행 전에 설정하세요."

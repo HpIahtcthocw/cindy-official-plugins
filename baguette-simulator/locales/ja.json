@@ -16,7 +16,7 @@
       "description": "App のライフサイクル。install：ローカルでビルドしたシミュレーター用 .app（絶対パス appPath、ビルドはプロジェクト自身の Xcode 手順）をインストール。インストール済みと同一なら省略、変更が少なければ差分のみ同期、長い場合は job を返す（install_status で待機）。info：インストール済みのバージョン、ビルド番号、実行ファイルの指紋。appPath を渡すと matchesLocal で今回のビルドか確認。launch：起動（既定で再起動、arguments・env 可）し、このタスクのサイドバーにライブ表示を開く。viewer.previewOpened を確認（画面の機能は viewer 参照）。terminate、uninstall（データも削除）、open_url（ディープリンク。別 App を開く確認が出たらスクリーンショットを撮ってタップ）。"
     },
     "screenshot": {
-      "description": "現在の画面を画像として保存しパスを返します。画像ツールで開いてください。ユーザーが見る向きに補正され、画面の角丸とダイナミックアイランド付き。既定で 1 ピクセル = 1 ビューポイントなので、画像上の座標をそのまま tap と gesture に渡せます。grid=true で目盛り付きグリッド、region で一部を切り出し（小さな文字、枠、セーフエリア）、scale 2–3 で高精細（座標は scale で割る）。"
+      "description": "現在の画面を撮影します。画像は結果に直接添付されます（旧版 Cindy は path のみ返すので画像ツールで開く）。ユーザーが見る向きに補正され、画面の角丸とダイナミックアイランド付き。既定で 1 ピクセル = 1 ビューポイントなので、画像上の座標をそのまま tap と gesture に渡せます。grid=true で目盛り付きグリッド、region で一部を切り出し（小さな文字、枠、セーフエリア）、scale 2–3 で高精細（座標は scale で割る）。"
     },
     "describe_ui": {
       "description": "画面上の要素（アクセシビリティツリー）を読み取ります。既定は読み順の簡易リストで、役割、テキスト、id、ビューポイントの frame と center（center をそのままタップ可能）。query/role で絞り込み、x,y でその点の要素、mode=full で全ツリー。空の場合はゲームや独自描画の UI が多いので、grid 付き screenshot と座標で操作。"
@@ -37,7 +37,7 @@
       "description": "条件が成立したら戻ります（最長 90 秒）。固定の sleep と繰り返しのスクリーンショットの代わり。text か id の出現（gone=true で消えるまで）、stable=秒数で画面がその間変化しないこと（読み込みやアニメーションの終了）、log=正規表現で App ログに一致行（bundleId と併用）。screenshot=true で成立時の画面を添付。タイムアウト時は画面に何があったか報告します。"
     },
     "capture": {
-      "description": "変化を記録：フレーム記録を開始し、action（tool は tap、gesture、press、type_text、open_url、app_launch、args はその引数）を実行して seconds 秒（15 以下）続け、重複を除いたフレームを時系列・ミリ秒付きの一覧画像 1 枚にまとめ、各フレームのファイルも返します。画面遷移、アニメーション、一瞬のトースト、読み込みやスケルトン画面に。action なしなら変化だけを記録。"
+      "description": "変化を記録：フレーム記録を開始し、action（tool は tap、gesture、press、type_text、open_url、app_launch、args はその引数）を実行して seconds 秒（15 以下）続け、重複を除いたフレームを時系列・ミリ秒付きの一覧画像 1 枚にまとめ、各フレームのファイルも返します。画面遷移、アニメーション、一瞬のトースト、読み込みやスケルトン画面に。action なしなら変化だけを記録。一覧画像も結果に直接添付されます。"
     },
     "set_state": {
       "description": "デバイス状態を変更（複数同時可）：orientation、折りたたみの posture（closed/open/flat または角度）、appearance light/dark、contrast、text_size（Dynamic Type）、network（プロファイル名、offline、clear、または {latency, bandwidth, loss}。以後に起動した App に適用）、location {lat, lon} または clear、status_bar clean（9:41・電波と電池満タン、スクリーンショット向け）または clear、privacy {action grant/revoke/reset, service, bundleId} で権限ダイアログを事前に回避。向きや姿勢を変えると新しい画面サイズと向きを返します。 権限を変えるとその App は終了するので、起動前に設定してください。"

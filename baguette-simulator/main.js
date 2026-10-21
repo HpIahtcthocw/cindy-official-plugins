@@ -58,7 +58,8 @@ cindy.onHostMessage(async function (msg) {
     const locale = await hostLocale();
     // Host ceiling is 120s; worker preflight is 3s + 5s.
     // Boot retains 15s start + 90s readiness (113s total).
-    const response = await cindy.node.request({method: msg.tool, params: {...msg.args,_locale:locale}, timeoutMs: 120000});
+    // A screenshot the model asked for is shown to it inline (host `images`).
+    const response = await cindy.node.request({method: msg.tool, params: {...msg.args,_locale:locale,...(msg.tool === 'screenshot' ? {_inline:true} : {})}, timeoutMs: 120000});
     if (!response.ok) {
       await cindy.send({type:'tool-result',callId:msg.callId,ok:false,errorCode:'NODE_REQUEST_FAILED',message:response.message || 'Worker failed; execution may be unknown. Inspect device before retrying.'});
       return;
@@ -72,7 +73,10 @@ cindy.onHostMessage(async function (msg) {
       if (shown.location) viewer.location = shown.location;
       if (shown.previewError) viewer.previewError = shown.previewError;
     }
-    await cindy.send(result.ok ? {type:'tool-result',callId:msg.callId,ok:true,result:result} : {type:'tool-result',callId:msg.callId,ok:false,errorCode:result.errorCode,message:result.message+' (execution: '+result.execution+')'});
+    // Images go next to `result` (hosts without the field ignore them; the path stays in `result`).
+    const images = Array.isArray(result._modelImages) ? result._modelImages : null;
+    delete result._modelImages;
+    await cindy.send(result.ok ? {type:'tool-result',callId:msg.callId,ok:true,result:result,...(images ? {images} : {})} : {type:'tool-result',callId:msg.callId,ok:false,errorCode:result.errorCode,message:result.message+' (execution: '+result.execution+')'});
     holdWhileRunning();
   } catch (error) {
     await cindy.send({type:'tool-result',callId:msg.callId,ok:false,errorCode:'BRIDGE_FAILED',message:String(error.message || error)+'; execution unknown, inspect before retrying.'});
