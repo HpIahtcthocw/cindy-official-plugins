@@ -245,8 +245,10 @@ async function dispatch(method,p={}) {
     const notes=['Keyboard events were delivered; observe the UI to confirm the result.'];
     if(used==='paste')notes.push('Text was pasted (Cmd+V). If the field stayed empty (some games ignore paste), retry with method=type.');
     if(used==='type')notes.push('Text was typed key by key; text fields may auto-capitalise or autocorrect it, as with a real keyboard.');
-    if(used)notes.push('Hardware keyboard input hides the on-screen keyboard, as on a real iPad or iPhone with a keyboard attached.');
-    return {udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
+    if(used)notes.push('Keyboard input works like an attached hardware keyboard: the on-screen keyboard stays hidden, so it cannot show whether a field is still being edited. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
+    const typedResult={udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
+    // Like tap: optionally wait for text and/or look at the result in the same call.
+    return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline},typedResult);
   }
   if(method==='press'&&p.button==='release-input') {
     await clipboardAction({udid:device.udid,action:'release'});

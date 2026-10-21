@@ -239,3 +239,13 @@ test('coordinates are pinned to the screen they were read on; a turned screen is
  await agent.tap(device,{x:120,y:120,observe:'none'});
  assert.equal(state.inputs.length,2);
 });
+
+// Replay: models guessed settle=2–3 s after each tap and then took a screenshot to see whether the page changed.
+test('tap until returns as soon as the expected text is on screen, without a fixed settle or a screenshot',async()=>{
+ const {agent,state,device}=fakeAgent();
+ const started=Date.now();
+ const result=await agent.tap(device,{x:120,y:120,until:'OK'});
+ assert.equal(result.until.met,true);assert.equal(result.until.element.label,'OK');
+ assert.equal(result.ui,undefined);assert.equal(result.screenshot,undefined);
+ assert.ok(Date.now()-started<500);assert.equal(state.inputs.length,1);
+});

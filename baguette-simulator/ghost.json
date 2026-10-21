@@ -267,7 +267,7 @@
     },
     {
       "name": "tap",
-      "description": "真实触摸点击：走模拟器的系统触摸通道，不依赖窗口，Mac 锁屏也能用，App 收到的就是手指触摸。按 text 或 id（可加 role、nth）点元素，游戏里 text 按画面上识别出的文字点；或按 x、y 视图点点击（屏幕转向后会要求重新看图，不会点错位置）。count=2 双击；duration≥0.5 长按。默认点击后约 0.6 秒返回新的界面元素（observe=ui），observe=screenshot 直接附上截图。验证交互要用它，不要往 App 进程里注入事件。",
+      "description": "真实触摸点击：走模拟器的系统触摸通道，不依赖窗口，Mac 锁屏也能用，App 收到的就是手指触摸。按 text 或 id（可加 role、nth）点元素，游戏里 text 按画面上识别出的文字点；或按 x、y 视图点点击（屏幕转向后会要求重新看图，不会点错位置）。count=2 双击；duration≥0.5 长按。默认点击后约 0.6 秒返回新的界面元素（observe=ui），observe=screenshot 直接附上截图。验证交互要用它，不要往 App 进程里注入事件。 until=文字：点完等这段文字出现再返回（翻页、弹窗），比猜 settle 准。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -320,6 +320,10 @@
           "settle": {
             "type": "number",
             "description": "操作后等待多少秒再观察，默认 0.6"
+          },
+          "until": {
+            "type": "string",
+            "description": "操作后要出现的文字（游戏里按识别出的文字），出现即返回，最长 15 秒；没出现时附当时截图。代替猜 settle"
           }
         },
         "required": [
@@ -460,6 +464,10 @@
           "settle": {
             "type": "number",
             "description": "操作后等待多少秒再观察，默认 0.6"
+          },
+          "until": {
+            "type": "string",
+            "description": "操作后要出现的文字（游戏里按识别出的文字），出现即返回，最长 15 秒；没出现时附当时截图。代替猜 settle"
           }
         },
         "required": [
@@ -471,7 +479,7 @@
     },
     {
       "name": "type_text",
-      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。",
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -505,6 +513,20 @@
               "type"
             ],
             "description": "auto（默认）：普通 App 粘贴，游戏逐键输入；paste 粘贴任意文字；type 逐键输入英文、数字与符号"
+          },
+          "observe": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "screenshot",
+              "both",
+              "none"
+            ],
+            "description": "输入后返回什么，默认 none；screenshot 附截图"
+          },
+          "until": {
+            "type": "string",
+            "description": "操作后要出现的文字（游戏里按识别出的文字），出现即返回，最长 15 秒；没出现时附当时截图。代替猜 settle"
           }
         },
         "required": [

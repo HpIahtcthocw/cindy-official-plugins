@@ -22,13 +22,13 @@
       "description": "画面上の要素（アクセシビリティツリー）を読み取ります。既定は読み順の簡易リストで、役割、テキスト、id、ビューポイントの frame と center（center をそのままタップ可能）。query/role で絞り込み、x,y でその点の要素、mode=full で全ツリー。アクセシビリティのないゲームや独自描画の UI では、画面上の文字を読み取って位置付きで返します（source=ocr）。文字のないアイコンは screenshot で確認。"
     },
     "tap": {
-      "description": "シミュレーターのシステムタッチ経路による実タッチ。ウィンドウ不要で Mac がロック中でも動作し、App には指のタッチとして届きます。text か id（role、nth も可）で要素を指定（ゲームでは画面から読み取った文字に一致）、または x,y のビューポイント（見た後に画面が回転した場合は誤タップせず再確認を求めます）。count=2 でダブルタップ、duration≥0.5 で長押し。既定で約 0.6 秒後の新しい要素を返し（observe=ui）、observe=screenshot でスクリーンショットを添付。App プロセスへのイベント注入はしないこと。"
+      "description": "シミュレーターのシステムタッチ経路による実タッチ。ウィンドウ不要で Mac がロック中でも動作し、App には指のタッチとして届きます。text か id（role、nth も可）で要素を指定（ゲームでは画面から読み取った文字に一致）、または x,y のビューポイント（見た後に画面が回転した場合は誤タップせず再確認を求めます）。count=2 でダブルタップ、duration≥0.5 で長押し。既定で約 0.6 秒後の新しい要素を返し（observe=ui）、observe=screenshot でスクリーンショットを添付。App プロセスへのイベント注入はしないこと。 until=文字列でその文字が出るまで待って返します（次のページ、ダイアログ）。settle を推測するより確実。"
     },
     "gesture": {
       "description": "スワイプとマルチタッチ。これも実タッチ。kind：swipe（from→to、または direction up/down/left/right。up は指を上へ、内容が先へ進む）、drag（hold 秒押してから to へ。ドラッグ＆ドロップや並べ替え）、pinch（center、from_spread→to_spread）、pan（2 本指で by 移動）、edge（システムの端：bottom でホーム/App 切り替え、top で通知・コントロールセンター）、scroll_to（text か id の要素が完全に見えるまでスワイプ、最後まで無ければ報告）。座標はビューポイント、observe は tap と同じ。"
     },
     "type_text": {
-      "description": "フォーカス中の入力欄に入力。text：method=auto（既定）は通常の App では貼り付け（正確、任意の言語）、アクセシビリティのないゲームでは英数字と記号を 1 キーずつ入力（ピンインなどの入力ソースは英語に切り替え）。paste か type を指定も可。keys は Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。"
+      "description": "フォーカス中の入力欄に入力。text：method=auto（既定）は通常の App では貼り付け（正確、任意の言語）、アクセシビリティのないゲームでは英数字と記号を 1 キーずつ入力（ピンインなどの入力ソースは英語に切り替え）。paste か type を指定も可。keys は Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab などのキー。clear=true で先に空にします。事前にフォーカスを確認し、後で結果を確認。 1 キーずつの入力では画面キーボードは表示されません。ゲームでは Enter が確定になることがあるので、編集を終えるだけなら空白をタップ。observe と until は tap と同じ。"
     },
     "press": {
       "description": "ハードウェアボタン：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen。duration で長押し。release-input は押しっぱなしのキーを離してリピートを止めるだけで、何も再起動せず App も閉じません。"

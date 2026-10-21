@@ -21,6 +21,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   const screens = new Map(); // udid → {screen, at (screen confirmed), tree, treeAt}
   const seen = new Map(); // udid → the screen the model last looked at (orientation and size)
   const noAx = new Map(); // udid → when the screen last had no accessibility elements
+  const texts = new Map(); // udid → {elements, at, shape}: the last text read off the screen
   const corners = new Map(); // `${udid}|${panel}` → radius in points
   const dargs = device => ['--udid', device.udid, '--device-set', deviceSet];
   const bag = (words, device, args = [], options) => run(binary, [...words, ...dargs(device), ...args], options);
@@ -168,6 +169,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         const b = o.part || o.box, frame = [b[0] * width, b[1] * height, b[2] * width, b[3] * height].map(round);
         return {role: 'text', label: o.text.trim(), frame, center: [round(frame[0] + frame[2] / 2), round(frame[1] + frame[3] / 2)], confidence: o.confidence};
       }).sort((a, b) => (Math.abs(a.frame[1] - b.frame[1]) < 6 ? a.frame[0] - b.frame[0] : a.frame[1] - b.frame[1]));
+      if (!find) texts.set(device.udid, {elements, at: now(), shape: shape(shot._screen)});
       return {screen: shot._screen, elements};
     } finally { await fs.rm(shot.path, {force: true}); }
   }
@@ -282,11 +284,22 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   }
 
   async function after(device, p, result) {
-    const observeMode = p.observe ?? 'ui';
-    if (observeMode === 'none') return result;
-    await sleep(number(p.settle, 'settle', 0, 5, 0.6) * 1000);
+    // `until`: the text the action should bring up; waiting for it replaces a guessed settle time.
+    const until = typeof p.until === 'string' && p.until.trim() ? p.until.trim() : null;
+    const observeMode = p.observe ?? (until ? 'none' : 'ui');
+    let out = {...result};
+    if (until) {
+      forgetTree(device.udid);
+      const waited = await waitFor(device, {text: until, timeout: 15, _inline: p._inline});
+      const {_modelImages, ...rest} = waited;
+      out.until = rest;
+      if (_modelImages) out._modelImages = _modelImages;
+      // Not there: the wait already attached the screen; do not take another.
+      if (!waited.met) return out;
+    }
+    if (observeMode === 'none') return out;
+    if (!until) await sleep(number(p.settle, 'settle', 0, 5, 0.6) * 1000);
     forgetTree(device.udid);
-    const out = {...result};
     if (observeMode === 'ui' || observeMode === 'both') {
       try { const ui = await describe(device, {limit: 120}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.source ? {source: ui.source} : {}), ...(ui.note ? {note: ui.note} : {})}; }
       catch (error) { out.ui = {error: error.message}; }
@@ -301,9 +314,18 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   async function tap(device, p) {
     const target = await resolveTarget(device, p);
     const count = number(p.count, 'count', 1, 3, 1), duration = number(p.duration, 'duration', 0.02, 10, undefined);
+    const hint = target.element ? null : overlap(device, target.screen, target.x, target.y);
     await act(device, target.screen, {kind: 'tap', x: target.x, y: target.y, count, duration});
     return after(device, p, {udid: device.udid, execution: 'executed', tapped: [round(target.x), round(target.y)], ...(target.element ? {element: target.element, matches: target.matches} : {}),
-      ...(duration >= 0.5 ? {held: duration} : {})});
+      ...(duration >= 0.5 ? {held: duration} : {}), ...(hint ? {hint} : {})});
+  }
+
+  // A coordinate inside text read off the screen moments ago: say so, the touch may land on that text's control.
+  function overlap(device, screen, x, y) {
+    const last = texts.get(device.udid);
+    if (!last || now() - last.at > 30000 || last.shape !== shape(screen)) return null;
+    const hit = last.elements.find(e => x >= e.frame[0] - 2 && x <= e.frame[0] + e.frame[2] + 2 && y >= e.frame[1] - 2 && y <= e.frame[1] + e.frame[3] + 2);
+    return hit ? `This point is on the text ${JSON.stringify(hit.label)} read from the screen; if that text belongs to another control (it may cover an icon), the tap goes there. Check the result.` : null;
   }
 
   async function gesture(device, p) {
@@ -722,7 +744,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return reports.sort((a, b) => String(b.time).localeCompare(String(a.time)));
   }
 
-  return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, hasAccessibility};
+  return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, hasAccessibility, after};
 }
 
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9]);
