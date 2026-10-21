@@ -132,10 +132,17 @@
   }
 
   /** The one-tap default for a new device: the newest iPhone with a runtime, on its newest runtime. */
+  // "New iPhone": the newest numbered iPhone (Pro first, then the base model),
+  // whatever order simctl lists types in; then other iPhones, then iPads.
   function defaultChoice(catalog) {
-    const phones = (catalog?.deviceTypes || []).filter((d) => !/iPad/i.test(d.name)).reverse();
-    const pads = (catalog?.deviceTypes || []).filter((d) => /iPad/i.test(d.name)).reverse();
-    for (const d of [...phones, ...pads]) {
+    const types = catalog?.deviceTypes || [];
+    const generation = (name) => Number(/^iPhone (\d+)\b/.exec(name)?.[1] || 0);
+    const variant = (name) => (/^iPhone \d+ Pro$/.test(name) ? 0 : /^iPhone \d+$/.test(name) ? 1 : 2);
+    const numbered = types.filter((d) => generation(d.name) > 0)
+      .sort((a, b) => generation(b.name) - generation(a.name) || variant(a.name) - variant(b.name));
+    const phones = types.filter((d) => !numbered.includes(d) && !/iPad/i.test(d.name));
+    const pads = types.filter((d) => /iPad/i.test(d.name));
+    for (const d of [...numbered, ...phones, ...pads]) {
       const runtimes = runtimesFor(catalog, d.identifier);
       if (runtimes.length) return { deviceType: d.identifier, runtime: runtimes[runtimes.length - 1].identifier, name: d.name };
     }

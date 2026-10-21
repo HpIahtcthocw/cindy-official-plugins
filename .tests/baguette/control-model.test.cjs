@@ -59,9 +59,14 @@ test('the one-tap default is the newest iPhone that has a compatible runtime, on
    {name:'iOS 27.0',identifier:'r.27.0',version:'27.0',supportedDeviceTypes:['t.iPhone17','t.iPhone17Pro','t.iPad']},
    {name:'iOS 27.1',identifier:'r.27.1',version:'27.1',supportedDeviceTypes:['t.Duo']},
   ]};
- assert.deepEqual(M.defaultChoice(catalog),{deviceType:'t.Duo',runtime:'r.27.1',name:'iPhone Duo'});
- const withoutDuoRuntime={...catalog,runtimes:catalog.runtimes.slice(0,2)};
- assert.deepEqual(M.defaultChoice(withoutDuoRuntime),{deviceType:'t.iPhone17Pro',runtime:'r.27.0',name:'iPhone 17 Pro'});
+ // Real case: simctl lists types newest first and "New iPhone" created an iPhone 11.
+ // The newest numbered Pro wins in any order; the foldable is not the default.
+ assert.deepEqual(M.defaultChoice(catalog),{deviceType:'t.iPhone17Pro',runtime:'r.27.0',name:'iPhone 17 Pro'});
+ const listed={...catalog,deviceTypes:[{name:'iPhone 18 Pro',identifier:'t.iPhone18Pro'},{name:'iPhone Duo',identifier:'t.Duo'},{name:'iPhone 17',identifier:'t.iPhone17'},{name:'iPhone 11',identifier:'t.iPhone11'}],
+  runtimes:[{name:'iOS 27.0',identifier:'r.27.0',version:'27.0',supportedDeviceTypes:['t.iPhone18Pro','t.iPhone17','t.iPhone11']}]};
+ assert.equal(M.defaultChoice(listed).name,'iPhone 18 Pro');
+ assert.equal(M.defaultChoice({...listed,deviceTypes:[...listed.deviceTypes].reverse()}).name,'iPhone 18 Pro');
+ assert.deepEqual(M.defaultChoice({...catalog,deviceTypes:catalog.deviceTypes.filter(d=>!/^iPhone \d/.test(d.name))}),{deviceType:'t.Duo',runtime:'r.27.1',name:'iPhone Duo'},'other iPhones before iPads');
  assert.deepEqual(M.runtimesFor(catalog,'t.iPad').map(r=>r.identifier),['r.26.4','r.27.0']);
  assert.deepEqual(M.runtimesFor(catalog,'t.Duo').map(r=>r.identifier),['r.27.1']);
  assert.equal(M.defaultChoice({deviceTypes:catalog.deviceTypes,runtimes:[]}),null);
