@@ -13,7 +13,9 @@ const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
 function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false, forgetViewer = () => {},
   tasks = null, existingViewerUrl = () => null,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
-  let config, busy = false, lastActivity = now(), lastStop = null, closing = false;
+  let config, lastActivity = now(), lastStop = null, closing = false;
+  // One operation at a time per device; '*' (settings, stop-all, idle) excludes everything.
+  const busyKeys = new Set();
   let idleHandled = false;
   const assertEnabled=async()=>{if(!(await load()).enabled||closing)throw failure('RUNTIME_DISABLED','Baguette is paused. Open plugin settings.');};
   const manager=require('./device-manager.cjs').createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile:settingsFile+'.apps.json'});
@@ -74,10 +76,11 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     if (!device || device.state !== 'Shutdown') throw failure('STOP_UNCONFIRMED', 'Device shutdown is not confirmed. Refresh the device list.', 'unknown');
     return {...result, ok:true, execution:'executed'};
   }
-  async function exclusive(fn) {
-    if (busy || closing) throw failure('BUSY', 'A Baguette operation is still running. Wait for it to finish, then try again.');
-    busy = true;
-    try { return await fn(); } finally { busy = false; }
+  async function exclusive(fn, key = '*') {
+    const blocked = key === '*' ? busyKeys.size > 0 : busyKeys.has('*') || busyKeys.has(key);
+    if (blocked || closing) throw failure('BUSY', 'Another operation on this device is still running. Wait for it to finish, then try again.');
+    busyKeys.add(key);
+    try { return await fn(); } finally { busyKeys.delete(key); }
   }
   // The Cindy task a call belongs to: injected session context for Agent tools,
   // or the task page's own task (main.js sets `_task` for page actions only).
@@ -111,7 +114,25 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     }
     return {ok:true, sessionId:session, device, devices, settings:{...settings}, viewer, busy:waiting};
   }
+  // Agent tools grouped by intent → the worker's own operations.
+  const ROUTES = {
+    device: {create: 'create_device', boot: 'boot', shutdown: 'shutdown', rename: 'rename_device', erase: 'erase_device', delete: 'delete_device'},
+    app: {install: 'app_install', install_status: 'app_install_status', info: 'app_info', launch: 'launch_app', terminate: 'app_terminate', uninstall: 'app_uninstall', open_url: 'open_url'},
+    viewer: {open: 'open_viewer', close: 'close_viewer'},
+  };
+  // Reading a device never changes it, so it does not wait for (or block) input.
+  const READ_ONLY = new Set(['describe_ui', 'wait_for', 'logs', 'app_info', 'app_install_status']);
   async function request(method, params = {}) {
+    if (Object.hasOwn(ROUTES, method)) {
+      const actual = ROUTES[method][params?.action];
+      if (!actual) throw failure('INVALID_ARGUMENT', `action must be one of ${Object.keys(ROUTES[method]).join(', ')}`);
+      return request(actual, params);
+    }
+    if (READ_ONLY.has(method) || (method === 'screenshot' && !params?.destination)) {
+      if (!(await load()).enabled) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Enable simulator operation in Plugins → Baguette settings.');
+      touch();
+      return dispatch(method, params);
+    }
     // A settings refresh must not reject a user's stop/permission change.
     // Reading simulator state is safe while a command is in flight.
     if (method === 'settings_status') return status();
@@ -138,6 +159,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     }
     if (method === 'viewer_catalog') return dispatch('environment');
     if (method === 'device_hold') return hold();
+    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
@@ -180,7 +202,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       }
       touch();
       return result;
-    });
+    }, key);
   }
   // Returns once no device is running and no viewer window is open (or at the
   // hold limit). A window can start a device itself, so it counts too. Never
@@ -196,7 +218,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     }
   }
   async function checkIdle() {
-    if (busy || closing || idleHandled) return;
+    if (busyKeys.size || closing || idleHandled) return;
     return exclusive(async () => {
       const settings = await load();
       if (settings.enabled && (!settings.idleMinutes || now() - lastActivity < settings.idleMinutes * 60000)) return;

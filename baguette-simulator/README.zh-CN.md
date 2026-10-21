@@ -6,15 +6,25 @@
 
 Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.10。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
 
-iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 boot。App 仍由项目正常 Xcode 流程构建，再用 install_app、launch_app 安装和启动模拟器 .app。launch_app 默认打开当前任务的模拟器页签；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 open_viewer 打开已有设备。
+iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 `device action=boot`。App 仍由项目正常流程构建（独立设备用 `-destination 'generic/platform=iOS Simulator'`），再用 `app action=install`、`app action=launch` 安装和启动模拟器 .app。启动默认打开当前任务的模拟器页签；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 `viewer action=open` 打开已有设备。
 
-两个界面：每个任务在右侧栏有自己的「iOS 模拟器」页签（只有画面和控制条，没有地址栏）；左侧导航的「模拟器」不跟对话，参考 Xcode Device Hub 做成左右分栏：左侧按「运行中」「已关闭」分组列出全部设备（超过六台显示搜索），每行显示机型、iOS 版本，以及空闲还是被任务在用；右侧显示选中设备的实时画面。**+** 可新建 iPhone 或 iPad，表单含名称、系统版本和机型（机型按所选系统版本筛选，名称在手动修改前跟随机型）。每行的 ⋯ 菜单或右键菜单提供启动 / 关闭、在当前任务中打开（仅当前面有任务且该任务还没在用这台设备时出现，伙伴对话也算）、改名、抹掉所有内容和设置…、删除…（后两项需确认；运行中的设备会先关机，删除同时清除它的任务绑定）。任务用哪台设备由 AI 打开模拟器时决定：devices 每行带 tasks、thisTask，可复用空闲设备或新建；boot、open_viewer、launch_app 把设备绑定到调用所属的任务（`~/Library/Application Support/BaguetteCindy/task-bindings.json`，权限 0600）。还没有设备或设备已关闭时，页签显示设备列表或「启动」，不留空白。宿主不支持任务页时回退到侧栏预览。
+16 个 Agent 工具按意图分组：`environment`、`devices`、`device`（新建 / 启动 / 关机 / 改名 / 抹掉 / 删除）、`app`（安装 / 等待安装 / 信息 / 启动 / 结束 / 卸载 / 打开链接）、`screenshot`、`describe_ui`、`tap`、`gesture`、`type_text`、`press`、`wait_for`、`capture`、`set_state`、`logs`、`heal`、`viewer`。设计来自过去 Cindy 任务里模型实际做不好的地方：
+
+- **真实触摸，不依赖窗口。** `tap` 与 `gesture`（滑动、拖放、双指缩放、双指平移、系统边缘手势、滚动到元素、双击、长按）走模拟器的 HID 触摸通道，Mac 锁屏也能用，App 收到的就是手指触摸。手册要求模型不要往 App 进程注入事件：那样会绕过触摸链路，过去出现过模拟器里“测过”、真机上点不动的假通过。
+- **统一坐标。** 全部使用用户看到的视图点：截图按看到的方向摆正（横屏、折叠屏内屏），画出屏幕圆角与灵动岛，默认 1 像素 = 1 点，可叠加刻度网格或只截局部；`describe_ui` 返回带视图坐标与中心点的精简元素列表；`tap` 可按文字、identifier 与角色点元素。iPhone Duo 展开时，SpringBoard 的无障碍坐标比画面转了 90°（iOS 27.1 实测），插件会自动校正。
+- **等待与转场。** `wait_for` 等元素出现或消失、画面静止或日志出现某行；`capture` 一边执行动作一边录帧，返回标注毫秒的联系表。
+- **装对版本。** `app action=install` 遇到相同构建直接跳过，只改了少量文件时增量同步，否则整包安装，耗时长的返回 job；`app action=info` 比对已装可执行文件指纹与本地构建（`matchesLocal`），因为版本号相同不代表是同一次构建。
+- **状态与诊断。** `set_state` 改方向、折叠姿态、外观、对比度、字号、网络条件、定位、干净状态栏与权限授权；`logs` 读取 App 最近的统一日志并汇总本设备的崩溃报告。
+
+手册（`manual/workflow/MANUAL.md`）给出完整工作流、构建方法、验证原则与异常恢复。同一台设备一次只执行一个操作，不同设备互不阻塞；读取类操作（describe_ui、wait_for、logs）不等待输入。
+
+两个界面：每个任务在右侧栏有自己的「iOS 模拟器」页签（只有画面和控制条，没有地址栏）；左侧导航的「模拟器」不跟对话，参考 Xcode Device Hub 做成左右分栏：左侧按「运行中」「已关闭」分组列出全部设备（超过六台显示搜索），每行显示机型、iOS 版本，以及空闲还是被任务在用；右侧显示选中设备的实时画面。**+** 可新建 iPhone 或 iPad，表单含名称、系统版本和机型（机型按所选系统版本筛选，名称在手动修改前跟随机型）。每行的 ⋯ 菜单或右键菜单提供启动 / 关闭、在当前任务中打开（仅当前面有任务且该任务还没在用这台设备时出现，伙伴对话也算）、改名、抹掉所有内容和设置…、删除…（后两项需确认；运行中的设备会先关机，删除同时清除它的任务绑定）。任务用哪台设备由 AI 打开模拟器时决定：devices 每行带 tasks、thisTask，可复用空闲设备或新建；启动设备、打开画面和启动 App 会把设备绑定到调用所属的任务（`~/Library/Application Support/BaguetteCindy/task-bindings.json`，权限 0600）。还没有设备或设备已关闭时，页签显示设备列表或「启动」，不留空白。宿主不支持任务页时回退到侧栏预览。
 
 控制页由 Cindy 自己绘制：设备胶囊（状态圆点、设备名，点开可切换、添加、改名）、缩放控件（−、百分比菜单含适合窗口 / 实际大小 / 固定档位、+）和「更多」菜单（摇一摇、App 切换器、解除卡键、恢复画面、Baguette 高级工具、需确认的关闭设备）。主屏幕、截图、向左 / 向右旋转，以及折叠屏的合上 / 半展开 / 展开姿态浮在画面下方。快捷键与 Simulator 一致：⌘+ / ⌘− / ⌘0（适合窗口）/ ⌘1（实际大小）、Ctrl 滚轮缩放、⌘← / ⌘→ 旋转、⇧⌘H 主屏幕、⌘S 截图。缩放和方向按设备记住；缩放保持中心，超出窗口时可滚动。截图按钮旁的小箭头可选截图存到桌面（提示里可「在访达中显示」）或剪贴板，选择会记住。内嵌的 Baguette 页面带边框渲染设备（`?handheld=0`；折叠屏保留 3D 视图），其工作台界面由注入样式隐藏。画面断开、闲置倒计时和设备已关闭都直接显示在画面位置，并提供恢复 / 继续使用 / 启动按钮；没有明确操作不会重启模拟器或 App。Agent 使用 press(button=release-input) 解除卡键。Unicode 粘贴会替换模拟器剪贴板；网页复制会替换 Mac 剪贴板。输入前观察焦点，之后核对结果；按键投递回调不代表 App 处理完成。
 
-设备保存于 ~/Library/Application Support/BaguetteCindy/devices，Agent 截图在同级 screenshots。不会操作默认或 Cindy 内置设备；只有通过上面需确认的菜单项才会抹掉或删除设备。同 bundle ID 覆盖安装通常保留 App 数据，但登录态仍由 App 数据迁移、退出登录和服务端有效期决定。并发 Agent 不要交错操作同一设备。
+设备保存于 ~/Library/Application Support/BaguetteCindy/devices，Agent 截图与录帧在同级 screenshots、captures（一天后清理）。不会操作默认或 Cindy 内置设备；只有通过上面需确认的菜单项才会抹掉或删除设备。同 bundle ID 覆盖安装通常保留 App 数据，但登录态仍由 App 数据迁移、退出登录和服务端有效期决定。并发 Agent 不要交错操作同一设备。
 
-heal 会重启 SpringBoard 并关闭 App，必须先让用户接受影响；卡键先尝试按键释放。shutdown 关闭设备但保留数据，close_viewer 只停止画面服务。
+heal 会重启 SpringBoard 并关闭 App，必须先让用户接受影响；卡键先尝试按键释放。`device action=shutdown` 关闭设备但保留数据，`viewer action=close` 只停止画面服务。`device action=erase|delete` 与 `app action=uninstall` 会删除数据，只在用户要求时使用。
 
 ## 自己控制设备
 

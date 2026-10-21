@@ -10,7 +10,10 @@ const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
 const DEVICE_SET = path.join(ROOT, 'devices');
 const children = new Set();
-const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','swipe','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer','delete_device','erase_device','reveal_screenshot']);
+const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','swipe','gesture','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer','delete_device','erase_device','reveal_screenshot',
+  'wait_for','capture','set_state','logs','app_install','app_install_status','app_info','app_terminate','app_uninstall','open_url']);
+// Agent operations that only read the device; they never change what is on screen.
+const READ_ONLY = new Set(['describe_ui','screenshot','wait_for','logs','app_info','app_install_status']);
 class Failure extends Error {
   constructor(code, message, execution = 'not_executed') { super(message); this.code=code; this.execution=execution; }
 }
@@ -27,12 +30,13 @@ function number(value,name,min,max) {
   if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max) throw new Failure('INVALID_ARGUMENT',`${name} must be ${min}..${max}`);
   return value;
 }
-function run(file,args,{timeout=30000,mutation=false,input,env,trimOutput=true}={}) {
+function run(file,args,{timeout=30000,mutation=false,input,env,trimOutput=true,encoding='utf8',maxBuffer=4*1024*1024}={}) {
   return new Promise((resolve,reject)=>{
-    const child=execFile(file,args,{timeout,maxBuffer:4*1024*1024,encoding:'utf8',killSignal:'SIGKILL',shell:false,env},(err,stdout,stderr)=>{
+    const child=execFile(file,args,{timeout,maxBuffer,encoding,killSignal:'SIGKILL',shell:false,env},(err,stdout,stderr)=>{
       children.delete(child);
+      stderr=String(stderr||'');
       if(err) return reject(new Failure('COMMAND_FAILED',`${path.basename(file)}: ${(stderr||err.message).slice(-5000)}`,mutation?'unknown':'not_executed'));
-      resolve({stdout:trimOutput?stdout.trim():stdout,warnings:stderr.trim().slice(-3000)});
+      resolve({stdout:trimOutput&&typeof stdout==='string'?stdout.trim():stdout,warnings:stderr.trim().slice(-3000)});
     });
     children.add(child);
     child.stdin.on('error',()=>{});
@@ -75,6 +79,11 @@ async function baguette(command,device,args=[],options={}) {
   const result=await run(BINARY,[command,...deviceArgs(device),...args],options);
   return {udid:device.udid,execution:options.mutation?'executed':'not_applicable',...result};
 }
+let agentImpl=null,appsImpl=null;
+function agent(){return agentImpl||(agentImpl=require('./agent.cjs').createAgent({binary:BINARY,deviceSet:DEVICE_SET,root:ROOT,run,sim,Failure}));}
+function apps(){return appsImpl||(appsImpl=require('./apps.cjs').createApps({sim,run,Failure}));}
+const BUNDLE_ID=/^[A-Za-z0-9][A-Za-z0-9.-]+$/;
+function bundleId(value){const id=string(value,'bundleId');if(!BUNDLE_ID.test(id))throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');return id;}
 let keyboardBusy=false;
 async function nativeKey(device,code,modifiers=[]) {
  const [key,mask]=code?require('./keys.cjs').chord(code,modifiers):[0,0];
@@ -135,6 +144,7 @@ async function dispatch(method,p={}) {
     const result=await sim(['create',unique,deviceType,runtime],{mutation:true});
     return {udid:result.stdout,name:unique,runtime,deviceSet:DEVICE_SET,execution:'executed'};
   }
+  if(method==='app_install_status') return apps().status(p);
   if(method==='reveal_screenshot') {
     // Only a screenshot this worker just saved; never an arbitrary path.
     const file=string(p.path,'path',1024);
@@ -171,46 +181,54 @@ async function dispatch(method,p={}) {
     // Wait for this exact custom-set device ourselves; do not silently restart apps.
     const started=device.state==='Booted'?null:await baguette('boot',device,['--no-heal'],{timeout:15000,mutation:true});
     const ready=await sim(['bootstatus',device.udid,'-b'],{timeout:90000,mutation:true});
-    return {udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',warnings:started?.warnings||ready.warnings,note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'};
+    // Baguette always warns about Simulator.app's lifetime setting; it does not apply to these headless devices.
+    const warnings=(started?.warnings||ready.warnings||'').split('\n').filter(l=>l.trim()&&!/lifetime|^\[baguette\] Booted /.test(l)).join('\n');
+    return {udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'};
   }
   if(method==='shutdown') {
     if(device.state==='Shutdown') return {udid:device.udid,state:'Shutdown',execution:'not_executed'};
     return baguette('shutdown',device,[],{timeout:60000,mutation:true});
   }
-  if(method==='describe_ui') {
-    const result=await baguette('describe-ui',device);
-    let tree;
-    try { tree=JSON.parse(result.stdout); }
-    catch {throw new Failure('INVALID_OUTPUT','Accessibility output was not JSON');}
-    const pending=[tree]; let observed=false;
-    while(pending.length) {
-      const node=pending.pop();
-      if(Array.isArray(node)) {pending.push(...node);continue;}
-      if(!node||typeof node!=='object')continue;
-      if(typeof node.role==='string'&&node.role.trim()&&node.role!=='AXUnknown'&&node.hidden!==true) {observed=true;break;}
-      if(Array.isArray(node.children))pending.push(...node.children);
+  if(method==='describe_ui') return agent().describe(device,p);
+  if(method==='tap') return agent().tap(device,p);
+  if(method==='gesture') return agent().gesture(device,p);
+  if(method==='swipe') return agent().gesture(device,{kind:'swipe',from:[p.startX,p.startY],to:[p.endX,p.endY],duration:p.duration,observe:'none'});
+  if(method==='wait_for') return agent().waitFor(device,p);
+  if(method==='set_state') return agent().setState(device,p);
+  if(method==='logs') return agent().logs(device,p);
+  if(method==='capture') {
+    // The action runs inside the capture, through the same operations as its own tool.
+    const allowed=['tap','gesture','press','type_text','open_url','app_launch'];
+    return agent().capture(device,p,async action=>{
+      if(!action||!allowed.includes(action.tool))throw new Failure('INVALID_ARGUMENT',`capture action.tool must be one of ${allowed.join(', ')}`);
+      const args={...(action.args||{}),udid:device.udid,observe:'none'};
+      return dispatch(action.tool==='app_launch'?'launch_app':action.tool,{...args,showViewer:false});
+    });
+  }
+  if(method==='type_text') {
+    if(p.text===undefined&&p.keys===undefined&&p.clear!==true)throw new Failure('INVALID_ARGUMENT','Pass text, keys or clear');
+    if(p.clear===true){await clipboardAction({udid:device.udid,action:'key',code:'KeyA',modifiers:['command']});await clipboardAction({udid:device.udid,action:'key',code:'Backspace',modifiers:[]});}
+    if(p.text!==undefined)await clipboardAction({udid:device.udid,action:'paste',text:p.text});
+    const keys=p.keys===undefined?[]:Array.isArray(p.keys)?p.keys:[p.keys];
+    if(keys.length>40)throw new Failure('INVALID_ARGUMENT','At most 40 keys per call','not_executed');
+    for(const key of keys){
+      const [code,...mods]=String(key).split('+').reverse();
+      await clipboardAction({udid:device.udid,action:'key',code,modifiers:mods.map(m=>({cmd:'command',ctrl:'control',alt:'option',opt:'option'})[m.toLowerCase()]||m.toLowerCase())});
     }
-    if(!observed)throw new Failure('EMPTY_UI','No observable accessibility nodes. Take a screenshot, confirm the App is visible and retry describe_ui before acting.');
-    const encoded=JSON.stringify(tree);
-    if(encoded.length>180000)return {...result,stdout:undefined,treePreview:encoded.slice(0,180000),truncated:true};
-    return {...result,stdout:undefined,tree};
-  }
-  if(method==='tap'||method==='swipe') {
-    const width=number(p.width,'width',1,4000),height=number(p.height,'height',1,4000);
-    const args=['--width',String(width),'--height',String(height)];
-    const coordinates=method==='tap'?[['x','x',width],['y','y',height]]:[['startX','start-x',width],['startY','start-y',height],['endX','end-x',width],['endY','end-y',height]];
-    for(const [key,flag,max] of coordinates) args.push('--'+flag,String(number(p[key],key,0,max)));
-    if(p.duration!==undefined) args.push('--duration',String(number(p.duration,'duration',0.02,5)));
-    return baguette(method,device,args,{mutation:true});
-  }
-  if(method==='type_text'||(method==='press'&&p.button==='release-input')) {
-    await clipboardAction({udid:device.udid,action:method==='type_text'?'paste':'release',text:p.text});
     return {udid:device.udid,execution:'executed',note:'Keyboard events acknowledged by the simulator input transport; observe the UI to confirm the result.'};
   }
+  if(method==='press'&&p.button==='release-input') {
+    await clipboardAction({udid:device.udid,action:'release'});
+    return {udid:device.udid,execution:'executed',note:'Stuck keys released; nothing restarted.'};
+  }
   if(method==='press') {
-    const allowed=['home','lock','app-switcher','swipe-to-home','pull-down-to-notification-center'];
-    if(!allowed.includes(p.button)) throw new Failure('INVALID_ARGUMENT','Unsupported button');
-    return baguette('press',device,['--button',p.button],{mutation:true});
+    const allowed=['home','lock','power','volume-up','volume-down','action','app-switcher','swipe-to-app-switcher','swipe-to-home','pull-down-to-notification-center','pull-down-to-lock-screen'];
+    if(!allowed.includes(p.button)) throw new Failure('INVALID_ARGUMENT',`button must be one of ${allowed.join(', ')} or release-input`);
+    const args=['--button',p.button];
+    if(p.duration!==undefined)args.push('--duration',String(number(p.duration,'duration',0,10)));
+    const pressed=await baguette('press',device,args,{mutation:true});
+    agent().forget(device.udid);
+    return {udid:device.udid,execution:pressed.execution};
   }
   if(method==='screenshot'&&p.destination==='desktop') {
     // The viewer's screenshot button: a PNG on the Desktop, named like Simulator's.
@@ -231,22 +249,46 @@ async function dispatch(method,p={}) {
       return {...result,copied:true,mimeType:'image/png',bytes:stat.size};
     } finally { await fs.rm(file,{force:true}); }
   }
-  if(method==='screenshot') {
-    const dir=path.join(ROOT,'screenshots');await fs.mkdir(dir,{recursive:true,mode:0o700});
-    const file=path.join(dir,crypto.randomUUID()+'.jpg');
-    const result=await baguette('screenshot',device,['--format','jpg','--quality','0.8','--output',file]);
-    const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
-    return {...result,path:file,mimeType:'image/jpeg',bytes:stat.size,note:'Open this local image with your image-view tool. Coordinates for input are device points, not screenshot pixels.'};
+  if(method==='screenshot') return agent().screenshot(device,p);
+  if(method==='app_info') return apps().info(device,p);
+  if(method==='app_install') return apps().install(device,p,{terminate:id=>sim(['terminate',device.udid,id],{mutation:true})});
+  if(method==='app_terminate') {
+    const id=bundleId(p.bundleId);
+    try{await sim(['terminate',device.udid,id],{mutation:true,timeout:15000});}
+    catch(error){if(/not running|found nothing|No matching processes/i.test(error.message))return {udid:device.udid,bundleId:id,execution:'not_executed',note:'The App was not running.'};throw error;}
+    return {udid:device.udid,bundleId:id,execution:'executed'};
   }
-  if(method==='install_app') {
-    const app=string(p.appPath,'appPath',4096);
-    if(!path.isAbsolute(app)||!app.endsWith('.app')) throw new Failure('INVALID_ARGUMENT','appPath must be an absolute simulator .app bundle path');
-    const real=await fs.realpath(app);if(!(await fs.stat(real)).isDirectory()) throw new Failure('INVALID_ARGUMENT','App bundle must be a directory');
-    return {udid:device.udid,...await sim(['install',device.udid,real],{timeout:90000,mutation:true}),execution:'executed'};
+  if(method==='app_uninstall') {
+    const id=bundleId(p.bundleId);
+    if(apps().runningFor(device.udid))throw new Failure('INSTALL_RUNNING','An install is running on this device; wait for it first.');
+    await sim(['uninstall',device.udid,id],{mutation:true,timeout:60000});
+    return {udid:device.udid,bundleId:id,execution:'executed',note:'Uninstalled; the App and its data are gone from this device.'};
   }
+  if(method==='open_url') {
+    const url=string(p.url,'url',4096);
+    if(!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url))throw new Failure('INVALID_ARGUMENT','url needs a scheme, e.g. myapp://path or https://…');
+    await run(BINARY,['openurl',...deviceArgs(device),url],{mutation:true,timeout:20000});
+    agent().forget(device.udid);
+    return {udid:device.udid,execution:'executed',note:'Opened. iOS may ask whether to open another App; take a screenshot and tap the system prompt if one appears.'};
+  }
+  if(method==='install_app') return apps().install(device,p,{terminate:id=>sim(['terminate',device.udid,id],{mutation:true})});
   if(method==='launch_app') {
-    const bundleId=string(p.bundleId,'bundleId');if(!/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundleId)) throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');
-    const launched={udid:device.udid,...await sim(['launch',device.udid,bundleId],{mutation:true}),execution:'executed'};
+    const id=bundleId(p.bundleId);
+    if(apps().runningFor(device.udid))throw new Failure('INSTALL_RUNNING','An install is still running on this device. Wait with app action=install_status first.');
+    const args=['launch'];
+    if(p.relaunch!==false)args.push('--terminate-running-process');
+    args.push(device.udid,id);
+    if(p.arguments!==undefined){
+      if(!Array.isArray(p.arguments)||p.arguments.length>50||!p.arguments.every(a=>typeof a==='string'&&a.length<=1000&&!a.includes('\0')))throw new Failure('INVALID_ARGUMENT','arguments must be up to 50 strings');
+      args.push(...p.arguments);
+    }
+    const env={...process.env};
+    if(p.env!==undefined){
+      if(!p.env||typeof p.env!=='object'||Array.isArray(p.env)||Object.keys(p.env).length>30)throw new Failure('INVALID_ARGUMENT','env must be an object of up to 30 strings');
+      for(const [k,v] of Object.entries(p.env)){if(!/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(k)||typeof v!=='string'||v.length>4000)throw new Failure('INVALID_ARGUMENT','env names must be identifiers and values strings');env['SIMCTL_CHILD_'+k]=v;}
+    }
+    agent().forget(device.udid);
+    const launched={udid:device.udid,bundleId:id,...await sim(args,{mutation:true,env}),execution:'executed'};
     if(p.showViewer===false)return launched;
     try{return {...launched,viewer:await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale)};}
     catch(error){return {...launched,viewer:{previewOpened:false,error:error.message},note:'App launched, but viewer failed. Retry open_viewer, not launch_app.'};}
@@ -274,6 +316,7 @@ function startWorker() {
   // In use = a viewer window is open, or another process names a running device.
   const inUse=async()=>{
     if(require('./viewer.cjs').viewing())return true;
+    if(appsImpl?.installing())return true;
     const running=(await dispatch('devices')).devices.filter(d=>d.state!=='Shutdown').map(d=>d.udid);
     return (await require('./activity.cjs').externalUse(running)).length>0;
   };

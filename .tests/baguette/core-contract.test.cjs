@@ -15,17 +15,22 @@ function core(output,failAt=Infinity,macOS="15.0",catalog=[]){
    else mutations++;
    queueMicrotask(()=>cb(error,data,''));return {stdin:{on(){},end(){}}};
   }};
-  return require(name);
+  return require(name.startsWith('./')?path.join(dir,name):name);
  }};
  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
  return {dispatch:context.module.exports.dispatch,mutations:()=>mutations,commands,budgets};
 }
-test('describe_ui rejects empty/malformed trees and accepts observable descendants',async()=>{
- for(const value of ['[]','null','{}','{"children":[]}','{"role":"AXUnknown"}','invalid']) {
-  await assert.rejects(core(value).dispatch('describe_ui',{udid}),e=>e.code===(value==='invalid'?'INVALID_OUTPUT':'EMPTY_UI'));
+test('describe_ui needs the screen geometry, returns a compact view-space list, and says when there is nothing to read',async()=>{
+ for(const value of ['invalid','null','{}','{"children":[]}']) {
+  await assert.rejects(core(value).dispatch('describe_ui',{udid}),e=>e.code==='SCREEN_UNAVAILABLE');
  }
- const tree={children:[{role:'AXButton',label:'Google',children:[]}]};
- assert.equal((await core(JSON.stringify(tree)).dispatch('describe_ui',{udid})).tree.children[0].label,'Google');
+ const screen={width:402,height:874,orientation:'portrait'};
+ const empty=await core(JSON.stringify({role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen,children:[]})).dispatch('describe_ui',{udid});
+ assert.deepEqual(empty.elements,[]);assert.match(empty.note,/game or custom-drawn/);
+ const tree={role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen,children:[{role:'AXButton',label:'Google',frame:{x:100,y:200,width:80,height:40},children:[]}]};
+ const ui=await core(JSON.stringify(tree)).dispatch('describe_ui',{udid});
+ assert.deepEqual(ui.elements,[{i:0,role:'button',label:'Google',frame:[100,200,80,40],center:[140,220]}]);
+ assert.deepEqual(ui.screen,{width:402,height:874,orientation:'portrait'});
 });
 test('heal distinguishes preflight failure from post-restart polling failure',async()=>{
  const before=core('',1);await assert.rejects(before.dispatch('heal',{udid}),e=>e.execution==='not_executed');assert.equal(before.mutations(),0);
@@ -78,7 +83,7 @@ test('app reuse obtains only an owned app container, never a data container or r
    if(name==='./viewer.cjs')return {};
    if(name==='node:fs/promises')return {mkdir:async()=>{},realpath:async p=>p,stat:async()=>({isDirectory:()=>true})};
    if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push(args);let data='';if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted'}]}});else if(args.includes('get_app_container'))data=appPath;queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
-   return require(name);
+   return require(name.startsWith('./')?path.join(dir,name):name);
   }};
   vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
   const result=await context.module.exports.dispatch('app_bundle',{udid,bundleId:'test.example.app'});
@@ -109,7 +114,7 @@ test('device management: unique names, delete and erase stop the device first, r
    if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push([file.split('/').pop(),...args]);let data='';
     if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted',name:'Phone'}]}});
     queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
-   return require(name);
+   return require(name.startsWith('./')?path.join(dir,name):name);
   }};
   vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
   const r=await context.module.exports.dispatch(method,{udid});
@@ -129,7 +134,7 @@ test('a clipboard screenshot puts the PNG on the pasteboard by path argument and
   if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push([file.split('/').pop(),...args]);let data='';
    if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted',name:'Phone'}]}});
    queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
-  return require(name);
+  return require(name.startsWith('./')?path.join(dir,name):name);
  }};
  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
  const r=await context.module.exports.dispatch('screenshot',{udid,destination:'clipboard'});

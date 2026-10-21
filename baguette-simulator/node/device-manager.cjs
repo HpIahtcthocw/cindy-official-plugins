@@ -52,7 +52,7 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
    }
    await assertEnabled();entry.phase='booting';entry.execution='unknown';await dispatch('boot',{udid:target.udid});entry.execution='executed';
    if(bundleId){
-    if(appPath&&source.udid!==target.udid){entry.phase='installing';await dispatch('install_app',{udid:target.udid,appPath});}
+    if(appPath&&source.udid!==target.udid){entry.phase='installing';let job=await dispatch('install_app',{udid:target.udid,appPath});while(job?.state==='running')job=await dispatch('app_install_status',{udid:target.udid,job:job.job});}
     entry.phase='launching';await dispatch('launch_app',{udid:target.udid,bundleId,showViewer:false});
     await remember(target.udid,bundleId).catch(()=>{});
    }

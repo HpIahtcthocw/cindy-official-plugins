@@ -1,55 +1,55 @@
 {
   "name": "iOS 시뮬레이터",
   "description": "독립 iOS 시뮬레이터. 작업마다 사이드바 탭에서 자기 기기 화면을 보고, 「시뮬레이터」 보기에서 모든 기기를 관리합니다. 실행 스위치와 기본 15분 유휴 종료로 데이터를 보존합니다. macOS 15+, Apple Silicon, 전체 Xcode 및 iOS runtime이 필요합니다. 오픈소스 Baguette(tddworks, Apache-2.0) 기반입니다.",
-  "whenToUse": "iOS 시뮬레이터 작업의 기본 도구입니다. 빌드된 앱 설치·실행·조작과 실시간 화면에 사용하세요. 먼저 environment와 devices를 호출하고, 작업마다 빈 기기(tasks 0)를 재사용할지 새로 만들지 판단하세요. 화면은 그 작업의 사이드바 탭에 표시됩니다. 키 고착은 press(release-input), heal은 동의가 필요합니다. 실행 허용을 임의로 켜지 말고 끝나면 shutdown하세요.",
+  "whenToUse": "iOS 시뮬레이터 작업의 기본 도구: 전용 기기에서 빌드된 App을 설치·실행·조작하고 스크린샷, 대기, 변화 기록, 로그 확인을 하며 작업 사이드바에 실시간 화면을 보여 줍니다. 먼저 environment와 devices. 빈 기기를 재사용하거나 새로 만드세요. 검증은 tap/gesture의 실제 터치로 하고 AXe/idb를 받거나 Xcode 창을 누르지 마세요. 전체 절차는 매뉴얼. heal은 동의 필요. 실행 스위치를 대신 켜지 마세요.",
   "tools": {
     "environment": {
-      "description": "먼저 macOS 15.0 이상인지 확인합니다. 동봉 Baguette, Xcode, 사용 가능한 iOS 런타임과 기종을 읽습니다. 먼저 호출하세요. 의존성을 다운로드하지 않습니다."
+      "description": "가장 먼저 호출. macOS 15.0 이상과 Apple Silicon을 확인하고 번들 Baguette, Xcode, 설치된 iOS 런타임과 기종을 읽습니다. 아무것도 내려받지 않습니다."
     },
     "devices": {
-      "description": "이 플러그인의 독립 기기와 상태만 나열합니다. 각 기기에 tasks(사용 중인 작업 수)와 thisTask(현재 작업에 배정 여부)를 붙입니다. 먼저 호출하세요. Cindy 내장 기기는 제어하지 않습니다."
+      "description": "이 플러그인 전용 기기와 상태를 나열합니다. 각 항목에 tasks(사용 중인 작업 수)와 thisTask(현재 작업 소속 여부). 이 작업의 기기나 빈 기기(tasks 0)를 재사용하고 Cindy 내장 기기나 Xcode 기본 기기는 다루지 않습니다."
     },
-    "create_device": {
-      "description": "현재 작업용 독립 기기를 만듭니다. 먼저 devices를 호출해 이 작업의 기기나 비어 있는 기기(tasks 0)가 있으면 재사용하고, 깨끗한 환경·다른 기종·다른 작업과의 격리가 필요할 때 만듭니다. 디스크를 사용합니다(대당 약 7–12 GB). environment의 정확한 식별자를 선택하세요."
+    "device": {
+      "description": "전용 기기 관리. create: environment의 runtime과 deviceType으로 새로 만듦(대당 약 7–12 GB). 깨끗한 환경, 특정 기종, 다른 작업과의 분리가 필요할 때만. boot: 시작 후 초기화 완료까지 대기(약 105초, 시간 초과 시 상태 확인). shutdown: 데이터를 유지하고 종료. rename: 데이터 유지. erase: 모든 App과 데이터 삭제. delete: 기기를 영구 삭제. erase와 delete는 사용자가 요청할 때만. 실행 스위치를 따르며 기본적으로 15분 유휴 시 종료(화면이 열려 있거나 도구가 조작 중이면 종료 안 함)."
     },
-    "boot": {
-      "description": "독립 기기를 부팅하고 초기화를 최대 약105초 기다립니다. 시간 초과 후 상태를 확인하세요. heal이나 SpringBoard 재시작을 자동 실행하지 않습니다. 사용자의 실행 허용 설정을 따릅니다. 기본값은 15분 미사용 후 종료이며 30/60분 또는 수동 종료로 변경할 수 있습니다. 화면이 열려 있거나 다른 도구·스크립트가 조작 중이면 유휴 종료하지 않으며, 입력과 도구 작업은 시간을 갱신합니다."
-    },
-    "shutdown": {
-      "description": "독립 기기를 종료합니다. 실행 중인 앱은 종료되지만 기기 데이터는 유지됩니다."
-    },
-    "describe_ui": {
-      "description": "레이블과 논리 포인트 좌표가 포함된 접근성 트리를 읽습니다. 입력 전에 관찰하고 빈 트리를 성공으로 판단하지 마세요."
+    "app": {
+      "description": "App 수명 주기. install: 로컬에서 빌드한 시뮬레이터용 .app(절대 경로 appPath, 빌드는 프로젝트의 Xcode 절차로) 설치. 설치된 것과 같으면 건너뛰고, 바뀐 파일이 적으면 차이만 동기화하며, 오래 걸리면 job을 반환(install_status로 대기). info: 설치된 버전, 빌드 번호, 실행 파일 지문. appPath를 주면 matchesLocal로 이번 빌드인지 확인. launch: 실행(기본은 재실행, arguments·env 가능)하고 이 작업 사이드바에 실시간 화면을 엽니다. viewer.previewOpened 확인(화면 기능은 viewer 참고). terminate, uninstall(데이터도 삭제), open_url(딥 링크, 다른 App 열기 확인이 뜨면 스크린샷 후 탭)."
     },
     "screenshot": {
-      "description": "스크린샷을 저장하고 절대 경로를 반환합니다. 이미지 도구로 확인하세요. 분석 시 이미지가 모델로 전송될 수 있습니다."
+      "description": "현재 화면을 이미지로 저장하고 경로를 반환합니다. 이미지 도구로 여세요. 사용자가 보는 방향으로 바로 세우고 화면 모서리와 다이내믹 아일랜드를 포함합니다. 기본적으로 1픽셀 = 1뷰 포인트라 이미지에서 읽은 좌표를 그대로 tap과 gesture에 쓸 수 있습니다. grid=true는 눈금 격자, region은 일부 영역(작은 글자, 테두리, 안전 영역), scale 2–3은 고해상도(좌표는 scale로 나눔)."
     },
-    "heal": {
-      "description": "iOS 27 Device Hub 입력 장애를 명시적으로 복구합니다. SpringBoard가 재시작되고 앱이 종료되므로 사용자가 영향을 수락한 경우에만 호출하세요. 키 고착은 먼저 press(release-input)을 사용하세요."
+    "describe_ui": {
+      "description": "화면의 요소(접근성 트리)를 읽습니다. 기본은 읽는 순서의 간단한 목록으로 역할, 텍스트, id, 뷰 포인트 frame과 center(center를 바로 탭 가능). query/role로 거르고, x,y는 그 지점의 요소, mode=full은 전체 트리. 비어 있으면 대개 게임이나 직접 그린 UI이니 grid가 있는 screenshot과 좌표를 쓰세요."
     },
     "tap": {
-      "description": "관찰한 위치를 탭하거나 길게 누릅니다. 좌표와 화면 크기는 논리 포인트입니다. 이후 결과를 관찰하세요."
+      "description": "시뮬레이터의 시스템 터치 경로로 하는 실제 터치. 창이 필요 없고 Mac이 잠겨 있어도 되며 App은 손가락 터치로 받습니다. text나 id(role, nth 가능)로 요소를, 또는 x,y 뷰 포인트를 지정. count=2는 두 번 탭, duration≥0.5는 길게 누르기. 기본적으로 약 0.6초 뒤 새 화면 요소를 반환(observe=ui). 상호작용 검증에는 이것을 쓰고, App 프로세스에 이벤트를 주입하지 마세요. 실제 터치 경로를 우회합니다."
     },
-    "swipe": {
-      "description": "관찰한 좌표 사이를 스와이프합니다. 논리 포인트를 사용하고 이후 결과를 관찰하세요."
+    "gesture": {
+      "description": "스와이프와 여러 손가락 제스처, 역시 실제 터치. kind: swipe(from→to, 또는 direction up/down/left/right. up은 손가락을 위로, 내용이 앞으로), drag(hold초 누른 뒤 to로: 끌어서 놓기, 순서 변경), pinch(center, from_spread→to_spread), pan(두 손가락으로 by 이동), edge(시스템 가장자리: bottom은 홈/App 전환, top은 알림·제어 센터), scroll_to(text나 id 요소가 완전히 보일 때까지 스와이프, 끝까지 없으면 보고). 좌표는 뷰 포인트, observe는 tap과 같습니다."
     },
     "type_text": {
-      "description": "초점이 있는 입력란에 Unicode 최대8000자를 붙여넣고 시뮬레이터 클립보드를 바꿉니다. 키 전달과 해제를 기다리지만 앱 처리 완료는 보장하지 않습니다. 반복 시 press(release-input)을 사용하고 무작정 재시도하거나 heal하지 마세요."
+      "description": "포커스된 입력란에 입력. text는 중국어를 포함한 모든 Unicode(시뮬레이터 클립보드로 붙여 넣으며 내용을 바꿈). keys는 Enter, Backspace, Tab, Escape, ArrowDown, cmd+A 같은 키. clear=true는 먼저 비웁니다. 먼저 포커스를 확인하고 결과를 확인하세요. 키 수신 확인은 App 처리 완료가 아닙니다."
     },
     "press": {
-      "description": "홈, 잠금, 앱 전환, 알림 센터를 조작합니다. release-input은 고착된 키만 해제하며 기기나 앱을 재시작하지 않습니다. 이후 결과를 관찰하세요."
+      "description": "하드웨어 버튼: home, lock, power, volume-up, volume-down, action, app-switcher, swipe-to-app-switcher, swipe-to-home, pull-down-to-notification-center, pull-down-to-lock-screen. duration은 길게 누르기. release-input은 눌린 채 남은 키를 놓고 반복을 멈출 뿐, 아무것도 재시작하지 않고 App도 닫지 않습니다."
     },
-    "install_app": {
-      "description": "이미 빌드된 로컬 iOS Simulator .app을 독립 기기에 설치합니다. 동일 bundle ID 앱을 업데이트할 수 있습니다. 프로젝트 빌드나 의존성 다운로드는 하지 않습니다."
+    "wait_for": {
+      "description": "조건이 충족되면 반환합니다(최대 90초). 고정 sleep과 반복 스크린샷 대신 쓰세요. text나 id가 나타남(gone=true면 사라짐), stable=초: 그동안 화면이 바뀌지 않음(로딩, 애니메이션 종료), log=정규식: App 로그에 일치하는 줄(bundleId와 함께). screenshot=true면 충족 시점 화면을 첨부. 시간 초과 시 화면에 무엇이 있었는지 보고합니다."
     },
-    "launch_app": {
-      "description": "설치된 앱을 실행하고 기본적으로 루프백 화면 서비스와 이 작업의 사이드바 탭을 엽니다. viewer.previewOpened를 확인하세요. showViewer=false이면 백그라운드로만 실행합니다. 이 페이지는 전용 기기의 입력, 회전, Shake, Home 및 앱 전환, 파일 업로드, .app 설치, 기기 시작과 종료를 제공합니다(종료 시 앱도 중단). 위치와 움직임 시뮬레이션, 상태 표시줄 변경 및 지속되는 네트워크 조건 변경도 가능하며 사용자가 패널에서 복원하거나 해제해야 합니다. 카메라 패널은 Mac 카메라 또는 업로드한 미디어를 입력으로 사용하고, 위치 찾기는 허가 후 Mac 위치를 읽을 수 있습니다. 접근성 트리와 로그 조회, 스크린샷, 녹화 및 내보내기에 앱의 개인정보가 포함될 수 있습니다. 검색어와 지도 타일 요청은 Node를 통해 OpenStreetMap으로 전송됩니다. Copy는 Mac 클립보드, 붙여넣기는 기기 클립보드를 덮어씁니다. 열기 전에 이러한 기능과 영향을 알리세요. 페이지를 여는 것만으로 모든 작업이 실행되지는 않으며 수집과 기기 변경은 사용자가 페이지에서 실행합니다. Duo는 Xcode 27.1 / iOS 27.1이 필요합니다. 뷰어 자세 조작은 접힘 각도, 활성 화면 및 전면 앱 레이아웃을 변경합니다. 사용자의 실행 허용 설정을 따릅니다. 기본값은 15분 미사용 후 종료이며 30/60분 또는 수동 종료로 변경할 수 있습니다. 화면이 열려 있거나 다른 도구·스크립트가 조작 중이면 유휴 종료하지 않으며, 입력과 도구 작업은 시간을 갱신합니다. Cindy 도구 모음; 끊김·유휴·종료 상태는 화면 자리에 표시. 종료 시 앱과 연결을 끝내고 데이터를 보존합니다. 기기를 전환하면 원본 기기를 종료한 뒤 대상 기기를 시작합니다. 최근 플러그인 실행 앱을 대상에서 실행하며, 원본 앱 번들이 있으면 자동 설치합니다. 대상의 동일한 bundleId 앱이 교체될 수 있습니다. 앱 번들만 재사용하며 원본 앱 데이터나 로그인 정보는 복사하지 않습니다."
+    "capture": {
+      "description": "변화를 포착: 프레임 기록을 시작하고 action(tool은 tap, gesture, press, type_text, open_url, app_launch, args는 그 인수)을 실행한 뒤 seconds초(15 이하) 동안 이어서, 중복 프레임을 뺀 시간순·밀리초 표기 목록 이미지 한 장과 각 프레임 파일을 반환합니다. 화면 전환, 애니메이션, 잠깐 뜨는 토스트, 로딩과 스켈레톤 화면에. action이 없으면 변화만 기록."
     },
-    "open_viewer": {
-      "description": "부팅된 독립 기기의 제어 페이지와 실시간 화면을 이 작업의 사이드바에 엽니다. 앱은 재시작하지 않습니다. previewOpened를 확인하세요. 화면 복구와 키 해제 버튼을 제공합니다. 창이나 기기가 열려 있는 동안 유지됩니다. 이 페이지는 전용 기기의 입력, 회전, Shake, Home 및 앱 전환, 파일 업로드, .app 설치, 기기 시작과 종료를 제공합니다(종료 시 앱도 중단). 위치와 움직임 시뮬레이션, 상태 표시줄 변경 및 지속되는 네트워크 조건 변경도 가능하며 사용자가 패널에서 복원하거나 해제해야 합니다. 카메라 패널은 Mac 카메라 또는 업로드한 미디어를 입력으로 사용하고, 위치 찾기는 허가 후 Mac 위치를 읽을 수 있습니다. 접근성 트리와 로그 조회, 스크린샷, 녹화 및 내보내기에 앱의 개인정보가 포함될 수 있습니다. 검색어와 지도 타일 요청은 Node를 통해 OpenStreetMap으로 전송됩니다. Copy는 Mac 클립보드, 붙여넣기는 기기 클립보드를 덮어씁니다. 열기 전에 이러한 기능과 영향을 알리세요. 페이지를 여는 것만으로 모든 작업이 실행되지는 않으며 수집과 기기 변경은 사용자가 페이지에서 실행합니다. Duo는 Xcode 27.1 / iOS 27.1이 필요합니다. 뷰어 자세 조작은 접힘 각도, 활성 화면 및 전면 앱 레이아웃을 변경합니다. 사용자의 실행 허용 설정을 따릅니다. 기본값은 15분 미사용 후 종료이며 30/60분 또는 수동 종료로 변경할 수 있습니다. 화면이 열려 있거나 다른 도구·스크립트가 조작 중이면 유휴 종료하지 않으며, 입력과 도구 작업은 시간을 갱신합니다. Cindy 도구 모음; 끊김·유휴·종료 상태는 화면 자리에 표시. 종료 시 앱과 연결을 끝내고 데이터를 보존합니다. 기기를 전환하면 원본 기기를 종료한 뒤 대상 기기를 시작합니다. 최근 플러그인 실행 앱을 대상에서 실행하며, 원본 앱 번들이 있으면 자동 설치합니다. 대상의 동일한 bundleId 앱이 교체될 수 있습니다. 앱 번들만 재사용하며 원본 앱 데이터나 로그인 정보는 복사하지 않습니다."
+    "set_state": {
+      "description": "기기 상태 변경(여러 개 동시 가능): orientation, 폴더블 posture(closed/open/flat 또는 각도), appearance light/dark, contrast, text_size(Dynamic Type), network(프로필 이름, offline, clear 또는 {latency, bandwidth, loss}. 이후 실행한 App에 적용), location {lat, lon} 또는 clear, status_bar clean(9:41, 신호와 배터리 가득, 스크린샷용) 또는 clear, privacy {action grant/revoke/reset, service, bundleId}로 권한 창을 미리 처리. 방향이나 자세를 바꾸면 새 화면 크기와 방향을 반환합니다. 권한을 바꾸면 해당 App이 종료되니 실행 전에 설정하세요."
     },
-    "close_viewer": {
-      "description": "영상 서비스만 중지합니다. 기기와 앱은 유휴 설정에 따라 계속 실행됩니다. 기기 연결을 끝내려면 shutdown을 사용하세요. 사용자가 플러그인 설정에서도 종료할 수 있습니다."
+    "logs": {
+      "description": "App의 최근 로그와 충돌 보고서를 읽습니다. bundleId나 process로 지정. last_seconds 기본 120, level은 error(오류와 결함만), default, info, debug, match는 정규식 필터. 기본적으로 이 기기에서 해당 프로세스의 최근 충돌 요약(예외, 이유, 충돌한 스레드의 프레임)을 포함합니다."
+    },
+    "heal": {
+      "description": "Device Hub에 가려진 iOS 27 입력을 Baguette 절차로 명시적으로 복구합니다(전용 기기 세트에 simctl 사용). SpringBoard를 재시작하고 실행 중인 App을 종료하므로 사용자가 동의한 뒤에만. 눌린 키는 먼저 press(release-input)."
+    },
+    "viewer": {
+      "description": "이 작업 사이드바에서 기기의 실시간 화면을 열거나(open) 닫습니다(close). open은 previewOpened를 반환하니 확인한 뒤에 표시됐다고 말하세요. close는 화면만 멈추고 기기와 App은 계속 실행됩니다. 화면은 사용자가 조작하며 입력, 회전, 흔들기, 스크린샷(데스크톱 또는 클립보드), 기기 전환과 시작/종료(종료 시 App 종료), Baguette 고급 도구(위치·모션 시뮬레이션, 상태 막대와 지속되는 네트워크 조건, 카메라 입력, 접근성 트리, 로그, 녹화 내보내기. App 개인 데이터가 포함될 수 있음)를 제공합니다. 지도 검색과 타일은 플러그인 프록시를 거쳐 OpenStreetMap으로 갑니다. 열기 전에 이를 알리세요. 열기만으로는 아무것도 실행하지 않습니다. 127.0.0.1에서만 수신."
     }
   },
   "mainView": {

@@ -64,7 +64,8 @@ cindy.onHostMessage(async function (msg) {
       return;
     }
     const result = response.result;
-    const viewer = result.viewer || (msg.tool === 'open_viewer' ? result : null);
+    const opening = msg.tool === 'open_viewer' || (msg.tool === 'viewer' && msg.args?.action === 'open');
+    const viewer = result.viewer || (opening ? result : null);
     if (result.ok && viewer && viewer.ready && viewer.url) {
       const shown = await showViewer(viewer.url, msg.args?.udid, msg.args?.session_context?.session_id, locale);
       viewer.previewOpened = shown.previewOpened;
