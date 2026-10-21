@@ -10,7 +10,7 @@ const TEXT = {
     start: 'Start', starting: 'Starting…', stop: 'Shut Down', stopping: 'Shutting down…', open: 'Open in Current Task', rename: 'Rename',
     erase: 'Erase All Content and Settings…', remove: 'Delete…', more: 'More',
     stateOff: 'Off', stateOn: 'Running', idle: 'idle', tasks: (n) => n === 1 ? 'used by 1 task' : `used by ${n} tasks`, thisTask: 'used by this task',
-    offTitle: (n) => `${n} is off`, offBody: 'Start it to use it here. Apps and data are kept.',
+    offTitle: (n) => `${n} is off`, offBody: 'Start it to use it here. Apps and data are kept.', screenLost: 'The screen did not connect. The device is still running.', retry: 'Try Again',
     emptyTitle: 'No simulators yet', emptyBody: 'Create one and Cindy can run iOS apps in your tasks.', createIphone: 'New iPhone',
     pickTitle: 'Select a simulator', pickBody: 'Its screen shows here.',
     paused: 'Simulators are turned off in Plugins → iOS Simulator. Shutting down and deleting still work.',
@@ -28,7 +28,7 @@ const TEXT = {
     start: '启动', starting: '正在启动…', stop: '关闭', stopping: '正在关闭…', open: '在当前任务中打开', rename: '改名',
     erase: '抹掉所有内容和设置…', remove: '删除…', more: '更多',
     stateOff: '已关闭', stateOn: '运行中', idle: '空闲', tasks: (n) => `${n} 个任务在用`, thisTask: '当前任务在用',
-    offTitle: (n) => `${n} 已关闭`, offBody: '启动后在这里使用，App 和数据都保留。',
+    offTitle: (n) => `${n} 已关闭`, offBody: '启动后在这里使用，App 和数据都保留。', screenLost: '画面没有连上，设备仍在运行。', retry: '重试',
     emptyTitle: '还没有模拟器', emptyBody: '新建一台，Cindy 就能在你的任务里运行 iOS App。', createIphone: '新建 iPhone',
     pickTitle: '选择一台模拟器', pickBody: '它的画面会显示在这里。',
     paused: '模拟器运行已在「插件 → iOS 模拟器」里关闭；关闭和删除设备仍可用。',
@@ -159,12 +159,13 @@ function hero(d, note) {
     h('div', { class: 'hero-actions' }, [h('button', { class: 'btn cta', text: T.createIphone, disabled: !enabled(), onclick: () => newDevice('iphone') })])];
   else if (!d) children = [big(GLYPH.iphone), h('h2', { text: T.pickTitle }), h('p', { text: T.pickBody })];
   else {
-    const working = busy[d.udid];
+    const working = busy[d.udid], running = d.state !== 'Shutdown' && enabled();
     children = [big(glyphFor(d)), h('h2', { text: d.state === 'Shutdown' ? T.offTitle(d.name) : d.name }),
       h('p', { class: 'hero-meta', text: `${modelName(d)} · iOS ${osVersion(d)} · ${usage(d)}` }),
-      h('p', { text: !enabled() ? T.pausedBody : T.offBody }),
+      h('p', { text: !enabled() ? T.pausedBody : running ? T.screenLost : T.offBody }),
       h('div', { class: 'hero-actions' }, working ? [h('span', { class: 'spinner' }), h('span', { class: 'hero-working', text: working })] : [
-        h('button', { class: 'btn cta', text: T.start, disabled: !enabled(), onclick: () => act('boot', d) }),
+        running ? h('button', { class: 'btn cta', text: T.retry, onclick: () => showScreen(d) })
+          : h('button', { class: 'btn cta', text: T.start, disabled: !enabled(), onclick: () => act('boot', d) }),
         h('button', { class: 'icon-btn hero-more', type: 'button', title: T.more, 'aria-label': T.more, html: GLYPH.more, onclick: (e) => deviceMenu(d, e.currentTarget) })])];
   }
   if (note) children.push(h('p', { class: 'status error', text: note }));

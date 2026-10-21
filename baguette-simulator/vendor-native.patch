@@ -8,3 +8,19 @@ index 4f854b3..ea2cce4 100644
  // is what local debug / Homebrew-from-source builds report.
 -let baguetteVersion = "0.1.61"
 +let baguetteVersion = "0.2.10"
+diff --git a/Sources/Baguette/Infrastructure/Render/RealityKitDeviceScene.swift b/Sources/Baguette/Infrastructure/Render/RealityKitDeviceScene.swift
+--- a/Sources/Baguette/Infrastructure/Render/RealityKitDeviceScene.swift
++++ b/Sources/Baguette/Infrastructure/Render/RealityKitDeviceScene.swift
+@@ -907,9 +907,11 @@
+         case .transparent:
+             return CGColor(red: 0, green: 0, blue: 0, alpha: 0)
+         case .color(let hex):
++            // CSS hex colours are sRGB; `CGColor(red:…)` is Generic RGB
++            // (gamma 1.8), which renders dark page colours visibly lighter.
+             let color = HexColor(hex)
+             return CGColor(
+-                red: color.red,
++                srgbRed: color.red,
+                 green: color.green,
+                 blue: color.blue,
+                 alpha: 1

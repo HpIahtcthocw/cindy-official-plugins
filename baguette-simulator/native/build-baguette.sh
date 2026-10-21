@@ -17,7 +17,10 @@ swift build -c release -j 6 --force-resolved-versions --experimental-lto-mode=fu
 /usr/bin/strip .build/release/Baguette
 /usr/bin/codesign --force --sign - --timestamp=none .build/release/Baguette
 DEST="$PLUGIN_DIR/vendor/baguette"
-cp .build/release/Baguette "$DEST/Baguette"
-cp Injected/HingeControl/HingeControl "$DEST/Baguette_Baguette.bundle/HingeControl/HingeControl"
+# Replace, never overwrite in place: macOS caches a signed executable's code
+# signature per file, and processes that map the rewritten file get killed.
+install_new() { cp "$1" "$2.new" && mv -f "$2.new" "$2"; }
+install_new .build/release/Baguette "$DEST/Baguette"
+install_new Injected/HingeControl/HingeControl "$DEST/Baguette_Baguette.bundle/HingeControl/HingeControl"
 cp Injected/HingeControl/Sources/LICENSE.idb "$DEST/Baguette_Baguette.bundle/HingeControl/LICENSE.idb"
 echo 'Rebuilt Baguette and HingeControl; run node native/inventory.mjs --write before packaging.'
