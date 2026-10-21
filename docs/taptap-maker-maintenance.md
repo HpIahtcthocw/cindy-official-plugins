@@ -4,8 +4,46 @@
 
 ## Read first
 
+### 2.1.19: validation arguments and evidence boundaries
+
+Validation checks Git ignore rules and the index without changing either. Unignored evidence,
+tracked files or failed checks prevent dispatch. Invalid mode-specific arguments are rejected.
+Structured Runtime absolute-path fields are removed from responses; relative evidence locations
+and original archived reports remain available.
+
+### 2.1.18: Large validation reports
+
+Only local validation raises the CLI stdout limit to 8 MiB to receive Runtime's
+4 MiB reports plus their wrapper; account commands and stderr retain 2 MiB limits.
+Results above 64 KiB return an explicitly marked summary and original archive paths,
+without duplicating multi-MiB reports into MCP text and structuredContent. Read the
+evidence files for the full report. The 14-minute CLI and 15-minute Host limits remain;
+a per-attempt budget does not guarantee that all automatic retries can finish.
+
+### 2.1.17: Cindy local validation entry
+
+`maker_validate` calls bundled `preview status` and `preview validate` through the
+existing fixed Node entry. It does not modify vendor, standalone MCP or project Skills.
+Cindy's Manual supplies the workflow; source files, installed copies and conflicting
+links are reported separately. The official 0.0.37 source-directory check is identical
+to the bundled one and must not be classified as a Cindy-only defect.
+
+Preserve trusted-workspace overriding, readonly enforcement, no takeover of active or
+unverified previews, fixed CLI arguments, CLI disposal only after final JSON, failed
+reports and partial evidence on nonzero exit, and COMPLETED versus game PASS. Evidence
+is confined to project `.maker/validation-evidence/` and directory links are rejected.
+Do not automatically install Runtime, update the dev kit or replace project files.
+Pass each valued validation option as a single `--flag=value` argument. Even with
+all options enabled, argv must fit Cindy childSpawn's 16-entry limit; otherwise
+the host discards the request and spawning times out.
+
+Current upgrade: plugin 2.1.22 / Runtime 0.0.37, with eight bundle patches
+listed in the repository README and updated child-process compatibility.
+The inventory and device results below describe the historical 0.0.33/0.0.34
+baseline, not device acceptance of 0.0.37.
+
 - Do not remove Cindy safeguards merely to obtain an unmodified upstream bundle.
-- The current vendor has **five** patches, not only executed.
+- The historical 0.0.34 vendor has **five** patches, not only executed; 0.0.37 has eight.
 - **Logging is not globally disabled.** Cindy relinquished remote-watcher ownership and idle cleanup; system Node runs the watcher and Maker owns its lifetime.
 - Maker CLI already validates and persists PAT. Cindy adds status detection, masking, UI and process compatibility; those are not all redundant implementations.
 - New versions or matching keywords do not prove equivalent fixes. Inspect released artifacts and behavior.

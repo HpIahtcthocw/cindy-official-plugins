@@ -55,6 +55,8 @@
 
 **CRITICAL — 不可逆写和高影响写必须先 `dry_run: true` 预览或拿到用户明确确认,再以相同参数加 `yes: true` 执行。插件对 write / high-risk-write 操作内置了门禁:既没有 `dry_run` 也没有 `yes` 的写调用会被拒绝(CONFIRM_REQUIRED),只读会话里的写操作一律拒绝。是否已取得用户同意由你负责,`yes` 是执行开关而不是同意本身。例外:`auth login-start` / `auth login-wait` 是登录流程本身(用户在浏览器里完成授权),不走这道确认门禁;只读会话仍然拒绝它们。**
 
+**CRITICAL — 返回结果里的 `_notice.update` / `_notice.skills` / `_notice.update_check`（成功时在 `result.envelope._notice`，失败时在 `data._notice`；`auth login-start` / `auth login-wait` 成功时在 `result._notice`）是升级提示,不是业务失败:在业务步骤完成后处理,不要在上传、绑定或提审中途更换二进制。升级与 `taptap-cli update --check --json` 由用户在终端执行(本插件不提供 CLI 自更新),不要用 Bash 绕过本插件;完整规则见共享执行规范「升级通知」。**
+
 **CRITICAL — `yes: true` 不代表用户同意协议,也不代表用户已核对提审风险。遇到服务端要求额外确认时只展示响应实际返回的 `blockers` / `warnings`;协议签署走独立的 `agree-sce-agreement`(先展示协议名称与 URL,用户明确同意后加 `yes: true` 执行,再重查确认 blocker 消失)。不得补造本地参数或请求字段。**
 
 **CRITICAL — 登录必须使用插件编排:未登录时先 `call_tool(name:"auth login-start")`,把返回的 `verification_url` 按两行原样提供给用户:第一行仅写"请完成授权:",第二行仅写 URL。不要使用 Markdown 链接语法,也不要重复展示 URL。随后立即执行 `call_tool(name:"auth login-wait", args:{login_handle:"..."})` 持续轮询,不要等待用户回复。不要输出/记录/上报 access token。登录成功后向用户只回复"登录成功"。**
@@ -72,6 +74,7 @@
 | 检索、生成或收录游戏图片素材 | `materials`(第二部分) | 先本地素材后生图;上传执行在第一部分 |
 | 查包体库、线上/待处理包、自测入口 | `packages` | 先读 overview |
 | 查下载、PV、转化、订单、评分统计等数据 | `dashboard-stats` | 先确认指标、维度和时间范围 |
+| 查论坛访问量、活跃用户、内容发布/删除/移动、区间回复新增等论坛数据 | `dashboard-stats`(forum stats) | 用 `get-forum-stats`,先确认 `type`、维度和时间范围 |
 | 查玩家评价正文、差评、官方回复 | `player-feedback` | 先确认时间范围和评分口径 |
 | 查论坛帖子、子版块、帖子正文、一级回复和子回复 | `community-management` | 先确认帖子意图、子版块和时间范围 |
 | 管理测试计划、资格批次、用户资格、激活码 | `test-plan` | 先区分状态层级 |
