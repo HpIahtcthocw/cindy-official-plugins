@@ -142,7 +142,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       }
       return {udid: device.udid, path: file, mimeType: p.format === 'png' ? 'image/png' : 'image/jpeg', pixels: size, scale, screen: viewInfo(screen),
         ...(inline ? {_modelImages: [{data: inline}]} : {}),
-        ...(region ? {region} : {}), note: `${inline ? 'The screenshot is attached to this result (the file at path is the same image).' : 'Open the file at path with your image tool.'} ${scale === 1 ? 'Image pixels are view points' : `Divide pixels by ${scale} for view points`}${region ? ` and add the region origin (${region.x}, ${region.y})` : ''}; pass view points to tap and gesture.`};
+        ...(region ? {region} : {}), note: `${inline ? 'The screenshot is attached to this result and the user sees it in this tool step; do not import or re-embed it (the file at path is the same image).' : 'Open the file at path with your image tool.'} ${scale === 1 ? 'Image pixels are view points' : `Divide pixels by ${scale} for view points`}${region ? ` and add the region origin (${region.x}, ${region.y})` : ''}; pass view points to tap and gesture.`};
     } finally { await fs.rm(raw, {force: true}); }
   }
 
@@ -364,7 +364,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return {udid: device.udid, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
       ...(sheetBytes && sheetBytes.length <= 600 * 1024 ? {_modelImages: [{data: sheetBytes.toString('base64')}]} : {}),
       screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: actionError.message} : {}),
-      note: `${sheetBytes && sheetBytes.length <= 600 * 1024 ? 'The contact sheet is attached to this result' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
+      note: `${sheetBytes && sheetBytes.length <= 600 * 1024 ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
   }
 
   // ---- device state ----
