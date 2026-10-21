@@ -130,8 +130,11 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       return taskState(params._task, params._locale);
     }
     if (method === 'manage_state') {
+      // The management view passes the task in front (if any) so rows can say
+      // which device it uses.
       const result = await status();
-      return {...result, ok:true, devices: await annotate(result.devices, null)};
+      const current = validSession(params._task) ? params._task : null;
+      return {...result, ok:true, currentTask: current, devices: await annotate(result.devices, current)};
     }
     if (method === 'viewer_catalog') return dispatch('environment');
     if (method === 'device_hold') return hold();

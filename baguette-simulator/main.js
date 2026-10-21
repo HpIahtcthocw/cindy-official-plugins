@@ -117,7 +117,12 @@ const PAGE_ACTIONS = {
     const created = await worker('create_device', {name:str(m.name, 64), deviceType:str(m.deviceType), runtime:str(m.runtime)});
     return created.ok && created.udid ? worker('task_bind', {_task:m.sessionId, udid:created.udid, _locale:l}) : created;
   },
-  manage_state: () => worker('manage_state', {}),
+  manage_state: async () => {
+    // Only offer "open in the current task" when a task is actually in front:
+    // the full-page management view usually has none.
+    const front = hasTaskView() ? await cindy.taskView({peek:true}).catch(() => null) : null;
+    return worker('manage_state', front?.ok && SESSION.test(front.sessionId) ? {_task:front.sessionId} : {});
+  },
   catalog: () => worker('viewer_catalog', {}),
   boot: (m) => str(m.udid) && worker('settings_boot', {udid:m.udid}),
   shutdown: (m) => str(m.udid) && worker('settings_shutdown', {udid:m.udid}),

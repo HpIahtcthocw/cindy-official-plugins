@@ -1,12 +1,12 @@
 'use strict';
 // Management view: every private simulator on this Mac, which tasks use it, and
-// the device actions. Not tied to a task; "Open in this task" opens a device in
-// the task currently in front.
+// the device actions. Not tied to a task; when a task is in front (the view sits
+// beside a chat), a device it does not use yet offers "Open in current task".
 const TEXT = {
   en: {
     title: 'Simulators', sub: 'All iOS simulators of this plugin on this Mac',
     create: 'New iPhone', creating: 'Creating…', start: 'Start', stop: 'Shut down', open: 'Open in current task', rename: 'Rename', save: 'Save', cancel: 'Cancel',
-    tasks: (n) => n === 1 ? 'used by 1 task' : `used by ${n} tasks`, free: 'not in use',
+    tasks: (n) => n === 1 ? 'used by 1 task' : `used by ${n} tasks`, free: 'idle', thisTask: (n) => n > 1 ? `used by this task and ${n - 1} more` : 'used by this task',
     emptyTitle: 'No simulators yet', emptyBody: 'Create one and Cindy can run iOS apps for your tasks.', createFirst: 'Create your first iPhone',
     paused: 'Simulators are turned off. Turn them on in Plugins → iOS Simulator; shutting down still works here.',
     foot: (m) => (m ? `Devices shut down after ${m} minutes idle, ` : 'Devices are only shut down manually, ') + 'but never while a screen is open or a tool or script is using them. Change this in Plugins → iOS Simulator. Each task can use its own device, chosen by Cindy or by you on the task page.',
@@ -18,7 +18,7 @@ const TEXT = {
   'zh-CN': {
     title: '模拟器', sub: '这台电脑上本插件的所有 iOS 模拟器',
     create: '新建 iPhone', creating: '正在创建…', start: '启动', stop: '关闭', open: '在当前任务中打开', rename: '改名', save: '保存', cancel: '取消',
-    tasks: (n) => `${n} 个任务在用`, free: '没有任务在用',
+    tasks: (n) => `${n} 个任务在用`, free: '空闲', thisTask: (n) => n > 1 ? `当前任务和另外 ${n - 1} 个任务在用` : '当前任务在用',
     emptyTitle: '还没有模拟器', emptyBody: '创建一台，Cindy 就能在你的任务里运行 iOS App。', createFirst: '创建第一台 iPhone',
     paused: '模拟器运行已关闭。在「插件 → iOS 模拟器」里打开；这里仍可关闭设备。',
     foot: (m) => (m ? `设备闲置 ${m} 分钟后自动关闭，` : '设备只在手动操作时关闭，') + '但画面开着、或有工具和脚本在操作时不会关闭。在「插件 → iOS 模拟器」里修改。每个任务可以用自己的设备，由 Cindy 或你在任务页里选择。',
@@ -49,11 +49,14 @@ function row(d, r) {
     d.state === 'Booted'
       ? h('button', { class: 'btn sm quiet', text: T.stop, disabled: !!busy, onclick: () => act('shutdown', { udid: d.udid }, d.udid) })
       : h('button', { class: 'btn sm quiet', text: T.start, disabled: !!busy || !enabled || !r.available, onclick: () => act('boot', { udid: d.udid }, d.udid) }),
-    h('button', { class: 'btn sm', text: T.open, disabled: !!busy || !enabled || !r.available, onclick: () => act('open_in_task', { udid: d.udid }, d.udid, T.opened) }),
-  ];
+    // Only when a task is in front and does not already use this device.
+    state.currentTask && !d.thisTask
+      ? h('button', { class: 'btn sm', text: T.open, disabled: !!busy || !enabled || !r.available, onclick: () => act('open_in_task', { udid: d.udid }, d.udid, T.opened) })
+      : null,
+  ].filter(Boolean);
   return h('div', { class: 'device' }, [
     h('span', { class: 'glyph', html: GLYPH[r.family] }),
-    h('div', { class: 'text' }, [nameNode, h('div', { class: 'meta' }, [h('span', { class: 'dot', 'data-tone': working ? 'busy' : r.tone }), h('span', { text: `${r.meta} · ${d.tasks ? T.tasks(d.tasks) : T.free}` })])]),
+    h('div', { class: 'text' }, [nameNode, h('div', { class: 'meta' }, [h('span', { class: 'dot', 'data-tone': working ? 'busy' : r.tone }), h('span', { text: `${r.meta} · ${d.thisTask ? T.thisTask(d.tasks) : d.tasks ? T.tasks(d.tasks) : T.free}` })])]),
     h('div', { class: 'actions' }, actions),
   ]);
 }
@@ -107,4 +110,5 @@ async function createDevice() {
   render(); await refresh();
   setInterval(() => { if (!document.hidden && !busy && !renaming) refresh(); }, 5000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  window.addEventListener('focus', () => { if (!busy && !renaming) refresh(); });
 })();

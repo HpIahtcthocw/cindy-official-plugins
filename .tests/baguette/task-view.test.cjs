@@ -34,6 +34,11 @@ test('starting a device from a task assigns it, and devices tell each task what 
  assert.deepEqual(seen.devices.map(d=>[d.name,d.tasks,d.thisTask]),[['Alpha',1,true],['Beta',0,false]]);
  const other=await f.runtime.request('devices',{session_context:{session_id:'task-2'}});
  assert.deepEqual(other.devices.map(d=>d.thisTask),[false,false]);
+ // The management view sees which device the task in front uses, and nothing more without one.
+ const managed=await f.runtime.request('manage_state',{_task:'task-1'});
+ assert.equal(managed.currentTask,'task-1');assert.deepEqual(managed.devices.map(d=>d.thisTask),[true,false]);
+ const idle=await f.runtime.request('manage_state',{_task:'../x'});
+ assert.equal(idle.currentTask,null);assert.deepEqual(idle.devices.map(d=>d.thisTask),[undefined,undefined]);
  // A failed start does not move the task.
  const failing=await runtimeFixture(t);
  await failing.tasks.bind('task-9',B);
@@ -98,4 +103,17 @@ test('pages reach only the listed actions, scoped to their own task',async()=>{
  assert.deepEqual(r.replies.map(x=>x.id).sort(),['1','3']);
  assert.equal(r.replies.find(x=>x.id==='3').result.errorCode,'INVALID_ARGUMENT');
  assert.deepEqual(r.calls.filter(c=>c.method!=='device_hold').map(c=>[c.method,c.params._task]),[['task_state','task-1']]);
+});
+
+test('the management view offers "open in current task" only when a task is in front',async()=>{
+ // Real case: the full-page management view has no task in front, so every click
+ // failed with "open a task first". It now asks the host without opening anything.
+ const front=logicPage({taskView:async req=>req.peek?{ok:true,sessionId:'front'}:{ok:true,sessionId:'front'}});
+ front.page.postMessage({type:'request',id:'m1',action:'manage_state'});
+ const none=logicPage({taskView:async req=>({ok:false,errorCode:'HOST_NOT_READY'})});
+ none.page.postMessage({type:'request',id:'m2',action:'manage_state'});
+ await settle();await settle();
+ assert.deepEqual(JSON.parse(JSON.stringify(front.views)),[{peek:true}],'peek only, no page opened');
+ assert.deepEqual(front.calls.filter(c=>c.method==='manage_state').map(c=>c.params._task),['front']);
+ assert.deepEqual(none.calls.filter(c=>c.method==='manage_state').map(c=>c.params._task),[undefined]);
 });
