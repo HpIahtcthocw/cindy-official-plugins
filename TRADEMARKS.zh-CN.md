@@ -28,7 +28,6 @@
 | 163 邮箱、网易（网易（杭州）网络有限公司） | `163-mail/assets/icon.png`、插件显示名 |
 | Yahoo Mail、Yahoo（Yahoo Holdings Inc.） | `yahoo-mail/assets/icon.png` —— Yahoo Mail 官方应用图标原样使用；插件显示名 |
 | TapTap（心动网络股份有限公司） | `taptap-maker/assets/icon.png`、插件显示名 |
-| Baguette（tddworks） | `baguette-simulator` 插件说明与文档 —— 仅作上游项目出处说明 |
 | Brave Search（Brave Software, Inc.）、Tavily | `cindy-web-search` 文案中的服务名 |
 | Mermaid | `cindy-mermaid` 插件显示名 |
 
