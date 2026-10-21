@@ -1,9 +1,11 @@
 {
   "date": "2026-10-21",
   "pluginVersion": "0.1.24",
-  "baguette": "0.2.8",
-  "status": "upstream-0.2.8-maintenance-local-verified",
+  "baguette": "0.2.10",
+  "status": "upstream-0.2.10-local-verified",
   "passed": [
+    "v0.2.10 release archive (2650f1e6…) matches the GitHub digest; source archive (b41596dc…) equals `git archive v0.2.10`; release Web equals the tagged source; vendor-web.patch applies with no offsets; native patch is only the version stamp (tddworks/baguette#122 and #123 merged upstream)",
+    "LTO build on Xcode 27.1: --version 0.2.10; real-simulator smoke 17/17 (iPhone 18 Pro iOS 27.0, iPhone Duo iOS 27.1); 30 open/close 3D cycles leave serve at 293 MB",
     "Official v0.2.8 release archive (498328d1…) matches the GitHub asset digest; the source archive (f0fe577b…) equals `git archive v0.2.8`; release Web resources are byte-identical to the tagged source; vendor-web.patch applies with context and no fuzz",
     "vendor-native.patch (device set for every simctl call, tddworks/baguette#122; 3D scene freed on close and models loaded once, tddworks/baguette#123; version stamp) on v0.2.8: the full upstream Swift suite passes (2536 tests in 305 suites, Swift 6.4, Xcode 27.1)",
     "LTO build on Xcode 27.1 (27A9269): --version reports 0.2.8; node .tests/baguette/real-simulator-smoke.mjs --foldable passed 17/17 in a throwaway device set (iPhone 18 Pro on iOS 27.0, iPhone Duo on iOS 27.1): boot, flat H.264 and MJPEG frames, describe-ui, screenshot, tap/swipe/press, keyboard helper, private-set clipboard round trip, shake, status bar, rotation, hinge read and open/close, 3D frames",

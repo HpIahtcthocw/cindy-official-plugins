@@ -2,8 +2,8 @@
 # Rebuild only the patched native payloads from the verified official source.
 set -eu
 PLUGIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SOURCE_ARCHIVE=${1:?Pass the official v0.2.8 source archive (see VENDOR-REVIEW.md)}
-EXPECTED_SHA=f0fe577bf6319105773b1e7419bdc3a6e9d507efc8bcc69cc38c31cb605330c8
+SOURCE_ARCHIVE=${1:?Pass the official v0.2.10 source archive (see VENDOR-REVIEW.md)}
+EXPECTED_SHA=b41596dc629e9a87472fc9b6737c0bfeae79da002f4b859504cdf54d63b22221
 ACTUAL_SHA=$(shasum -a 256 "$SOURCE_ARCHIVE" | cut -d ' ' -f 1)
 [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo 'Source archive hash mismatch' >&2; exit 1; }
 BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/baguette-native.XXXXXX")

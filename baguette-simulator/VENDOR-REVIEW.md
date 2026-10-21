@@ -1,10 +1,10 @@
 # Vendored runtime evidence
 
-Upstream: [tddworks/baguette v0.2.8](https://github.com/tddworks/baguette/releases/tag/v0.2.8), macOS arm64 release (Apache-2.0, © tddworks). Original release archive SHA-256: `498328d140251ae19a070d307931903071618edba87882dc353d940b750fb292`, matching the GitHub asset digest (checked 2026-10-21). The two native executables are rebuilt from the official source with the patch documented below; `vendor-inventory.json` enumerates all 103 packaged upstream files with SHA-256 and byte size, and `node native/inventory.mjs` (also a plugin test) fails when a tracked vendor file drifts from it. The release Web folder is byte-identical to the tagged source. Since 0.1.24 the plugin icon is Cindy's own iOS Simulator icon; the Baguette logo is no longer shipped.
+Upstream: [tddworks/baguette v0.2.10](https://github.com/tddworks/baguette/releases/tag/v0.2.10), macOS arm64 release (Apache-2.0, © tddworks). Original release archive SHA-256: `2650f1e6c371c7b7512d5303666efad5804dec01a96e04a729a1fa39a2a65d88`, matching the GitHub asset digest (checked 2026-10-21). The two native executables are rebuilt from the official source (only the version constant is patched) to keep the whole-program LTO size; `vendor-inventory.json` enumerates all 103 packaged upstream files with SHA-256 and byte size, and `node native/inventory.mjs` (also a plugin test) fails when a tracked vendor file drifts from it. The release Web folder is byte-identical to the tagged source. Since 0.1.24 the plugin icon is Cindy's own iOS Simulator icon; the Baguette logo is no longer shipped.
 
 ## Exact source modifications
 
-`vendor-web.patch` is the complete diff, with context, against `Sources/Baguette/Resources/Web` at tag v0.2.7 (official release archive Web resources); it applies unchanged to v0.2.8, whose only Web change is the new `sim-notify.js` card (shipped unmodified). These ten Web files differ (nine carried-forward patches, the reviewed Duo edge-drag fix, and the 0.2.7 Defaults toggle removal):
+`vendor-web.patch` is the complete diff, with context, against `Sources/Baguette/Resources/Web` at tag v0.2.7 (official release archive Web resources); it applies unchanged to v0.2.10 (v0.2.8 added the `sim-notify.js` card, shipped unmodified; v0.2.10 gives the 3D stage its own `Baguette._Keyboard`, which therefore also uses the patched `/clipboard` path). These ten Web files differ (nine carried-forward patches, the reviewed Duo edge-drag fix, and the 0.2.7 Defaults toggle removal):
 
 - `stream-session.js`: bounded reconnect after unexpected socket close; cancel scheduled reconnect on deliberate stop.
 - `baguette/parts/keyboard.js`: delegate key/text/clipboard actions to the same-origin /clipboard private-device bridge (fragment port never selects a destination), suppress OS repeats and duplicate in-flight paste, serialize keys/paste/copy, report queue overflow with English fallback for added input errors, drop unsent keys on blur/hide/detach/release.
@@ -94,6 +94,12 @@ Native helper update: releaseKeys submits HID usages 4–231 before waiting once
 - Unpatched 0.2.7/0.2.8 left about 33 MB resident per closed 3D stream (15 connections → 650 MB, 30 → 1 GB; flat streams plateau near 66 MB); foldables use the 3D stage and reconnect on every task-page load, and a long session reached 12 GB. With fix (2), 30 connections leave 233 MB. As a backstop the worker also restarts an idle server (no viewer connected for 60 s) above 1.5 GB on the same port.
 - The host force-kills a stopping worker after 2 s, shorter than shutting devices down; a `serve` child then outlived its worker under launchd. Exit paths now SIGKILL `serve` before shutting devices down, and a starting worker reaps orphaned `serve` processes of its own binary and device set.
 - Clipboard writes for `type_text` go straight to `simctl --set … pbcopy` with the exact UTF-8 read-back: `devicectl device pasteboard copy` reports "device was not found" for private-set devices.
+
+## 0.2.10 upgrade (2026-10-21)
+
+- Both fixes from the 0.2.8 pass were merged upstream (tddworks/baguette#122, #123) and released in v0.2.9; v0.2.10 adds iPhone Duo input fixes (touches stay on the digitizer they went down on, the 3D page follows the lit panel across a fold, keys go through the guest keys service, the 3D stage forwards the keyboard). `vendor-native.patch` is now only the version stamp.
+- Release archive `2650f1e6…` matches the GitHub digest; source archive `b41596dc…` (`https://api.github.com/repos/tddworks/baguette/tarball/v0.2.10`) equals `git archive v0.2.10`; release Web equals the tagged source; USDZ models and the VirtualCamera / VirtualMotion / VirtualNetwork builds are unchanged. `vendor-web.patch` applies with no offsets.
+- Real-simulator smoke 17/17 (iPhone 18 Pro iOS 27.0, iPhone Duo iOS 27.1); 30 open/close 3D cycles leave `serve` at 293 MB.
 
 ## Upgrade checklist
 

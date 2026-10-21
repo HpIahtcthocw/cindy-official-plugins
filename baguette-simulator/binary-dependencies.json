@@ -3,48 +3,48 @@
   "dependencies": [
     {
       "name": "baguette",
-      "version": "0.2.8",
+      "version": "0.2.10",
       "license": "THIRD-PARTY-LICENSES.txt",
       "assets": [
         {
-          "url": "https://github.com/tddworks/baguette/releases/download/v0.2.8/baguette_v0.2.8_macOS_arm64.tar.gz",
-          "sha256": "498328d140251ae19a070d307931903071618edba87882dc353d940b750fb292",
+          "url": "https://github.com/tddworks/baguette/releases/download/v0.2.10/baguette_v0.2.10_macOS_arm64.tar.gz",
+          "sha256": "2650f1e6c371c7b7512d5303666efad5804dec01a96e04a729a1fa39a2a65d88",
           "format": "tar.gz",
           "files": [
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-42mm/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-42mm/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-42mm/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-46mm/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-46mm/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/apple-watch-series-11-46mm/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-ultra-3/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/apple-watch-ultra-3/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/apple-watch-ultra-3/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/ipad-pro-11-m4/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/ipad-pro-11-m4/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/ipad-pro-11-m4/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/ipad-pro-13-m4/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/ipad-pro-13-m4/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/ipad-pro-13-m4/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17-pro/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17-pro/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-17-pro-max/device.usdz"
             },
             {
-              "source": "baguette-v0.2.8-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-air/device.usdz",
+              "source": "baguette-v0.2.10-macOS-arm64/Baguette_Baguette.bundle/Models3D/iphone-air/device.usdz",
               "target": "vendor/baguette/Baguette_Baguette.bundle/Models3D/iphone-air/device.usdz"
             }
           ]
