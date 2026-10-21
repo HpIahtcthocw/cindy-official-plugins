@@ -147,7 +147,7 @@ async function showScreen(d) {
     const [base, hash = ''] = r.url.split('#');
     shown.url = `${base}&embed=hub${hash ? '#' + hash : ''}`;
     $('screen').src = shown.url; $('screen').hidden = false; $('hero').hidden = true;
-  } catch (error) { shown = { udid: null, url: null }; hero(d, errorText(error)); }
+  } catch { shown = { udid: null, url: null }; hero(d); } // the hero itself says the screen did not connect
 }
 function hero(d, note) {
   $('screen').hidden = true; $('hero').hidden = false;
