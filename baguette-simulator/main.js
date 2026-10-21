@@ -127,10 +127,14 @@ const PAGE_ACTIONS = {
   boot: (m) => str(m.udid) && worker('settings_boot', {udid:m.udid}),
   shutdown: (m) => str(m.udid) && worker('settings_shutdown', {udid:m.udid}),
   rename: (m) => str(m.udid) && str(m.name, 64) && worker('rename_device', {udid:m.udid, name:m.name}),
+  erase: (m) => str(m.udid) && worker('erase_device', {udid:m.udid}),
+  delete: (m) => str(m.udid) && worker('delete_device', {udid:m.udid}),
+  // The management view shows the selected running device's screen itself.
+  viewer_url: (m, l) => str(m.udid) && worker('settings_viewer', {udid:m.udid, _locale:l}),
   create: (m) => worker('create_device', {name:str(m.name, 64), deviceType:str(m.deviceType), runtime:str(m.runtime)}),
   open_in_task: (m, l) => str(m.udid) && openInTask(m.udid, l),
 };
-const KEEPS_RUNNING = new Set(['task_state', 'task_bind', 'task_boot', 'task_create', 'boot', 'open_in_task']);
+const KEEPS_RUNNING = new Set(['task_state', 'task_bind', 'task_boot', 'task_create', 'boot', 'open_in_task', 'viewer_url']);
 if (pages) pages.onmessage = async ({data: msg}) => {
   if (msg?.type !== 'request' || typeof msg.id !== 'string' || !Object.hasOwn(PAGE_ACTIONS, msg.action)) return;
   let result;

@@ -13,6 +13,12 @@ test('task bindings persist, count tasks per device, and ignore malformed ids',a
  const reloaded=createTaskBindings(file);
  assert.equal((await reloaded.get('task-1')).udid,A);assert.deepEqual(await reloaded.counts(),{[A]:2,[B]:1});
  assert.equal((await fs.stat(file)).mode&0o777,0o600);
+ // A deleted device leaves no task pointing at it.
+ const gone=createTaskBindings(path.join(await tmp(t),'forget.json'));
+ await gone.bind('task-a',A);await gone.bind('task-b',A);await gone.bind('task-c',B);
+ assert.equal(await gone.forgetDevice(A.toLowerCase()),true);
+ assert.equal(await gone.get('task-a'),null);assert.equal((await gone.get('task-c')).udid,B);
+ assert.equal(await gone.forgetDevice(A),false);
 });
 
 async function runtimeFixture(t,{viewerUrl=null}={}){

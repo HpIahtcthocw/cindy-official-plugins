@@ -71,3 +71,12 @@ test('the one-tap default is the newest iPhone that has a compatible runtime, on
  assert.deepEqual(M.runtimesFor(catalog,'t.Duo').map(r=>r.identifier),['r.27.1']);
  assert.equal(M.defaultChoice({deviceTypes:catalog.deviceTypes,runtimes:[]}),null);
 });
+
+test('zoom steps from any percentage to the next Simulator-style step, and stays relative to the fitted size',()=>{
+ assert.equal(M.zoomStep(57,1),67);assert.equal(M.zoomStep(57,-1),50);assert.equal(M.zoomStep(100,1),125);assert.equal(M.zoomStep(100,-1),75);
+ assert.equal(M.zoomStep(300,1),300);assert.equal(M.zoomStep(25,-1),25);assert.equal(M.zoomStep(66.8,1),75,'a step within half a percent counts as the current one');
+ assert.equal(M.zoomFactor({mode:'fit'},57),1);assert.equal(M.zoomFactor({mode:'pct',pct:100},50),2);
+ assert.equal(M.zoomFactor({mode:'pct',pct:100},0),1,'unknown fitted size (3D stage) keeps the fitted frame');
+ assert.equal(M.zoomFactor({mode:'pct',pct:300},10),6);assert.equal(M.zoomFactor({mode:'pct',pct:25},200),0.2);
+ assert.equal(M.zoomPct({mode:'fit'},57.4),57);assert.equal(M.zoomPct({mode:'pct',pct:150},57),150);assert.equal(M.zoomPct({mode:'fit'},0),100);
+});

@@ -7,7 +7,7 @@
       connected: '运行中', connecting: '正在连接画面…', recovering: '正在恢复画面…', offline: '画面已断开', off: '已关闭',
       paused: '运行已关闭', booting: '正在启动…', stopping: '正在关闭…', unknown: '状态未知',
       home: '主屏幕', rotate: '旋转', screenshot: '截图', more: '更多', shake: '摇一摇', appSwitcher: 'App 切换器',
-      zoom: '画面大小', zoomFit: '适应窗口', fullToolbar: '显示完整工具栏', releaseKeys: '解除卡键', recover: '恢复画面', shutdown: '关闭设备',
+      zoom: '画面大小', zoomFit: '适合窗口', fullToolbar: '显示完整工具栏', releaseKeys: '解除卡键', recover: '恢复画面', shutdown: '关闭设备',
       devices: '设备', addDevice: '添加设备', rename: '重命名', switchTo: '切换到此设备', current: '当前',
       offlineTitle: '画面已断开', offlineBody: '设备可能仍在运行。恢复画面不会影响 App。',
       serviceOff: '服务已停止', expired: '画面已过期', retry: '立即重试',
@@ -23,6 +23,9 @@
       addHint: '新设备创建后保持关闭，切换到它时才会启动。', renameHint: '改名不影响 App 和数据。',
       noRuntime: '没有可用的 iOS 版本。请先在 Xcode 中安装。', loading: '正在读取机型…', created: '已创建', saved: '已保存',
       runningMeta: '运行中', offMeta: '已关闭', busyMeta: '处理中',
+      rotateLeft: '向左旋转', rotateRight: '向右旋转', zoomIn: '放大', zoomOut: '缩小', zoomActual: '实际大小', zoomFitShort: '适合',
+      pose: { shut: '合上', open: '半展开', flat: '展开' }, posture: '姿态',
+      shotDesktop: '截图已存到桌面', reveal: '在访达中显示', advanced: 'Baguette 高级工具',
     },
     en: {
       connected: 'Running', connecting: 'Connecting…', recovering: 'Recovering view…', offline: 'View disconnected', off: 'Shut down',
@@ -44,6 +47,9 @@
       addHint: 'New devices stay off until you switch to them.', renameHint: 'Renaming keeps apps and data.',
       noRuntime: 'No iOS runtime available. Install one in Xcode first.', loading: 'Loading models…', created: 'Created', saved: 'Saved',
       runningMeta: 'Running', offMeta: 'Off', busyMeta: 'Busy',
+      rotateLeft: 'Rotate Left', rotateRight: 'Rotate Right', zoomIn: 'Zoom In', zoomOut: 'Zoom Out', zoomActual: 'Actual Size', zoomFitShort: 'Fit',
+      pose: { shut: 'Closed', open: 'Half open', flat: 'Flat' }, posture: 'Posture',
+      shotDesktop: 'Screenshot saved to Desktop', reveal: 'Show in Finder', advanced: 'Baguette advanced tools',
     },
   };
 
@@ -149,7 +155,22 @@
     return null;
   }
 
-  const api = { STRINGS, strings, runtimeLabel, family, screenRadius, presence, overlay, idleLeft, clock, deviceRows, runtimesFor, defaultChoice };
+  // Zoom, in percent of actual size (one device point per CSS pixel). `fitPct`
+  // is what "fit window" currently amounts to; unknown (3D stage) counts as 100.
+  const ZOOM_STEPS = [25, 33, 50, 67, 75, 100, 125, 150, 200, 300];
+  function zoomStep(pct, direction) {
+    const steps = direction > 0 ? ZOOM_STEPS : [...ZOOM_STEPS].reverse();
+    return steps.find((step) => (direction > 0 ? step > pct + 0.5 : step < pct - 0.5)) ?? steps.at(-1);
+  }
+  /** Frame size factor relative to the fitted size for a zoom state. */
+  function zoomFactor(zoom, fitPct) {
+    if (!zoom || zoom.mode !== 'pct' || !(fitPct > 0)) return 1;
+    return Math.min(6, Math.max(0.2, zoom.pct / fitPct));
+  }
+  /** The percentage the zoom state shows, given the fitted percentage. */
+  const zoomPct = (zoom, fitPct) => Math.round(zoom?.mode === 'pct' ? zoom.pct : (fitPct > 0 ? fitPct : 100));
+
+  const api = { STRINGS, strings, runtimeLabel, family, screenRadius, presence, overlay, idleLeft, clock, deviceRows, runtimesFor, defaultChoice, ZOOM_STEPS, zoomStep, zoomFactor, zoomPct };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.CindySimModel = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

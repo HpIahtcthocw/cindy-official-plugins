@@ -27,13 +27,8 @@ const STAGE_STYLE='<style id="cindy-stage-style">'+[
  '@media (prefers-color-scheme:light){#simNativeView{--nv-page-bg:#f8f8f6!important}}',
  '@media (prefers-color-scheme:dark){#simNativeView{--nv-page-bg:#1f1f1e!important}}',
  '#simNativeView[data-handheld] #nativeDeviceFrame{background:transparent!important}',
- // Foldable pose picker: Cindy's grayscale pill instead of the workbench's blue-on-white.
- '.r3d-pose-picker{background:#ffffff!important;color:#737373!important;border-color:#e4e4e0!important;box-shadow:none!important}',
- '.r3d-pose-picker button{color:#737373!important}',
- '.r3d-pose-picker button.active{background:#e5e5e5!important;color:#262626!important;border-color:#e5e5e5!important}',
- '#simNativeView .r3d-pose-picker input[type=range]{border-left-color:#e4e4e0!important}',
- '#simNativeView .r3d-pose-picker input[type=range]:active::-webkit-slider-thumb{border-color:#a3a3a3!important}',
- '@media (prefers-color-scheme:dark){.r3d-pose-picker{background:#2c2c2a!important;color:#a3a3a3!important;border-color:#3c3c3a!important}.r3d-pose-picker button{color:#a3a3a3!important}.r3d-pose-picker button.active{background:#3c3c3a!important;color:#d4d4d4!important;border-color:#3c3c3a!important}#simNativeView .r3d-pose-picker input[type=range]{border-left-color:#3c3c3a!important}#simNativeView .r3d-pose-picker input[type=range]::-webkit-slider-runnable-track{background:#4a4a48!important}#simNativeView .r3d-pose-picker input[type=range]::-webkit-slider-thumb{background:#d4d4d4!important;border-color:#d4d4d4!important;box-shadow:none!important}}',
+ // The controller draws the foldable posture switch (viewer-stage.js exposes the hinge).
+ '.r3d-pose-picker{display:none!important}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div>div:first-child{border-radius:var(--cindy-screen-radius,0)!important}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div{outline:1px solid rgba(0,0,0,.08);outline-offset:-1px;border-radius:var(--cindy-screen-radius,0)}',
 ].join('\n')+'</style>';

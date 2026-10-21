@@ -6,7 +6,7 @@ const TEXT = {
   en: {
     loading: 'Loading…', connecting: 'Connecting to the screen…',
     noneTitle: 'This task has no simulator yet', noneBody: 'Pick a device for this task or create a new one. Cindy also picks one when it opens the simulator.',
-    use: 'Use', create: 'Create an iPhone', creating: 'Creating…', inOther: (n) => n === 1 ? 'used by another task' : `used by ${n} other tasks`,
+    use: 'Use', create: 'New iPhone…', creating: 'Creating…', inOther: (n) => n === 1 ? 'used by another task' : `used by ${n} other tasks`,
     offTitle: (name) => `${name} is off`, offBody: 'Start it to see the screen here. Apps and data are kept.', start: 'Start', starting: 'Starting…', change: 'Use another device',
     pausedTitle: 'Simulators are turned off', pausedBody: 'Turn them on in Plugins → iOS Simulator to use them here.',
     pluginOff: 'The iOS Simulator plugin is turned off.', needXcode: 'Needs full Xcode with an iOS runtime installed.',
@@ -16,7 +16,7 @@ const TEXT = {
   'zh-CN': {
     loading: '正在读取…', connecting: '正在连接画面…',
     noneTitle: '这个任务还没有模拟器', noneBody: '选一台设备给这个任务用，或新建一台。Cindy 打开模拟器时也会自己选。',
-    use: '用这台', create: '新建一台 iPhone', creating: '正在创建…', inOther: (n) => `另有 ${n} 个任务在用`,
+    use: '用这台', create: '新建 iPhone…', creating: '正在创建…', inOther: (n) => `另有 ${n} 个任务在用`,
     offTitle: (name) => `${name} 已关闭`, offBody: '启动后画面会显示在这里，App 和数据都保留。', start: '启动', starting: '正在启动…', change: '换一台设备',
     pausedTitle: '模拟器运行已关闭', pausedBody: '在「插件 → iOS 模拟器」里打开开关后即可在这里使用。',
     pluginOff: '「iOS 模拟器」插件已停用。', needXcode: '需要先安装完整的 Xcode 和一个 iOS 运行时。',
@@ -24,7 +24,7 @@ const TEXT = {
     devices: '设备', back: '返回',
   },
 };
-const { rpc, h, locale, GLYPH, onPush } = globalThis.CindySimPages;
+const { rpc, h, locale, GLYPH, onPush, createDevice: newDevice } = globalThis.CindySimPages;
 const M = globalThis.CindySimModel;
 const session = new URLSearchParams(location.search).get('session') || '';
 const $ = (id) => document.getElementById(id);
@@ -97,18 +97,19 @@ async function act(action, params, marker) {
   } catch (error) { note = { text: errorText(error), error: true, sticky: true }; }
   finally { busy = null; render(); if (!viewerUrl) refresh(); }
 }
+// Same sheet as the management view (name, OS version, model); the new device
+// then becomes this task's.
 async function createDevice() {
   if (busy) return;
+  const made = await newDevice({ family: 'iphone', lang });
+  if (!made?.udid) return;
   busy = 'create'; note = null; render();
   try {
-    const catalog = await rpc('catalog', {}, T.timeout);
-    const choice = catalog.ok ? M.defaultChoice(catalog) : null;
-    if (!choice) throw { errorCode: 'NO_RUNTIME', text: T.needXcode };
-    const r = await rpc('task_create', { sessionId: session, name: choice.name, deviceType: choice.deviceType, runtime: choice.runtime }, T.timeout);
+    const r = await rpc('task_bind', { sessionId: session, udid: made.udid }, T.timeout);
     if (!r.ok) throw r;
     state = r; choosing = false;
-  } catch (error) { note = { text: error?.text || errorText(error), error: true, sticky: true }; }
-  finally { busy = null; render(); }
+  } catch (error) { note = { text: errorText(error), error: true, sticky: true }; }
+  finally { busy = null; render(); if (!viewerUrl) refresh(); }
 }
 // The logic page pushes a fresh viewer when Cindy opens the simulator for this task.
 onPush((m) => { if (m?.type === 'viewer' && m.sessionId === session && typeof m.url === 'string') { choosing = false; show(m.url); } });

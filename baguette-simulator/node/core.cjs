@@ -10,7 +10,7 @@ const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
 const DEVICE_SET = path.join(ROOT, 'devices');
 const children = new Set();
-const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','swipe','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer']);
+const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','swipe','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer','delete_device','erase_device','reveal_screenshot']);
 class Failure extends Error {
   constructor(code, message, execution = 'not_executed') { super(message); this.code=code; this.execution=execution; }
 }
@@ -55,6 +55,22 @@ async function target(p, booted=true) {
   return device;
 }
 function deviceArgs(device) {return ['--udid',device.udid,'--device-set',DEVICE_SET];}
+// "iPhone 18 Pro", then "iPhone 18 Pro 2", "iPhone 18 Pro 3"… so devices stay tellable apart.
+function uniqueName(name,taken){
+  const used=new Set(taken.filter(n=>typeof n==='string').map(n=>n.toLowerCase()));
+  if(!used.has(name.toLowerCase()))return name;
+  for(let i=2;i<1000;i++){const next=`${name} ${i}`;if(!used.has(next.toLowerCase()))return next;}
+  return `${name} ${Date.now()}`;
+}
+const desktopShots=new Set();
+async function desktopFile(deviceLabel){
+  const dir=path.join(os.homedir(),'Desktop');await fs.mkdir(dir,{recursive:true});
+  const d=new Date(),pad=n=>String(n).padStart(2,'0');
+  const stamp=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
+  const base=`${deviceLabel.replace(/[\/:]/g,'-')} ${stamp}`;
+  for(let i=1;i<100;i++){const file=path.join(dir,`${base}${i>1?` (${i})`:''}.png`);try{await fs.access(file);}catch{return file;}}
+  throw new Failure('SCREENSHOT_NAME','Could not name the screenshot');
+}
 async function baguette(command,device,args=[],options={}) {
   const result=await run(BINARY,[command,...deviceArgs(device),...args],options);
   return {udid:device.udid,execution:options.mutation?'executed':'not_applicable',...result};
@@ -115,10 +131,24 @@ async function dispatch(method,p={}) {
     if(!installed)throw new Failure('RUNTIME_UNAVAILABLE','Select an available installed iOS runtime.');
     if(Array.isArray(installed.supportedDeviceTypes)&&!installed.supportedDeviceTypes.some(d=>d.identifier===deviceType))throw new Failure('DEVICE_RUNTIME_MISMATCH','This runtime does not support the selected model. Refresh the model and iOS options.');
     await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
-    const result=await sim(['create',name,deviceType,runtime],{mutation:true});
-    return {udid:result.stdout,name,runtime,deviceSet:DEVICE_SET,execution:'executed'};
+    const unique=uniqueName(name,(await listDevices()).map(d=>d.name));
+    const result=await sim(['create',unique,deviceType,runtime],{mutation:true});
+    return {udid:result.stdout,name:unique,runtime,deviceSet:DEVICE_SET,execution:'executed'};
   }
-  const device=await target(p,!['boot','shutdown','rename_device'].includes(method));
+  if(method==='reveal_screenshot') {
+    // Only a screenshot this worker just saved; never an arbitrary path.
+    const file=string(p.path,'path',1024);
+    if(!desktopShots.has(file))throw new Failure('INVALID_ARGUMENT','Unknown screenshot');
+    await run('/usr/bin/open',['-R',file],{timeout:10000});
+    return {execution:'executed'};
+  }
+  const device=await target(p,!['boot','shutdown','rename_device','delete_device','erase_device'].includes(method));
+  if(method==='delete_device'||method==='erase_device') {
+    // simctl refuses to erase a booted device; delete would stop it mid-write.
+    if(device.state!=='Shutdown')await baguette('shutdown',device,[],{timeout:60000,mutation:true});
+    await sim([method==='delete_device'?'delete':'erase',device.udid],{timeout:120000,mutation:true});
+    return {udid:device.udid,execution:'executed'};
+  }
   if(method==='rename_device') {
     const name=deviceName(p.name);
     await sim(['rename',device.udid,name],{mutation:true});
@@ -181,6 +211,14 @@ async function dispatch(method,p={}) {
     const allowed=['home','lock','app-switcher','swipe-to-home','pull-down-to-notification-center'];
     if(!allowed.includes(p.button)) throw new Failure('INVALID_ARGUMENT','Unsupported button');
     return baguette('press',device,['--button',p.button],{mutation:true});
+  }
+  if(method==='screenshot'&&p.destination==='desktop') {
+    // The viewer's screenshot button: a PNG on the Desktop, named like Simulator's.
+    const file=await desktopFile(device.name);
+    const result=await baguette('screenshot',device,['--format','png','--output',file]);
+    const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
+    desktopShots.add(file); if(desktopShots.size>50)desktopShots.delete(desktopShots.values().next().value);
+    return {...result,path:file,name:path.basename(file),mimeType:'image/png',bytes:stat.size};
   }
   if(method==='screenshot') {
     const dir=path.join(ROOT,'screenshots');await fs.mkdir(dir,{recursive:true,mode:0o700});
@@ -254,4 +292,4 @@ function startWorker() {
   });
   input.on('close',stop);process.on('SIGTERM',stop);process.on('SIGINT',stop);
 }
-module.exports={dispatch,DEVICE_SET,BINARY,startWorker};
+module.exports={dispatch,DEVICE_SET,BINARY,startWorker,uniqueName};

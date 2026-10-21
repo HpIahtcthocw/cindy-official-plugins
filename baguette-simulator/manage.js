@@ -1,114 +1,225 @@
 'use strict';
-// Management view: every private simulator on this Mac, which tasks use it, and
-// the device actions. Not tied to a task; when a task is in front (the view sits
-// beside a chat), a device it does not use yet offers "Open in current task".
+// Management view, laid out like Simulator / Device Hub: every private device in
+// a list on the left (running first), the selected one live on the right. Not
+// tied to a task; when a task is in front (the view sits beside a chat), a device
+// that task does not use yet can be opened in it.
 const TEXT = {
   en: {
-    title: 'Simulators', sub: 'All iOS simulators of this plugin on this Mac',
-    create: 'New iPhone', creating: 'Creating…', start: 'Start', stop: 'Shut down', open: 'Open in current task', rename: 'Rename', save: 'Save', cancel: 'Cancel',
-    tasks: (n) => n === 1 ? 'used by 1 task' : `used by ${n} tasks`, free: 'idle', thisTask: (n) => n > 1 ? `used by this task and ${n - 1} more` : 'used by this task',
-    emptyTitle: 'No simulators yet', emptyBody: 'Create one and Cindy can run iOS apps for your tasks.', createFirst: 'Create your first iPhone',
-    paused: 'Simulators are turned off. Turn them on in Plugins → iOS Simulator; shutting down still works here.',
-    foot: (m) => (m ? `Devices shut down after ${m} minutes idle, ` : 'Devices are only shut down manually, ') + 'but never while a screen is open or a tool or script is using them. Change this in Plugins → iOS Simulator. Each task can use its own device, chosen by Cindy or by you on the task page.',
-    running: (n) => `${n} running`, none: 'All off',
-    opened: 'Opened in the current task.', needTask: 'Open a task first, then try again.', needXcode: 'Needs full Xcode with an iOS runtime installed.',
+    title: 'Simulators', search: 'Search', add: 'New device', newIphone: 'iPhone…', newIpad: 'iPad…',
+    running: 'Running', off: 'Off', none: 'No matches',
+    start: 'Start', starting: 'Starting…', stop: 'Shut Down', stopping: 'Shutting down…', open: 'Open in Current Task', rename: 'Rename',
+    erase: 'Erase All Content and Settings…', remove: 'Delete…', more: 'More',
+    stateOff: 'Off', stateOn: 'Running', idle: 'idle', tasks: (n) => n === 1 ? 'used by 1 task' : `used by ${n} tasks`, thisTask: 'used by this task',
+    offTitle: (n) => `${n} is off`, offBody: 'Start it to use it here. Apps and data are kept.',
+    emptyTitle: 'No simulators yet', emptyBody: 'Create one and Cindy can run iOS apps in your tasks.', createIphone: 'New iPhone',
+    pickTitle: 'Select a simulator', pickBody: 'Its screen shows here.',
+    paused: 'Simulators are turned off in Plugins → iOS Simulator. Shutting down and deleting still work.',
+    pausedTitle: 'Simulators are turned off', pausedBody: 'Turn them on in Plugins → iOS Simulator to start a device.',
+    foot: (m) => (m ? `Devices shut down after ${m} minutes idle, ` : 'Devices only shut down when you choose, ') + 'never while a screen is open or a tool or script is using them.',
+    eraseTitle: (n) => `Erase all content and settings on ${n}?`, eraseBody: 'The device goes back to how it was when created. All apps and data on it are deleted.', eraseOk: 'Erase',
+    deleteTitle: (n) => `Delete ${n}?`, deleteBody: 'All apps and data on this device are deleted. This cannot be undone.', deleteTasks: (k) => k === 1 ? ' One task uses it; it will pick another device next time.' : ` ${k} tasks use it; they will pick another device next time.`, deleteOk: 'Delete', cancel: 'Cancel',
+    opened: 'Opened in the current task.', created: (n) => `Created ${n}.`, erased: 'Erased.', deleted: 'Deleted.', save: 'Save',
     failed: 'Not completed. Refresh to see the actual state.', busy: 'Another simulator operation is running. Try again in a moment.', timeout: 'No response from the simulator service. Reopen this page.', pluginOff: 'The iOS Simulator plugin is turned off.',
     readFailed: 'Could not read the devices.',
   },
   'zh-CN': {
-    title: '模拟器', sub: '这台电脑上本插件的所有 iOS 模拟器',
-    create: '新建 iPhone', creating: '正在创建…', start: '启动', stop: '关闭', open: '在当前任务中打开', rename: '改名', save: '保存', cancel: '取消',
-    tasks: (n) => `${n} 个任务在用`, free: '空闲', thisTask: (n) => n > 1 ? `当前任务和另外 ${n - 1} 个任务在用` : '当前任务在用',
-    emptyTitle: '还没有模拟器', emptyBody: '创建一台，Cindy 就能在你的任务里运行 iOS App。', createFirst: '创建第一台 iPhone',
-    paused: '模拟器运行已关闭。在「插件 → iOS 模拟器」里打开；这里仍可关闭设备。',
-    foot: (m) => (m ? `设备闲置 ${m} 分钟后自动关闭，` : '设备只在手动操作时关闭，') + '但画面开着、或有工具和脚本在操作时不会关闭。在「插件 → iOS 模拟器」里修改。每个任务可以用自己的设备，由 Cindy 或你在任务页里选择。',
-    running: (n) => `${n} 台运行中`, none: '全部已关闭',
-    opened: '已在当前任务中打开。', needTask: '先打开一个任务，再试一次。', needXcode: '需要先安装完整的 Xcode 和一个 iOS 运行时。',
+    title: '模拟器', search: '搜索', add: '新建设备', newIphone: 'iPhone…', newIpad: 'iPad…',
+    running: '运行中', off: '已关闭', none: '没有匹配的设备',
+    start: '启动', starting: '正在启动…', stop: '关闭', stopping: '正在关闭…', open: '在当前任务中打开', rename: '改名',
+    erase: '抹掉所有内容和设置…', remove: '删除…', more: '更多',
+    stateOff: '已关闭', stateOn: '运行中', idle: '空闲', tasks: (n) => `${n} 个任务在用`, thisTask: '当前任务在用',
+    offTitle: (n) => `${n} 已关闭`, offBody: '启动后在这里使用，App 和数据都保留。',
+    emptyTitle: '还没有模拟器', emptyBody: '新建一台，Cindy 就能在你的任务里运行 iOS App。', createIphone: '新建 iPhone',
+    pickTitle: '选择一台模拟器', pickBody: '它的画面会显示在这里。',
+    paused: '模拟器运行已在「插件 → iOS 模拟器」里关闭；关闭和删除设备仍可用。',
+    pausedTitle: '模拟器运行已关闭', pausedBody: '在「插件 → iOS 模拟器」里打开开关后即可启动设备。',
+    foot: (m) => (m ? `设备闲置 ${m} 分钟后自动关闭，` : '设备只在手动操作时关闭，') + '画面开着或有工具、脚本在操作时不会关闭。',
+    eraseTitle: (n) => `抹掉「${n}」的所有内容和设置？`, eraseBody: '设备会恢复到刚创建时的状态，上面的所有 App 和数据都会删除。', eraseOk: '抹掉',
+    deleteTitle: (n) => `删除「${n}」？`, deleteBody: '设备上的所有 App 和数据都会删除，且无法恢复。', deleteTasks: (k) => ` 有 ${k} 个任务在用它，之后会改用别的设备。`, deleteOk: '删除', cancel: '取消',
+    opened: '已在当前任务中打开。', created: (n) => `已创建「${n}」。`, erased: '已抹掉。', deleted: '已删除。', save: '保存',
     failed: '操作没有完成，请刷新查看实际状态。', busy: '有其他模拟器操作正在进行，稍后再试。', timeout: '模拟器服务没有响应，请重新打开本页。', pluginOff: '「iOS 模拟器」插件已停用。',
     readFailed: '没能读取设备。',
   },
 };
-const { rpc, h, locale, GLYPH } = globalThis.CindySimPages;
+const { rpc, h, locale, GLYPH, createDevice, catalog } = globalThis.CindySimPages;
 const M = globalThis.CindySimModel;
 const $ = (id) => document.getElementById(id);
-let T = TEXT.en, lang = 'en', state = null, busy = null, renaming = null;
+const SELECTED = 'cindy.hub.selected';
+let T = TEXT.en, lang = 'en', state = null, busy = {}, renaming = null, query = '', models = new Map(), shown = { udid: null, url: null };
+let selected = (() => { try { return localStorage.getItem(SELECTED); } catch { return null; } })();
 
-function message(text, error = false) { $('message').textContent = text || ''; $('message').classList.toggle('error', !!error); }
-function errorText(r) {
-  return ({ BUSY: T.busy, TIMEOUT: T.timeout, PLUGIN_OFF: T.pluginOff, PREVIEW_NEEDS_SESSION: T.needTask, RUNTIME_DISABLED: T.paused })[r?.errorCode || r?.code] || T.failed;
+const glyphFor = (d) => /Duo/i.test(d.deviceType || d.name) ? GLYPH.fold : /iPad/i.test(d.deviceType || d.name) ? GLYPH.ipad : GLYPH.iphone;
+const modelName = (d) => models.get(d.deviceType) || String(d.deviceType || '').replace(/^.*SimDeviceType\./, '').replace(/-/g, ' ');
+const osVersion = (d) => M.runtimeLabel(d.runtime).replace(/^iOS /, '');
+const usage = (d) => d.thisTask ? T.thisTask : d.tasks ? T.tasks(d.tasks) : T.idle;
+const enabled = () => state?.settings?.enabled !== false;
+let messageTimer = null;
+function message(text, error = false) {
+  $('message').textContent = text || ''; $('message').classList.toggle('error', !!error);
+  clearTimeout(messageTimer); if (text && !error) messageTimer = setTimeout(() => message(''), 4000);
 }
-function row(d, r) {
-  const working = busy === d.udid;
-  const enabled = state.settings?.enabled === true;
-  const nameNode = renaming === d.udid
-    ? h('form', { class: 'name', onsubmit: (e) => { e.preventDefault(); const v = e.target.elements.n.value.trim(); if (v && v !== d.name) act('rename', { udid: d.udid, name: v }, d.udid); else { renaming = null; render(); } } }, [
-        h('input', { name: 'n', value: d.name, maxlength: '64', 'aria-label': T.rename }),
-        h('button', { class: 'btn sm', type: 'submit', text: T.save }), h('button', { class: 'link', type: 'button', text: T.cancel, onclick: () => { renaming = null; render(); } })])
-    : h('div', { class: 'name' }, [h('span', { text: d.name }), h('button', { class: 'icon-btn', title: T.rename, 'aria-label': T.rename, html: GLYPH.pencil, disabled: !!busy, onclick: () => { renaming = d.udid; render(); } })]);
-  const actions = working ? [h('span', { class: 'spinner' })] : [
-    d.state === 'Booted'
-      ? h('button', { class: 'btn sm quiet', text: T.stop, disabled: !!busy, onclick: () => act('shutdown', { udid: d.udid }, d.udid) })
-      : h('button', { class: 'btn sm quiet', text: T.start, disabled: !!busy || !enabled || !r.available, onclick: () => act('boot', { udid: d.udid }, d.udid) }),
-    // Only when a task is in front and does not already use this device.
-    state.currentTask && !d.thisTask
-      ? h('button', { class: 'btn sm', text: T.open, disabled: !!busy || !enabled || !r.available, onclick: () => act('open_in_task', { udid: d.udid }, d.udid, T.opened) })
-      : null,
-  ].filter(Boolean);
-  return h('div', { class: 'device' }, [
-    h('span', { class: 'glyph', html: GLYPH[r.family] }),
-    h('div', { class: 'text' }, [nameNode, h('div', { class: 'meta' }, [h('span', { class: 'dot', 'data-tone': working ? 'busy' : r.tone }), h('span', { text: `${r.meta} · ${d.thisTask ? T.thisTask(d.tasks) : d.tasks ? T.tasks(d.tasks) : T.free}` })])]),
-    h('div', { class: 'actions' }, actions),
+function errorText(r) { return ({ BUSY: T.busy, TIMEOUT: T.timeout, PLUGIN_OFF: T.pluginOff, RUNTIME_DISABLED: T.pausedTitle })[r?.errorCode || r?.code] || T.failed; }
+function select(udid) { selected = udid; try { localStorage.setItem(SELECTED, udid || ''); } catch {} render(); }
+
+// ---- menus ----
+let openMenu = null;
+function closeMenu() { if (!openMenu) return; openMenu.menu.remove(); openMenu.scrim.remove(); openMenu.anchor?.setAttribute('aria-expanded', 'false'); openMenu = null; }
+function showMenu(anchor, items, at) {
+  closeMenu();
+  const menu = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean));
+  const scrim = h('div', { class: 'scrim', onclick: closeMenu, oncontextmenu: (e) => { e.preventDefault(); closeMenu(); } });
+  document.body.append(scrim, menu);
+  const r = at ? { left: at.x, right: at.x, bottom: at.y } : anchor.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight, mr = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, vw - mr.width - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(r.bottom + 6, vh - mr.height - 8)) + 'px';
+  anchor?.setAttribute('aria-expanded', 'true'); openMenu = { menu, scrim, anchor };
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+const item = (label, onclick, extra = {}) => h('button', { class: 'item', role: 'menuitem', ...extra, onclick: () => { closeMenu(); onclick(); } }, [h('span', { class: 'label', text: label })]);
+const sep = () => h('div', { class: 'sep' });
+
+function deviceMenu(d, anchor, at) {
+  const on = d.state === 'Booted';
+  showMenu(anchor, [
+    on ? item(T.stop, () => act('shutdown', d)) : item(T.start, () => act('boot', d), { disabled: !enabled() }),
+    state.currentTask && !d.thisTask ? item(T.open, () => act('open_in_task', d, T.opened), { disabled: !enabled() }) : null,
+    item(T.rename, () => { renaming = d.udid; render(); }),
+    sep(),
+    item(T.erase, () => confirmThen(d, 'erase')),
+    item(T.remove, () => confirmThen(d, 'delete'), { 'data-danger': true }),
+  ], at);
+}
+
+// ---- confirm sheet ----
+function confirmThen(d, kind) {
+  const title = kind === 'erase' ? T.eraseTitle(d.name) : T.deleteTitle(d.name);
+  const body = kind === 'erase' ? T.eraseBody : T.deleteBody + (d.tasks ? T.deleteTasks(d.tasks) : '');
+  const ok = h('button', { class: 'btn danger', type: 'button', text: kind === 'erase' ? T.eraseOk : T.deleteOk });
+  const cancel = h('button', { class: 'btn quiet', type: 'button', text: T.cancel });
+  const dialog = h('dialog', { class: 'sheet-dialog' }, [h('div', { class: 'sheet' }, [h('h2', { text: title }), h('p', { class: 'sheet-body', text: body }), h('div', { class: 'sheet-actions' }, [cancel, ok])])]);
+  document.body.append(dialog); dialog.showModal(); cancel.focus();
+  const close = () => { dialog.close(); dialog.remove(); };
+  cancel.addEventListener('click', close);
+  dialog.addEventListener('cancel', close);
+  ok.addEventListener('click', () => { close(); act(kind, d, kind === 'erase' ? T.erased : T.deleted); });
+}
+
+// ---- list ----
+function row(d) {
+  const isSelected = d.udid === selected, working = busy[d.udid];
+  const name = renaming === d.udid
+    ? h('form', { class: 'rename', onsubmit: (e) => { e.preventDefault(); const v = e.target.elements.n.value.trim(); if (v && v !== d.name) act('rename', d, null, { name: v }); renaming = null; render(); } }, [
+      h('input', { name: 'n', value: d.name, maxlength: '64', 'aria-label': T.rename, onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); renaming = null; render(); } }, onblur: (e) => { if (renaming === d.udid && e.target.isConnected) e.target.form.requestSubmit(); } })])
+    : h('span', { class: 'row-name', text: d.name });
+  const node = h('div', { class: 'row', role: 'option', 'aria-selected': String(isSelected), tabindex: '0', 'data-udid': d.udid,
+    onclick: (e) => { if (!e.target.closest('.row-more, form')) select(d.udid); },
+    onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === node) { e.preventDefault(); select(d.udid); } },
+    oncontextmenu: (e) => { e.preventDefault(); select(d.udid); deviceMenu(d, null, { x: e.clientX, y: e.clientY }); } }, [
+    h('span', { class: 'tile', 'data-on': String(d.state === 'Booted'), html: glyphFor(d) }),
+    h('span', { class: 'row-text' }, [name, h('span', { class: 'row-sub', text: working ? working : `${modelName(d)} · ${usage(d)}` })]),
+    h('span', { class: 'row-os', text: osVersion(d) }),
+    h('button', { class: 'icon-btn row-more', type: 'button', title: T.more, 'aria-label': T.more, html: GLYPH.more, onclick: (e) => { e.stopPropagation(); deviceMenu(d, e.currentTarget); } }),
   ]);
+  return node;
 }
+function renderList() {
+  const list = $('list'); list.replaceChildren();
+  const devices = (state?.devices || []).filter((d) => !query || `${d.name} ${modelName(d)} ${osVersion(d)}`.toLowerCase().includes(query));
+  if (!state) return;
+  if (!state.devices.length) return;
+  if (!devices.length) { list.append(h('p', { class: 'hub-none', text: T.none })); return; }
+  for (const [label, group] of [[T.running, devices.filter((d) => d.state !== 'Shutdown')], [T.off, devices.filter((d) => d.state === 'Shutdown')]]) {
+    if (!group.length) continue;
+    list.append(h('div', { class: 'hub-section', text: label }), ...group.map(row));
+  }
+  if (renaming) list.querySelector('.rename input')?.select();
+}
+
+// ---- detail ----
+async function showScreen(d) {
+  if (shown.udid === d.udid && shown.url) { $('screen').hidden = false; $('hero').hidden = true; return; }
+  shown = { udid: d.udid, url: null };
+  try {
+    const r = await rpc('viewer_url', { udid: d.udid }, T.timeout);
+    if (!r?.ok || !r.url || shown.udid !== d.udid) throw r;
+    const [base, hash = ''] = r.url.split('#');
+    shown.url = `${base}&embed=hub${hash ? '#' + hash : ''}`;
+    $('screen').src = shown.url; $('screen').hidden = false; $('hero').hidden = true;
+  } catch (error) { shown = { udid: null, url: null }; hero(d, errorText(error)); }
+}
+function hero(d, note) {
+  $('screen').hidden = true; $('hero').hidden = false;
+  if (shown.url) { $('screen').src = 'about:blank'; shown = { udid: null, url: null }; }
+  const big = (glyph) => h('div', { class: 'hero-glyph', html: glyph.replace(/width="20" height="20"/, 'width="56" height="56"').replace(/stroke-width="1.5"/, 'stroke-width="1"') });
+  let children;
+  if (!state) children = [h('div', { class: 'spinner' })];
+  else if (!state.devices.length) children = [big(GLYPH.iphone), h('h2', { text: T.emptyTitle }), h('p', { text: T.emptyBody }),
+    h('div', { class: 'hero-actions' }, [h('button', { class: 'btn cta', text: T.createIphone, disabled: !enabled(), onclick: () => newDevice('iphone') })])];
+  else if (!d) children = [big(GLYPH.iphone), h('h2', { text: T.pickTitle }), h('p', { text: T.pickBody })];
+  else {
+    const working = busy[d.udid];
+    children = [big(glyphFor(d)), h('h2', { text: d.state === 'Shutdown' ? T.offTitle(d.name) : d.name }),
+      h('p', { class: 'hero-meta', text: `${modelName(d)} · iOS ${osVersion(d)} · ${usage(d)}` }),
+      h('p', { text: !enabled() ? T.pausedBody : T.offBody }),
+      h('div', { class: 'hero-actions' }, working ? [h('span', { class: 'spinner' }), h('span', { class: 'hero-working', text: working })] : [
+        h('button', { class: 'btn cta', text: T.start, disabled: !enabled(), onclick: () => act('boot', d) }),
+        h('button', { class: 'icon-btn hero-more', type: 'button', title: T.more, 'aria-label': T.more, html: GLYPH.more, onclick: (e) => deviceMenu(d, e.currentTarget) })])];
+  }
+  if (note) children.push(h('p', { class: 'status error', text: note }));
+  $('hero').replaceChildren(h('div', { class: 'hero' }, children));
+}
+function renderDetail() {
+  const devices = state?.devices || [];
+  if (!devices.some((d) => d.udid === selected)) selected = devices.find((d) => d.state === 'Booted')?.udid || devices[0]?.udid || null;
+  const d = devices.find((x) => x.udid === selected);
+  if (d && d.state === 'Booted' && !busy[d.udid] && enabled()) showScreen(d); else hero(d);
+}
+
 function render() {
   $('title').textContent = T.title;
-  const devices = state?.devices || [];
-  const on = devices.filter((d) => d.state === 'Booted').length;
-  $('sub').textContent = state ? `${T.sub} · ${on ? T.running(on) : T.none}` : T.sub;
-  $('create').textContent = busy === 'create' ? T.creating : T.create;
-  $('create').disabled = !!busy || !state || state.settings?.enabled === false;
-  $('create').hidden = !devices.length;
-  $('notice').hidden = !(state && state.settings?.enabled === false); $('notice').textContent = T.paused;
+  $('notice').hidden = !(state && !enabled()); $('notice').textContent = T.paused;
   $('foot').textContent = state ? T.foot(state.settings?.idleMinutes || 0) : '';
-  const list = $('list'); list.replaceChildren();
-  if (!state) return;
-  if (!devices.length) {
-    list.append(h('div', { class: 'card' }, [h('div', { class: 'empty' }, [h('div', { class: 'glyph', html: GLYPH.big }), h('h4', { text: T.emptyTitle }), h('p', { text: T.emptyBody }),
-      h('button', { class: 'btn cta', text: busy === 'create' ? T.creating : T.createFirst, disabled: !!busy || state.settings?.enabled === false, onclick: createDevice })])]));
-    return;
-  }
-  const rows = M.deviceRows(devices, null, lang);
-  list.append(h('div', { class: 'card' }, rows.map((r) => row(devices.find((d) => d.udid === r.udid), r))));
+  $('search-box').hidden = !(state?.devices?.length > 6);
+  renderList(); renderDetail();
 }
+
+// ---- data & actions ----
 async function refresh() {
-  try { const r = await rpc('manage_state', {}, T.timeout); if (!r.ok) throw r; state = r; }
+  try { const r = await rpc('manage_state', {}, T.timeout); if (!r.ok) throw r; state = r; if ($('message').classList.contains('error')) message(''); }
   catch (error) { if (!state) message(error?.code ? errorText(error) : T.readFailed, true); }
   render();
 }
-async function act(action, params, marker, done) {
-  if (busy) return;
-  busy = marker; message(''); render();
-  try { const r = await rpc(action, params, T.timeout); if (!r.ok) throw r; renaming = null; if (done) message(done); }
-  catch (error) { message(errorText(error), true); }
-  finally { busy = null; await refresh(); }
-}
-async function createDevice() {
-  if (busy) return;
-  busy = 'create'; message(''); render();
+async function act(action, d, done, extra = {}) {
+  if (busy[d.udid]) return;
+  busy[d.udid] = action === 'boot' ? T.starting : action === 'shutdown' ? T.stopping : '…';
+  message(''); render();
   try {
-    const catalog = await rpc('catalog', {}, T.timeout);
-    const choice = catalog.ok ? M.defaultChoice(catalog) : null;
-    if (!choice) throw { text: T.needXcode };
-    const r = await rpc('create', { name: choice.name, deviceType: choice.deviceType, runtime: choice.runtime }, T.timeout);
-    if (!r.ok) throw r;
-  } catch (error) { message(error?.text || errorText(error), true); }
-  finally { busy = null; await refresh(); }
+    const r = await rpc(action, { udid: d.udid, ...extra }, T.timeout);
+    if (r?.ok === false) throw r;
+    if (done) message(done);
+    if (action === 'delete' && selected === d.udid) selected = null;
+  } catch (error) { message(errorText(error), true); }
+  finally { delete busy[d.udid]; if (action === 'shutdown' || action === 'delete' || action === 'erase') shown = shown.udid === d.udid ? { udid: null, url: null } : shown; await refresh(); }
 }
+async function newDevice(family) {
+  const made = await createDevice({ family, lang });
+  if (!made) return;
+  message(T.created(made.name));
+  if (made.udid) selected = made.udid;
+  await refresh();
+  $('list').querySelector(`[data-udid="${made.udid}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
 (async () => {
   lang = await locale(); T = TEXT[lang] || TEXT.en; document.documentElement.lang = lang;
-  $('create').addEventListener('click', createDevice);
+  $('add').innerHTML = GLYPH.plus; $('add').title = T.add; $('add').setAttribute('aria-label', T.add);
+  $('search-glyph').innerHTML = GLYPH.search; $('search').placeholder = T.search;
+  $('search').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); renderList(); });
+  $('add').addEventListener('click', () => showMenu($('add'), [item(T.newIphone, () => newDevice('iphone'), { disabled: !enabled() }), item(T.newIpad, () => newDevice('ipad'), { disabled: !enabled() })]));
   render(); await refresh();
-  setInterval(() => { if (!document.hidden && !busy && !renaming) refresh(); }, 5000);
+  catalog().then((c) => { for (const t of c.deviceTypes || []) models.set(t.identifier, t.name); render(); }).catch(() => {});
+  setInterval(() => { if (!document.hidden && !openMenu && !renaming && !Object.keys(busy).length && !document.querySelector('dialog[open]')) refresh(); }, 4000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  window.addEventListener('focus', () => { if (!busy && !renaming) refresh(); });
 })();

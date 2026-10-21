@@ -39,6 +39,14 @@ function createTaskBindings(file){
     await write(next);return true;
    });
   },
+  // A deleted device: tasks that used it go back to "no device yet".
+  forgetDevice(udid){
+   return serial(async()=>{
+    const current=await read(),next={...current};let changed=false;
+    for(const [session,b] of Object.entries(current))if(b?.udid?.toLowerCase()===String(udid).toLowerCase()){delete next[session];changed=true;}
+    if(changed)await write(next);return changed;
+   });
+  },
   async counts(){const out={};for(const b of Object.values(await read()))if(b&&UDID.test(b.udid))out[b.udid]=(out[b.udid]||0)+1;return out;},
  };
 }

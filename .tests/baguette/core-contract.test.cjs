@@ -95,3 +95,29 @@ test('create rejects a runtime/model mismatch before mutation even when version 
  const missing=core('');await assert.rejects(missing.dispatch('create_device',{name:'Phone',runtime,deviceType}),e=>e.code==='RUNTIME_UNAVAILABLE');assert.equal(missing.mutations(),0);
  const supported=core('',Infinity,'27.0',[{identifier:runtime,isAvailable:true,supportedDeviceTypes:[{identifier:deviceType}]}]);assert.equal((await supported.dispatch('create_device',{name:'Phone',runtime,deviceType})).execution,'executed');assert.equal(supported.mutations(),1);
 });
+
+test('device management: unique names, delete and erase stop the device first, reveal only known screenshots',async()=>{
+ // Real case: three "iPhone 11" devices in a row; no way to delete one.
+ const {uniqueName}=require(path.join(dir,'core.cjs'));
+ assert.equal(uniqueName('iPhone 18 Pro',['iPad']),'iPhone 18 Pro');
+ assert.equal(uniqueName('iPhone 18 Pro',['iphone 18 pro','iPhone 18 Pro 2']),'iPhone 18 Pro 3');
+ for(const method of ['delete_device','erase_device']){
+  const calls=[];
+  const context={module:{exports:{}},__dirname:dir,process:{platform:'darwin',arch:'arm64'},require(name){
+   if(name==='./viewer.cjs')return {};
+   if(name==='node:fs/promises')return {mkdir:async()=>{}};
+   if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push([file.split('/').pop(),...args]);let data='';
+    if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted',name:'Phone'}]}});
+    queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
+   return require(name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const r=await context.module.exports.dispatch(method,{udid});
+  assert.equal(r.execution,'executed');
+  const shutdown=calls.findIndex(c=>c[0]==='Baguette'&&c[1]==='shutdown'),remove=calls.findIndex(c=>c.includes(method==='delete_device'?'delete':'erase'));
+  assert.ok(shutdown>=0&&remove>shutdown,'stopped before '+method);
+  assert.deepEqual(calls[remove].slice(1,3),['simctl','--set']);assert.equal(calls[remove].at(-1),udid);
+  await assert.rejects(context.module.exports.dispatch('reveal_screenshot',{path:'/etc/passwd'}),e=>e.code==='INVALID_ARGUMENT');
+  assert.ok(!calls.some(c=>c[0]==='open'));
+ }
+});

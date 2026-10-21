@@ -50,5 +50,80 @@
     pause: '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M10 15V9"/><path d="M14 15V9"/></svg>',
     pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>',
   };
-  root.CindySimPages = { rpc, h, locale, GLYPH, onPush: (fn) => listeners.add(fn) };
+  GLYPH.fold = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 4.5 12 3l9 1.5v15L12 21l-9-1.5z"/><path d="M12 3v18"/></svg>';
+  GLYPH.plus = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
+  GLYPH.more = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
+  GLYPH.search = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+
+  // ---- New device sheet (management view and task page) ----
+  // Name · OS Version · Model, like Simulator's: models follow the OS chosen,
+  // and the name follows the model until edited.
+  const SHEET = {
+    en: { iphone: 'New iPhone', ipad: 'New iPad', name: 'Name', os: 'OS Version', model: 'Model', create: 'Create', cancel: 'Cancel', creating: 'Creating…',
+      loading: 'Loading models…', none: 'No iOS runtime installed. Install one in Xcode first.', failed: 'Not created. Check Xcode and try again.' },
+    'zh-CN': { iphone: '新建 iPhone', ipad: '新建 iPad', name: '名称', os: '系统版本', model: '机型', create: '创建', cancel: '取消', creating: '正在创建…',
+      loading: '正在读取机型…', none: '没有可用的 iOS 运行时，请先在 Xcode 中安装。', failed: '没有创建成功，请检查 Xcode 后重试。' },
+  };
+  let catalogCache = null;
+  async function catalog() { if (!catalogCache) { const c = await rpc('catalog', {}); if (!c?.ok) throw c; catalogCache = c; } return catalogCache; }
+  const isPad = (name) => /iPad/i.test(name);
+  function createDevice({ family = 'iphone', lang = 'en' } = {}) {
+    const T = SHEET[lang] || SHEET.en, M = root.CindySimModel;
+    return new Promise((resolve) => {
+      const nameInput = h('input', { maxlength: '64', autocomplete: 'off', spellcheck: 'false' });
+      const osSelect = h('select'), modelSelect = h('select');
+      const error = h('p', { class: 'sheet-error', role: 'alert' });
+      const create = h('button', { class: 'btn cta', type: 'submit', text: T.create, disabled: true });
+      const cancel = h('button', { class: 'btn quiet', type: 'button', text: T.cancel });
+      const row = (label, control) => h('label', { class: 'sheet-row' }, [h('span', { text: label }), control]);
+      const form = h('form', { class: 'sheet', method: 'dialog' }, [
+        h('h2', { text: T[family] || T.iphone }),
+        h('div', { class: 'sheet-group' }, [row(T.name, nameInput), row(T.os, osSelect), row(T.model, modelSelect)]),
+        error, h('div', { class: 'sheet-actions' }, [cancel, create])]);
+      const dialog = h('dialog', { class: 'sheet-dialog' }, [form]);
+      document.body.append(dialog); dialog.showModal();
+      let cat = null, edited = false, done = false;
+      const finish = (value) => { if (done) return; done = true; dialog.close(); dialog.remove(); resolve(value); };
+      cancel.addEventListener('click', () => finish(null));
+      dialog.addEventListener('cancel', (e) => { e.preventDefault(); finish(null); });
+      nameInput.addEventListener('input', () => { edited = true; });
+      const models = () => (cat?.deviceTypes || []).filter((d) => (family === 'ipad') === isPad(d.name));
+      function fillModels(keep) {
+        const runtime = cat.runtimes.find((r) => r.identifier === osSelect.value);
+        const usable = models().filter((d) => !runtime?.supportedDeviceTypes || runtime.supportedDeviceTypes.includes(d.identifier));
+        const best = M.defaultChoice({ deviceTypes: usable, runtimes: runtime ? [runtime] : [] });
+        modelSelect.replaceChildren(...usable.map((d) => h('option', { value: d.identifier, text: d.name })));
+        modelSelect.value = usable.some((d) => d.identifier === keep) ? keep : (best?.deviceType || usable[0]?.identifier || '');
+        syncName(); create.disabled = !modelSelect.value;
+      }
+      function syncName() { if (!edited) nameInput.value = modelSelect.selectedOptions[0]?.textContent || ''; }
+      osSelect.addEventListener('change', () => fillModels(modelSelect.value));
+      modelSelect.addEventListener('change', syncName);
+      error.textContent = T.loading;
+      catalog().then((c) => {
+        cat = c;
+        const runtimes = c.runtimes.filter((r) => models().some((d) => !r.supportedDeviceTypes || r.supportedDeviceTypes.includes(d.identifier)))
+          .sort((a, b) => String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
+        if (!runtimes.length) { error.textContent = T.none; return; }
+        error.textContent = '';
+        osSelect.replaceChildren(...runtimes.map((r) => h('option', { value: r.identifier, text: r.name })));
+        const best = M.defaultChoice({ deviceTypes: models(), runtimes });
+        osSelect.value = best?.runtime || runtimes[0].identifier;
+        fillModels(best?.deviceType);
+        nameInput.focus(); nameInput.select();
+      }).catch(() => { error.textContent = T.failed; });
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const name = nameInput.value.trim(); if (!name || !modelSelect.value) return;
+        create.disabled = true; create.textContent = T.creating; error.textContent = '';
+        try {
+          const r = await rpc('create', { name, deviceType: modelSelect.value, runtime: osSelect.value });
+          if (!r?.ok) throw r;
+          finish({ udid: r.udid, name: r.name || name });
+        } catch { error.textContent = T.failed; create.disabled = false; create.textContent = T.create; }
+      });
+    });
+  }
+
+  root.CindySimPages = { rpc, h, locale, GLYPH, createDevice, catalog, onPush: (fn) => listeners.add(fn) };
 })(globalThis);

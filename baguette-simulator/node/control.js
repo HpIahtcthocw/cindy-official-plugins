@@ -9,11 +9,18 @@
   let udid = params.get('udid');
   const token = new URLSearchParams(location.hash.slice(1)).get('cindyClipboard')?.split('.')[1];
   const $ = (id) => document.getElementById(id);
-  const screen = $('screen'), stage = $('stage'), frame = $('frame'), overlay = $('overlay'), dock = $('dock');
+  const screen = $('screen'), stage = $('stage'), scroll = $('scroll'), frame = $('frame'), overlay = $('overlay'), dock = $('dock');
 
   // Page state. `status` is the last successful status response; flags are page-local.
-  const state = { status: null, lost: false, generation: null, zoom: 1, fullToolbar: false,
-    recovering: false, stopping: false, switching: false, phase: null, handledJob: null, lastTouch: 0, screenWidth: 0 };
+  const state = { status: null, lost: false, generation: null, zoom: { mode: 'fit' }, fitPct: 0, fullToolbar: false,
+    recovering: false, stopping: false, switching: false, phase: null, handledJob: null, lastTouch: 0, screenWidth: 0,
+    pose: null, viewport: null };
+  // Inside the management view the device list names the device; show a title instead of the switcher.
+  const hub = params.get('embed') === 'hub';
+  const store = { get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} } };
+  const orientKey = () => `cindy.orientation.${udid}`, zoomKey = () => `cindy.zoom.${udid}`;
+  state.zoom = store.get(zoomKey())?.mode === 'pct' ? store.get(zoomKey()) : { mode: 'fit' };
 
   const ICON = {
     phone: '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2.5"/><path d="M12 18h.01"/></svg>',
@@ -71,13 +78,61 @@
     state.generation = state.status?.generation ?? state.generation;
     // The capability travels in the frame URL: Cindy's panel is not an HTTP
     // origin, so this frame can hold no cookie.
-    screen.src = `/simulators/${encodeURIComponent(udid)}?${state.fullToolbar ? 'handheld=0&cindyFull=1' : 'handheld=1'}${token ? `&cindyViewer=${encodeURIComponent(token)}` : ''}${location.hash}`;
+    // The device with its bezel, like Simulator; the orientation it last showed survives reloads.
+    const orientation = store.get(orientKey());
+    screen.src = `/simulators/${encodeURIComponent(udid)}?handheld=0${state.fullToolbar ? '&cindyFull=1' : ''}${orientation ? `&cindyOrientation=${encodeURIComponent(orientation)}` : ''}${token ? `&cindyViewer=${encodeURIComponent(token)}` : ''}${location.hash}`;
+    state.viewport = null; state.fitPct = 0; state.pose = null;
   }
   function blank() { state.generation = null; screen.src = 'about:blank'; }
+  // ---- zoom ----
+  // The device page fits the device into its frame; zoom resizes that frame.
+  // Percentages are of actual size (one device point per CSS pixel).
   function applyZoom() {
     const { width, height } = stage.getBoundingClientRect();
-    frame.style.width = Math.round(width * state.zoom) + 'px';
-    frame.style.height = Math.round(height * state.zoom) + 'px';
+    const factor = M.zoomFactor(state.zoom, state.fitPct);
+    // Keep the point at the centre of the view in place while the frame grows or shrinks.
+    const cx = scroll.scrollWidth > scroll.clientWidth ? (scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth : 0.5;
+    const cy = scroll.scrollHeight > scroll.clientHeight ? (scroll.scrollTop + scroll.clientHeight / 2) / scroll.scrollHeight : 0.5;
+    frame.style.width = Math.round(width * factor) + 'px';
+    frame.style.height = Math.round(height * factor) + 'px';
+    if (factor > 1.001) stage.setAttribute('data-zoomed', ''); else stage.removeAttribute('data-zoomed');
+    scroll.scrollLeft = cx * scroll.scrollWidth - scroll.clientWidth / 2;
+    scroll.scrollTop = cy * scroll.scrollHeight - scroll.clientHeight / 2;
+    renderZoom();
+  }
+  async function viewport() {
+    if (state.viewport) return state.viewport;
+    try {
+      const w = screen.contentWindow;
+      const def = await (await w.fetch(`/simulators/${encodeURIComponent(udid)}/definition.json`)).json();
+      const v = def?.screen?.viewport;
+      if (v?.width > 0 && v?.height > 0) state.viewport = { width: v.width, height: v.height };
+    } catch {}
+    return state.viewport;
+  }
+  // What the fitted device measures, in percent of actual size. The 3D stage
+  // (foldables) has no fixed size, so its zoom is relative to fit.
+  async function measure() {
+    let doc; try { doc = screen.contentDocument; } catch { return; }
+    const device = doc?.getElementById('nativeDeviceFrame');
+    const v = await viewport();
+    const rect = device?.getBoundingClientRect();
+    if (!v || !rect?.width || doc.getElementById('simNativeView')?.getAttribute('data-render3d') === 'open') { state.fitPct = 0; renderZoom(); return; }
+    const shown = Math.max(rect.width, rect.height) / Math.max(v.width, v.height) * 100;
+    state.fitPct = shown / M.zoomFactor(state.zoom, state.fitPct || shown);
+    renderZoom();
+  }
+  function setZoom(zoom) {
+    state.zoom = zoom; store.set(zoomKey(), zoom);
+    applyZoom(); setTimeout(measure, 350);
+  }
+  const zoomBy = (direction) => setZoom({ mode: 'pct', pct: M.zoomStep(M.zoomPct(state.zoom, state.fitPct), direction) });
+  function renderZoom() {
+    const pct = M.zoomPct(state.zoom, state.fitPct);
+    $('zoom-label').textContent = state.zoom.mode === 'fit' ? t.zoomFitShort : `${pct}%`;
+    $('zoom-label').title = state.zoom.mode === 'fit' && state.fitPct ? `${t.zoomFit} · ${pct}%` : t.zoom;
+    $('zoom-out').disabled = pct <= M.ZOOM_STEPS[0];
+    $('zoom-in').disabled = pct >= M.ZOOM_STEPS.at(-1);
   }
   function decorate() {
     let doc; try { doc = screen.contentDocument; } catch { return; }
@@ -101,24 +156,34 @@
     try {
       const doc = screen.contentDocument;
       for (const name of ['pointerdown', 'keydown', 'wheel']) doc?.addEventListener(name, activity, { passive: true, capture: true });
-      doc?.defaultView?.addEventListener('resize', () => setTimeout(decorate, 50));
+      // Before the device page forwards keys to the simulator.
+      doc?.defaultView?.addEventListener('keydown', shortcut, true);
+      doc?.defaultView?.addEventListener('resize', () => { setTimeout(decorate, 50); setTimeout(measure, 120); });
     } catch {}
-    setTimeout(decorate, 300); setTimeout(decorate, 1500);
+    setTimeout(decorate, 300); setTimeout(decorate, 1500); setTimeout(measure, 800); setTimeout(measure, 2500);
   });
   const native = (name, ...args) => { try { const fn = screen.contentWindow?.[name]; if (typeof fn === 'function') { fn(...args); return true; } } catch {} return false; };
 
   // ---- rendering ----
+  const live = () => { const s = state.lost ? null : state.status; return !!s?.ready && s.device?.state === 'Booted' && !state.switching && !state.recovering && !state.stopping; };
+  const label = (node, text, keys) => { node.title = keys ? `${text}  ${keys}` : text; node.setAttribute('aria-label', text); };
   function renderBar() {
     const s = state.lost ? null : state.status;
     const p = M.presence(s, state);
-    $('chip-dot').dataset.tone = p.tone;
-    $('chip-name').textContent = s?.device?.name || state.status?.device?.name || '…';
+    const device = s?.device || state.status?.device;
+    $('device-chip').hidden = hub; $('title').hidden = !hub;
+    $('chip-dot').dataset.tone = $('title-dot').dataset.tone = p.tone;
+    $('chip-name').textContent = $('title-name').textContent = device?.name || '…';
+    $('title-sub').textContent = [M.runtimeLabel(device?.runtime), t[p.key]].filter(Boolean).join(' · ');
     $('status').textContent = t[p.key];
-    const live = !!s?.ready && s.device?.state === 'Booted' && !state.switching && !state.recovering && !state.stopping;
-    for (const id of ['btn-home', 'btn-rotate', 'btn-shot']) $(id).disabled = !live;
-    $('btn-home').title = $('btn-home').ariaLabel = t.home; $('btn-rotate').title = $('btn-rotate').ariaLabel = t.rotate;
-    $('btn-shot').title = $('btn-shot').ariaLabel = t.screenshot; $('btn-more').title = $('btn-more').ariaLabel = t.more;
+    const on = live();
+    $('tools').hidden = !on;
+    for (const id of ['btn-home', 'btn-shot', 'btn-rotl', 'btn-rotr']) $(id).disabled = !on;
+    label($('btn-home'), t.home, '⇧⌘H'); label($('btn-shot'), t.screenshot, '⌘S');
+    label($('btn-rotl'), t.rotateLeft, '⌘←'); label($('btn-rotr'), t.rotateRight, '⌘→');
+    label($('zoom-out'), t.zoomOut, '⌘−'); label($('zoom-in'), t.zoomIn, '⌘+'); label($('btn-more'), t.more);
     $('device-chip').title = t.devices;
+    renderPosture();
   }
   function renderOverlay() {
     const s = state.lost ? null : state.status;
@@ -144,10 +209,11 @@
     } else overlay.append(busy(t[o.kind] || t.connecting));
   }
   let toastTimer = null;
-  function toast(text, tone = 'info') {
+  function toast(text, tone = 'info', action) {
     dock.querySelector?.('.toast')?.remove?.();
-    const node = h('div', { class: 'toast', 'data-tone': tone, role: 'status' }, [h('span', { class: 'ico', html: ICON[tone] || ICON.info }), h('span', { text })]);
-    dock.append(node); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.remove(), 4000);
+    const node = h('div', { class: 'toast', 'data-tone': tone, role: 'status' }, [h('span', { class: 'ico', html: ICON[tone] || ICON.info }), h('span', { text }),
+      action && h('button', { class: 'toast-action', text: action.label, onclick: () => { node.remove(); action.run(); } })]);
+    dock.append(node); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.remove(), action ? 8000 : 4000);
   }
   function renderIdle() {
     const left = M.idleLeft(state.lost ? null : state.status, Date.now());
@@ -235,14 +301,85 @@
     try { await api('release'); toast(t.released, 'ok'); } catch { toast(t.actionFailed, 'error'); }
   }
   async function screenshot() {
-    $('btn-shot').disabled = true;
-    try { const r = await api('screenshot'); toast(`${t.shotSaved} · ${(r.path || '').split('/').pop()}`, 'ok'); }
+    if (!live() || $('btn-shot').dataset.busy) return;
+    $('btn-shot').dataset.busy = '1'; $('btn-shot').disabled = true;
+    flash();
+    try { const r = await api('screenshot'); toast(t.shotDesktop, 'ok', r.path && { label: t.reveal, run: () => api('reveal', { path: r.path }).catch(() => {}) }); }
     catch { toast(t.shotFailed, 'error'); }
-    finally { renderBar(); }
+    finally { delete $('btn-shot').dataset.busy; renderBar(); }
   }
-  $('btn-home').addEventListener('click', () => { if (native('__nativeHome')) activity({ isTrusted: true }); });
-  $('btn-rotate').addEventListener('click', () => { if (native('__nativeRotate')) activity({ isTrusted: true }); });
+  // A brief shutter flash over the device, as Simulator does.
+  function flash() {
+    const node = h('div', { class: 'flash' }); stage.append(node); setTimeout(() => node.remove(), 450);
+  }
+  function home() { if (live() && native('__nativeHome')) activity({ isTrusted: true }); }
+  function rotate(step) {
+    if (!live()) return;
+    const fn = screen.contentWindow?.__nativeRotateBy ? '__nativeRotateBy' : '__nativeRotate';
+    if (!native(fn, step)) return;
+    activity({ isTrusted: true });
+    // Remember what the device shows so a reload keeps it.
+    setTimeout(() => { try { const o = screen.contentWindow.__nativeOrientation?.(); if (o) store.set(orientKey(), o); } catch {} measure(); }, 450);
+  }
+  $('btn-home').addEventListener('click', home);
+  $('btn-rotl').addEventListener('click', () => rotate(-1));
+  $('btn-rotr').addEventListener('click', () => rotate(1));
   $('btn-shot').addEventListener('click', screenshot);
+  $('zoom-out').addEventListener('click', () => zoomBy(-1));
+  $('zoom-in').addEventListener('click', () => zoomBy(1));
+  $('zoom-label').addEventListener('click', () => {
+    const pct = M.zoomPct(state.zoom, state.fitPct);
+    const choice = (text, zoom, checked, keys) => h('button', { class: 'item', role: 'menuitemradio', 'aria-checked': String(checked), onclick: () => { closeMenu(); setZoom(zoom); } },
+      [h('span', { class: 'label', text }), keys ? h('span', { class: 'keys', text: keys }) : h('span', { html: checked ? ICON.check : '' })]);
+    showMenu($('zoom-label'), [
+      choice(t.zoomFit, { mode: 'fit' }, state.zoom.mode === 'fit', '⌘0'),
+      state.fitPct ? choice(t.zoomActual, { mode: 'pct', pct: 100 }, state.zoom.mode === 'pct' && pct === 100, '⌘1') : null,
+      h('div', { class: 'sep' }),
+      ...[50, 75, 100, 150, 200].map((p) => choice(`${p}%`, { mode: 'pct', pct: p }, state.zoom.mode === 'pct' && pct === p)),
+    ]);
+  });
+
+  // ---- keyboard shortcuts (Simulator's) ----
+  function shortcut(event) {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    const k = event.key, action =
+      (k === '=' || k === '+') ? () => zoomBy(1) : k === '-' ? () => zoomBy(-1) : k === '0' ? () => setZoom({ mode: 'fit' })
+        : (k === '1' && state.fitPct) ? () => setZoom({ mode: 'pct', pct: 100 })
+          : k === 'ArrowLeft' ? () => rotate(-1) : k === 'ArrowRight' ? () => rotate(1)
+            : (event.shiftKey && (k === 'h' || k === 'H')) ? home : (!event.shiftKey && (k === 's' || k === 'S')) ? screenshot : null;
+    if (!action) return;
+    event.preventDefault(); event.stopImmediatePropagation(); action();
+  }
+  document.addEventListener('keydown', shortcut, true);
+  // Pinch or Ctrl+scroll over the stage (outside the device) zooms; on the device it stays a gesture.
+  stage.addEventListener('wheel', (event) => {
+    if (!event.ctrlKey || ![stage, scroll, frame].includes(event.target)) return;
+    event.preventDefault();
+    if (Math.abs(event.deltaY) < 2) return;
+    const now = Date.now(); if (now - (stage.lastPinch || 0) < 120) return; stage.lastPinch = now;
+    zoomBy(event.deltaY < 0 ? 1 : -1);
+  }, { passive: false });
+
+  // ---- foldable posture ----
+  // viewer-stage.js exposes the 3D stage's hinge (window.__cindyPose); the
+  // device page's own picker is hidden in favour of this one.
+  const POSES = { shut: 0, open: 130, flat: 180 };
+  function renderPosture() {
+    let pose = null; try { pose = screen.contentWindow?.__cindyPose?.get?.() ?? null; } catch {}
+    const show = live() && pose !== null;
+    $('posture').hidden = !show;
+    if (!show) return;
+    const nearest = Object.entries(POSES).reduce((a, b) => Math.abs(b[1] - pose) < Math.abs(a[1] - pose) ? b : a)[0];
+    for (const node of $('posture').querySelectorAll('[data-pose]')) {
+      node.setAttribute('aria-checked', String(node.dataset.pose === nearest));
+      label(node, t.pose[node.dataset.pose]);
+    }
+  }
+  $('posture').addEventListener('click', (event) => {
+    const node = event.target.closest('[data-pose]'); if (!node || !live()) return;
+    try { screen.contentWindow.__cindyPose.set(POSES[node.dataset.pose]); activity({ isTrusted: true }); } catch {}
+    for (const n of $('posture').querySelectorAll('[data-pose]')) n.setAttribute('aria-checked', String(n === node));
+  });
 
   // ---- menus ----
   let openMenu = null;
@@ -262,18 +399,14 @@
     h('span', { html: icon }), h('span', { class: 'label', text: label })]);
 
   $('btn-more').addEventListener('click', () => {
-    const live = !$('btn-home').disabled;
-    const zoomGroup = h('div', { class: 'group', role: 'radiogroup', 'aria-label': t.zoom },
-      [[1, t.zoomFit], [1.25, '125%'], [1.5, '150%'], [2, '200%']].map(([z, label]) => h('button', { class: 'seg', role: 'radio', 'aria-checked': String(state.zoom === z), text: label,
-        onclick: () => { state.zoom = z; applyZoom(); closeMenu(); } })));
+    const on = live();
     showMenu($('btn-more'), [
-      item(ICON.shake, t.shake, () => native('__nativeShake'), { disabled: !live }),
-      item(ICON.grid, t.appSwitcher, () => native('__nativeAppSwitcher'), { disabled: !live }),
-      h('div', { class: 'sep' }), h('div', { class: 'head', text: t.zoom }), zoomGroup,
+      item(ICON.shake, t.shake, () => native('__nativeShake'), { disabled: !on }),
+      item(ICON.grid, t.appSwitcher, () => native('__nativeAppSwitcher'), { disabled: !on }),
+      item(ICON.key, t.releaseKeys, release, { disabled: !on }),
       h('div', { class: 'sep' }),
-      item(ICON.bar, t.fullToolbar, () => { state.fullToolbar = !state.fullToolbar; load(); }, { role: 'menuitemcheckbox', 'aria-checked': String(state.fullToolbar) }),
-      item(ICON.key, t.releaseKeys, release, { disabled: !live }),
       item(ICON.refresh, t.recover, recover, { disabled: state.recovering || state.switching }),
+      item(ICON.bar, t.advanced, () => { state.fullToolbar = !state.fullToolbar; load(); }, { role: 'menuitemcheckbox', 'aria-checked': String(state.fullToolbar) }),
       h('div', { class: 'sep' }),
       item(ICON.power, t.shutdown, confirmShutdown, { 'data-danger': true, disabled: !state.status || state.status.device?.state !== 'Booted' || state.switching }),
     ]);
@@ -353,11 +486,12 @@
   });
 
   // ---- boot ----
-  if (typeof ResizeObserver === 'function') new ResizeObserver(applyZoom).observe(stage);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => { applyZoom(); clearTimeout(stage.remeasure); stage.remeasure = setTimeout(measure, 200); }).observe(stage);
   applyZoom();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
   render(); check();
   setInterval(check, 3000);
   setInterval(renderIdle, 1000);
-  globalThis.cindySim = { state, check, api, recover, boot, native, applyZoom, decorate };
+  setInterval(renderPosture, 700);
+  globalThis.cindySim = { state, check, api, recover, boot, native, applyZoom, decorate, setZoom, rotate, measure };
 })();

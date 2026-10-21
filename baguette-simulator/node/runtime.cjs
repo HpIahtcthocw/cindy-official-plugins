@@ -149,6 +149,13 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
         return {...result, devices: await annotate(result.devices, sessionOf(params))};
       }
       if (method === 'environment') return dispatch(method, params);
+      // Managing devices never starts one, so it works while simulators are paused.
+      if (method === 'reveal_screenshot') return dispatch(method, params);
+      if (method === 'delete_device' || method === 'erase_device') {
+        const result = await dispatch(method, params);
+        if (method === 'delete_device' && tasks) await tasks.forgetDevice(params.udid).catch(() => {});
+        return {...result, devices: (await status()).devices};
+      }
       const settings = await load();
       if (method === 'settings_save') {
         if (typeof params.enabled !== 'boolean' || ![0,15,30,60].includes(params.idleMinutes)) throw failure('INVALID_ARGUMENT', 'Invalid runtime settings. Refresh this page.');

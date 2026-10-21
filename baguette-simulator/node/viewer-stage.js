@@ -5,8 +5,14 @@
 //   frame can attach before Cindy's light/dark mode reaches it, so the stage
 //   would keep the wrong backdrop; re-send the page background on mode changes.
 // - Streams are throttled while the page is hidden (see below).
+// - window.__cindyPose lets the controller read and set a foldable's hinge.
 (function () {
   const panels = new Set();
+  let posed = null, hinge = null;
+  window.__cindyPose = {
+    get: () => (posed && panels.has(posed) ? hinge : null),
+    set: (degrees) => { if (posed && panels.has(posed)) posed.send({ type: 'set_pose', hingeDegrees: Number(degrees) }); },
+  };
   function background() {
     const root = document.getElementById('simNativeView');
     const value = root ? getComputedStyle(root).getPropertyValue('--nv-page-bg').trim() : '';
@@ -29,6 +35,16 @@
       Promise.resolve(result).then(sync, () => {});
       return result;
     };
+    // The controller draws the foldable posture switch: remember the hinge the
+    // stage reports and let it set one (window.__cindyPose).
+    const place = Panel.prototype.placePosePicker;
+    if (typeof place === 'function') {
+      Panel.prototype.placePosePicker = function (pose) {
+        posed = this;
+        if (pose && Number.isFinite(Number(pose.hingeDegrees))) hinge = Number(pose.hingeDegrees);
+        return place.call(this, pose);
+      };
+    }
     if (typeof detach === 'function') {
       Panel.prototype.detach = function (...args) {
         panels.delete(this);

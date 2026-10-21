@@ -143,7 +143,7 @@
   // the container so non-rotation CSS (max-height caps in
   // landscape) and the input/overlay coord transforms can read
   // `currentOrientation`.
-  function applyOrientation(value) {
+  function applyOrientation(value, step = 1) {
     const previous = currentOrientation;
     currentOrientation = value;
     const root = document.getElementById('nativeDeviceFrame');
@@ -156,13 +156,45 @@
       // after format swap), keep the existing degrees so the
       // bezel doesn't re-animate.
       if (value !== previous) {
-        rotationDegrees += 90;
+        rotationDegrees += 90 * step;
       }
       for (const wrapper of root.querySelectorAll(':scope > div')) {
         wrapper.style.transform = 'rotate(' + rotationDegrees + 'deg)';
       }
     }
     layoutHandheld();
+    fitRotatedFrame();
+  }
+
+  // Cindy: a CSS rotation does not move layout, so in landscape the frame
+  // kept its portrait box and the turned bezel spilled out of (and was
+  // clipped by) the device column. Give the frame the turned box and centre
+  // the wrapper in it; the img/canvas landscape cap keeps it inside the view.
+  let rotatedFitWired = false;
+  function fitRotatedFrame() {
+    const root = document.getElementById('nativeDeviceFrame');
+    if (!root) return;
+    const wrappers = Array.from(root.querySelectorAll(':scope > div'));
+    if (!rotatedFitWired && wrappers.length) {
+      rotatedFitWired = true;
+      window.addEventListener('resize', fitRotatedFrame);
+      if (typeof ResizeObserver === 'function') new ResizeObserver(fitRotatedFrame).observe(wrappers[0]);
+    }
+    for (const prop of ['width', 'height', 'max-width', 'max-height', 'position']) root.style.removeProperty(prop);
+    for (const el of wrappers) { el.style.removeProperty('position'); el.style.removeProperty('left'); el.style.removeProperty('top'); }
+    if (!/^landscape/.test(currentOrientation) || !wrappers.length) return;
+    const w = wrappers[0].offsetWidth, h = wrappers[0].offsetHeight;
+    if (!w || !h) return;
+    root.style.setProperty('position', 'relative');
+    root.style.setProperty('width', h + 'px', 'important');
+    root.style.setProperty('height', w + 'px', 'important');
+    root.style.setProperty('max-width', 'none', 'important');
+    root.style.setProperty('max-height', 'none', 'important');
+    for (const el of wrappers) {
+      el.style.position = 'absolute';
+      el.style.left = (h - w) / 2 + 'px';
+      el.style.top = (w - h) / 2 + 'px';
+    }
   }
 
   // Set an orientation outright, no cycle step and no animation —
@@ -185,6 +217,7 @@
       wrapper.style.transition = t;
     }
     layoutHandheld();
+    fitRotatedFrame();
   }
 
   // Map a normalized coord [0, 1]² from the rotated visual frame
@@ -847,8 +880,19 @@
 
   function resetToPortrait() {
     if (deviceMode) return; // a physical phone rotates itself
-    fetch('/simulators/' + encodeURIComponent(udid) + '/orientation?value=portrait',
+    // Cindy: the controller passes the orientation this device last showed,
+    // so a reload (or coming back to the task) keeps it instead of forcing portrait.
+    const asked = new URLSearchParams(location.search).get('cindyOrientation');
+    const wanted = ORIENTATION_CYCLE.includes(asked) ? asked : 'portrait';
+    fetch('/simulators/' + encodeURIComponent(udid) + '/orientation?value=' + wanted,
         { method: 'POST' }).catch(() => { /* best-effort */ });
+    if (wanted === 'portrait') return;
+    let tries = 0;
+    const settle = () => {
+      if (document.querySelector('#nativeDeviceFrame > div')) snapOrientation(wanted);
+      else if (++tries < 100) setTimeout(settle, 100);
+    };
+    settle();
   }
 
   // Theme toggle. Three logical states — "auto" (no manual pin,
@@ -2344,9 +2388,14 @@
     // through the `/simulators/<udid>/orientation?value=...` route;
     // server delegates to `simulator.orientation().set(...)`, which
     // dispatches a device orientation change through the appropriate backend.
-    window.__nativeRotate = () => {
+    // Cindy: rotate either way (Simulator's Rotate Left / Right) and let the
+    // controller read the orientation it shows, to restore it after a reload.
+    window.__nativeOrientation = () => currentOrientation;
+    window.__nativeRotate = () => window.__nativeRotateBy(1);
+    window.__nativeRotateBy = (step) => {
+      step = step < 0 ? -1 : 1;
       const cycle = orientationCycle();
-      orientationIndex = (orientationIndex + 1) % cycle.length;
+      orientationIndex = (orientationIndex + step + cycle.length) % cycle.length;
       const value = cycle[orientationIndex];
       // A foldable's book turns in 3D, as the flat chrome would.
       if (foldable) {
@@ -2362,7 +2411,7 @@
       // + canvas as one unit, while the input + overlay wrappers
       // remap coords back to portrait so taps still land on the
       // iOS element under the cursor.
-      applyOrientation(value);
+      applyOrientation(value, step);
       const url = '/simulators/' + encodeURIComponent(udid)
           + '/orientation?value=' + encodeURIComponent(value);
       fetch(url, { method: 'POST' }).catch(() => { /* best-effort */ });
