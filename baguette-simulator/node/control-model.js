@@ -25,7 +25,7 @@
       runningMeta: '运行中', offMeta: '已关闭', busyMeta: '处理中',
       rotateLeft: '向左旋转', rotateRight: '向右旋转', zoomIn: '放大', zoomOut: '缩小', zoomActual: '实际大小', zoomFitShort: '适合',
       pose: { shut: '合上', open: '半展开', flat: '展开' }, posture: '姿态',
-      shotDesktop: '截图已存到桌面', reveal: '在访达中显示', advanced: 'Baguette 高级工具',
+      shotDesktop: '截图已存到桌面', shotCopied: '截图已拷贝到剪贴板', shotTo: '截图存到', shotToDesktop: '桌面', shotToClipboard: '剪贴板', reveal: '在访达中显示', advanced: 'Baguette 高级工具',
     },
     en: {
       connected: 'Running', connecting: 'Connecting…', recovering: 'Recovering view…', offline: 'View disconnected', off: 'Shut down',
@@ -49,7 +49,7 @@
       runningMeta: 'Running', offMeta: 'Off', busyMeta: 'Busy',
       rotateLeft: 'Rotate Left', rotateRight: 'Rotate Right', zoomIn: 'Zoom In', zoomOut: 'Zoom Out', zoomActual: 'Actual Size', zoomFitShort: 'Fit',
       pose: { shut: 'Closed', open: 'Half open', flat: 'Flat' }, posture: 'Posture',
-      shotDesktop: 'Screenshot saved to Desktop', reveal: 'Show in Finder', advanced: 'Baguette advanced tools',
+      shotDesktop: 'Screenshot saved to Desktop', shotCopied: 'Screenshot copied to the clipboard', shotTo: 'Save Screenshots To', shotToDesktop: 'Desktop', shotToClipboard: 'Clipboard', reveal: 'Show in Finder', advanced: 'Baguette advanced tools',
     },
   };
 

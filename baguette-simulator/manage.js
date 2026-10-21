@@ -48,7 +48,11 @@ const SELECTED = 'cindy.hub.selected';
 let T = TEXT.en, lang = 'en', state = null, busy = {}, renaming = null, query = '', models = new Map(), shown = { udid: null, url: null };
 let selected = (() => { try { return localStorage.getItem(SELECTED); } catch { return null; } })();
 
-const glyphFor = (d) => /Duo/i.test(d.deviceType || d.name) ? GLYPH.fold : /iPad/i.test(d.deviceType || d.name) ? GLYPH.ipad : GLYPH.iphone;
+const glyphFor = (d) => {
+  const kind = `${d.deviceType || ''} ${d.name || ''}`;
+  return /Duo/i.test(kind) ? GLYPH.fold : /iPad/i.test(kind) ? GLYPH.ipad : /Apple-?\s?TV/i.test(kind) ? GLYPH.tv
+    : /Vision|xrOS|RealityDevice/i.test(kind) ? GLYPH.vision : /Watch/i.test(kind) ? GLYPH.watch : GLYPH.iphone;
+};
 const modelName = (d) => models.get(d.deviceType) || String(d.deviceType || '').replace(/^.*SimDeviceType\./, '').replace(/-/g, ' ');
 const osVersion = (d) => M.runtimeLabel(d.runtime).replace(/^iOS /, '');
 const usage = (d) => d.thisTask ? T.thisTask : d.tasks ? T.tasks(d.tasks) : T.idle;

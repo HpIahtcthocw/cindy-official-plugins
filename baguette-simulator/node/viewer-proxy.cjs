@@ -29,6 +29,10 @@ const STAGE_STYLE='<style id="cindy-stage-style">'+[
  '#simNativeView[data-handheld] #nativeDeviceFrame{background:transparent!important}',
  // The controller draws the foldable posture switch (viewer-stage.js exposes the hinge).
  '.r3d-pose-picker{display:none!important}',
+ // The 3D canvas is a grid item, so upstream's height:100% resolves to auto and it takes the
+ // stream's aspect: when the stage is wider than the stream the device is cut off at the bottom.
+ // Give it the stage's own definite height; object-fit:contain (and ScreenQuad.contentRect for input) letterbox.
+ '#simNativeView .r3d-live-canvas{height:calc(100dvh - 68px)!important}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div>div:first-child{border-radius:var(--cindy-screen-radius,0)!important}',
  '#simNativeView[data-handheld] #nativeDeviceFrame>div{outline:1px solid rgba(0,0,0,.08);outline-offset:-1px;border-radius:var(--cindy-screen-radius,0)}',
 ].join('\n')+'</style>';

@@ -178,8 +178,8 @@
     $('status').textContent = t[p.key];
     const on = live();
     $('tools').hidden = !on;
-    for (const id of ['btn-home', 'btn-shot', 'btn-rotl', 'btn-rotr']) $(id).disabled = !on;
-    label($('btn-home'), t.home, '⇧⌘H'); label($('btn-shot'), t.screenshot, '⌘S');
+    for (const id of ['btn-home', 'btn-shot', 'btn-shot-menu', 'btn-rotl', 'btn-rotr']) $(id).disabled = !on;
+    label($('btn-home'), t.home, '⇧⌘H'); label($('btn-shot'), `${t.screenshot} · ${shotTo() === 'clipboard' ? t.shotToClipboard : t.shotToDesktop}`, '⌘S'); label($('btn-shot-menu'), t.shotTo);
     label($('btn-rotl'), t.rotateLeft, '⌘←'); label($('btn-rotr'), t.rotateRight, '⌘→');
     label($('zoom-out'), t.zoomOut, '⌘−'); label($('zoom-in'), t.zoomIn, '⌘+'); label($('btn-more'), t.more);
     $('device-chip').title = t.devices;
@@ -304,10 +304,23 @@
     if (!live() || $('btn-shot').dataset.busy) return;
     $('btn-shot').dataset.busy = '1'; $('btn-shot').disabled = true;
     flash();
-    try { const r = await api('screenshot'); toast(t.shotDesktop, 'ok', r.path && { label: t.reveal, run: () => api('reveal', { path: r.path }).catch(() => {}) }); }
+    const to = shotTo();
+    try {
+      const r = await api('screenshot', { to });
+      if (to === 'clipboard') toast(t.shotCopied, 'ok');
+      else toast(t.shotDesktop, 'ok', r.path && { label: t.reveal, run: () => api('reveal', { path: r.path }).catch(() => {}) });
+    }
     catch { toast(t.shotFailed, 'error'); }
     finally { delete $('btn-shot').dataset.busy; renderBar(); }
   }
+  // Where the screenshot button puts the image: the Desktop (as Simulator
+  // does) or the clipboard. One choice for every device, picked from the caret.
+  const shotTo = () => store.get('cindy.shotTo') === 'clipboard' ? 'clipboard' : 'desktop';
+  $('btn-shot-menu').addEventListener('click', () => {
+    const choice = (to, text) => h('button', { class: 'item', role: 'menuitemradio', 'aria-checked': String(shotTo() === to), onclick: () => { closeMenu(); store.set('cindy.shotTo', to); renderBar(); } },
+      [h('span', { class: 'label', text }), h('span', { html: shotTo() === to ? ICON.check : '' })]);
+    showMenu($('btn-shot-menu'), [h('div', { class: 'menu-title', text: t.shotTo }), choice('desktop', t.shotToDesktop), choice('clipboard', t.shotToClipboard)]);
+  });
   // A brief shutter flash over the device, as Simulator does.
   function flash() {
     const node = h('div', { class: 'flash' }); stage.append(node); setTimeout(() => node.remove(), 450);
@@ -388,10 +401,13 @@
     closeMenu();
     const menu = h('div', { class: 'menu', role: 'menu' }, items);
     const scrim = h('div', { class: 'scrim', onclick: closeMenu });
-    const r = anchor.getBoundingClientRect(), vw = document.documentElement.clientWidth;
-    menu.style.top = Math.round(r.bottom + 6) + 'px';
+    const r = anchor.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight || 0;
     if (r.left + 240 > vw) menu.style.right = Math.max(8, Math.round(vw - r.right)) + 'px'; else menu.style.left = Math.round(r.left) + 'px';
     document.body.append(scrim, menu); anchor.setAttribute('aria-expanded', 'true'); openMenu = { menu, scrim, anchor };
+    // Anchors in the bottom toolbar open upwards.
+    const height = menu.getBoundingClientRect?.().height || 0;
+    if (vh && r.bottom + 6 + height > vh && r.top - 6 - height > 0) menu.style.bottom = Math.round(vh - r.top + 6) + 'px';
+    else menu.style.top = Math.round(r.bottom + 6) + 'px';
     menu.querySelector?.('button:not(:disabled)')?.focus?.();
   }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });

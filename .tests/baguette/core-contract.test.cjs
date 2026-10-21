@@ -121,3 +121,23 @@ test('device management: unique names, delete and erase stop the device first, r
   assert.ok(!calls.some(c=>c[0]==='open'));
  }
 });
+test('a clipboard screenshot puts the PNG on the pasteboard by path argument and keeps no file',async()=>{
+ const calls=[],removed=[];
+ const context={module:{exports:{}},__dirname:dir,process:{platform:'darwin',arch:'arm64'},require(name){
+  if(name==='./viewer.cjs')return {};
+  if(name==='node:fs/promises')return {mkdir:async()=>{},stat:async()=>({size:1234}),rm:async(f)=>{removed.push(f);}};
+  if(name==='node:child_process')return {execFile(file,args,opts,cb){calls.push([file.split('/').pop(),...args]);let data='';
+   if(file==='/usr/bin/sw_vers')data='27.0';else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,state:'Booted',name:'Phone'}]}});
+   queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};}};
+  return require(name);
+ }};
+ vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+ const r=await context.module.exports.dispatch('screenshot',{udid,destination:'clipboard'});
+ assert.equal(r.copied,true);assert.equal(r.path,undefined);
+ const shot=calls.find(c=>c[0]==='Baguette'&&c[1]==='screenshot'),osa=calls.find(c=>c[0]==='osascript');
+ const file=shot[shot.indexOf('--output')+1];
+ assert.match(file,/\/screenshots\/[0-9a-f-]+\.png$/);
+ assert.equal(osa.at(-1),file,'the path is passed as an argument, never spliced into the script');
+ assert.ok(!osa.slice(1,-1).some(a=>a.includes(file)));
+ assert.deepEqual(removed,[file]);
+});

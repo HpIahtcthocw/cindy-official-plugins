@@ -220,6 +220,17 @@ async function dispatch(method,p={}) {
     desktopShots.add(file); if(desktopShots.size>50)desktopShots.delete(desktopShots.values().next().value);
     return {...result,path:file,name:path.basename(file),mimeType:'image/png',bytes:stat.size};
   }
+  if(method==='screenshot'&&p.destination==='clipboard') {
+    // The viewer's screenshot button set to Clipboard: PNG onto the Mac pasteboard, no file kept.
+    const dir=path.join(ROOT,'screenshots');await fs.mkdir(dir,{recursive:true,mode:0o700});
+    const file=path.join(dir,crypto.randomUUID()+'.png');
+    try {
+      const result=await baguette('screenshot',device,['--format','png','--output',file]);
+      const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
+      await run('/usr/bin/osascript',['-e','on run argv','-e','set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)','-e','end run',file],{timeout:15000});
+      return {...result,copied:true,mimeType:'image/png',bytes:stat.size};
+    } finally { await fs.rm(file,{force:true}); }
+  }
   if(method==='screenshot') {
     const dir=path.join(ROOT,'screenshots');await fs.mkdir(dir,{recursive:true,mode:0o700});
     const file=path.join(dir,crypto.randomUUID()+'.jpg');
