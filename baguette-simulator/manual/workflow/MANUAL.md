@@ -4,9 +4,8 @@
 
 ## 1. 开始
 
-1. `environment`：确认 Xcode、可用的 iOS 运行时与机型。
-2. `devices`：每行带 `tasks`（几个任务在用）与 `thisTask`。优先用 `thisTask` 为 true 的设备，其次 `tasks` 为 0 的空闲设备；需要干净环境、特定机型或与其他任务隔离时才 `device action=create`（每台约 7–12 GB）。
-3. `device action=boot`，然后 `viewer action=open`（或 `app action=launch`，它会顺带打开画面）。检查 `previewOpened`，为 true 才能说画面已显示。
+1. `devices`：每行带 `tasks`（几个任务在用）与 `thisTask`。优先用 `thisTask` 为 true 的设备，其次 `tasks` 为 0 的空闲设备；需要干净环境、特定机型或与其他任务隔离时才 `device action=create`（每台约 7–12 GB），新建前用 `environment` 查可用的运行时与机型。
+2. `device action=boot`（想马上看画面就加 `screenshot: true`，启动后等画面稳定并附上截图，省一步），然后 `viewer action=open`（或 `app action=launch`，它会顺带打开画面，同样可加 `screenshot: true`）。检查 `previewOpened`，为 true 才能说画面已显示。
 
 不要另外下载 AXe、idb、Maestro，也不要用电脑操控工具去点 Xcode / Device Hub / Simulator 窗口：本插件已经提供真实触摸、截图和等待，后者会抢用户鼠标、在锁屏时失效。
 

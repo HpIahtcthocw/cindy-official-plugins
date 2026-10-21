@@ -84,6 +84,16 @@ function agent(){return agentImpl||(agentImpl=require('./agent.cjs').createAgent
 function apps(){return appsImpl||(appsImpl=require('./apps.cjs').createApps({sim,run,Failure}));}
 const BUNDLE_ID=/^[A-Za-z0-9][A-Za-z0-9.-]+$/;
 function bundleId(value){const id=string(value,'bundleId');if(!BUNDLE_ID.test(id))throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');return id;}
+// `screenshot: true` on boot / launch: wait until the screen settles, then look,
+// in the same call (one model round trip fewer). The image is hoisted for main.js.
+async function settledShot(device,p,result,startedAt=Date.now()){
+  if(p.screenshot!==true)return result;
+  // Stay inside the host's 120 s per call: the boot itself may have used most of it.
+  const left=Math.floor((100000-(Date.now()-startedAt))/1000);
+  if(left>=2){try{await agent().waitFor(device,{stable:1,timeout:Math.min(20,left)});}catch{}}
+  try{const {_modelImages,...shot}=await agent().screenshot(device,{_inline:p._inline});return {...result,screenshot:shot,...(_modelImages?{_modelImages}:{})};}
+  catch(error){return {...result,screenshot:{error:error.message}};}
+}
 let keyboardBusy=false;
 async function nativeKey(device,code,modifiers=[]) {
  const [key,mask]=code?require('./keys.cjs').chord(code,modifiers):[0,0];
@@ -177,13 +187,14 @@ async function dispatch(method,p={}) {
   }
   if(method==='open_viewer') return {udid:device.udid,...await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale),execution:'executed'};
   if(method==='boot') {
+    const bootStarted=Date.now();
     // Upstream 0.1.98's automatic heal omits --set in its internal simctl calls.
     // Wait for this exact custom-set device ourselves; do not silently restart apps.
     const started=device.state==='Booted'?null:await baguette('boot',device,['--no-heal'],{timeout:15000,mutation:true});
     const ready=await sim(['bootstatus',device.udid,'-b'],{timeout:90000,mutation:true});
     // Baguette always warns about Simulator.app's lifetime setting; it does not apply to these headless devices.
     const warnings=(started?.warnings||ready.warnings||'').split('\n').filter(l=>l.trim()&&!/lifetime|^\[baguette\] Booted /.test(l)).join('\n');
-    return {udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'};
+    return settledShot(device,p,{udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'},bootStarted);
   }
   if(method==='shutdown') {
     if(device.state==='Shutdown') return {udid:device.udid,state:'Shutdown',execution:'not_executed'};
@@ -289,9 +300,11 @@ async function dispatch(method,p={}) {
     }
     agent().forget(device.udid);
     const launched={udid:device.udid,bundleId:id,...await sim(args,{mutation:true,env}),execution:'executed'};
-    if(p.showViewer===false)return launched;
-    try{return {...launched,viewer:await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale)};}
-    catch(error){return {...launched,viewer:{previewOpened:false,error:error.message},note:'App launched, but viewer failed. Retry open_viewer, not launch_app.'};}
+    if(p.showViewer===false)return settledShot(device,p,launched);
+    let viewer;
+    try{viewer={viewer:await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale)};}
+    catch(error){viewer={viewer:{previewOpened:false,error:error.message},note:'App launched, but viewer failed. Retry viewer action=open, not launch.'};}
+    return settledShot(device,p,{...launched,...viewer});
   }
   if(method==='heal') {
     // Baguette's documented repair sequence, scoped to our private device set.

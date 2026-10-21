@@ -38,7 +38,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   /** Current screen geometry (and tree). Cached briefly so taps stay fast. */
   async function observe(device, {fresh = false} = {}) {
     const cached = screens.get(device.udid);
-    if (!fresh && cached && now() - cached.at < SCREEN_TTL_MS) return cached;
+    if (!fresh && cached?.tree && now() - cached.at < SCREEN_TTL_MS) return cached;
     let tree;
     try { tree = await readTree(device); }
     catch (error) {
@@ -53,7 +53,29 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     screens.set(device.udid, entry);
     return entry;
   }
+  /**
+   * Screen geometry only (orientation, size, lit panel), for screenshots and
+   * coordinate input. A one-point hit test reports it without walking the tree
+   * or sweeping the status bar: about 1.6 s on iPhone Duo versus 4–6 s.
+   */
+  async function geometry(device, {maxAge = SCREEN_TTL_MS} = {}) {
+    const cached = screens.get(device.udid);
+    if (cached && now() - cached.at < maxAge) return cached;
+    let probe;
+    try { probe = await readTree(device, ['--x', '1', '--y', '1']); }
+    catch (error) {
+      if (cached) return {...cached, stale: true};
+      throw failure('SCREEN_UNAVAILABLE', `Could not read the screen geometry: ${error.message}. Take a screenshot and retry.`);
+    }
+    const screen = probe?.screen;
+    if (!screen || !(screen.width > 0) || !(screen.height > 0)) throw failure('SCREEN_UNAVAILABLE', 'The simulator did not report its screen. Retry after the App finishes launching.');
+    const entry = {screen: {width: screen.width, height: screen.height, orientation: screen.orientation || 'portrait', target: screen.target}, tree: null, at: now()};
+    screens.set(device.udid, entry);
+    return entry;
+  }
   function forget(udid) { screens.delete(udid); }
+  // Pixels per point of each device's screen, learned from its geometry (raw captures start at that density).
+  const densities = new Map();
   const viewInfo = screen => ({...G.viewSize(screen), orientation: screen.orientation, ...(screen.target?.litPanel && screen.target.litPanel !== 'primary' ? {panel: screen.target.litPanel} : {})});
 
   async function cornerRadius(device, screen) {
@@ -107,12 +129,18 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   }
 
   async function screenshot(device, p = {}) {
-    // Geometry and pixels are read together so rotation always matches the frame.
-    const [{screen}, dir] = await Promise.all([observe(device, {fresh: true}), shotsDir()]);
-    const view = G.viewSize(screen);
     const scale = number(p.scale, 'scale', 1, 3, 1);
-    const nativeScale = (screen.target?.pixelSize?.width || screen.width * 3) / screen.width;
-    const divisor = Math.max(1, Math.floor(nativeScale / scale));
+    const dir = await shotsDir();
+    const id = crypto.randomUUID(), raw = path.join(dir, `${id}.raw.png`), file = path.join(dir, `${id}.${p.format === 'png' ? 'png' : 'jpg'}`);
+    // Geometry and pixels are read at the same time: the rotation must match the frame.
+    const known = densities.get(device.udid);
+    const divisor = known ? Math.max(1, Math.floor(known / scale)) : 1;
+    const [{screen}] = await Promise.all([
+      geometry(device, {maxAge: 3000}),
+      bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000}),
+    ]);
+    if (screen.target?.pixelSize?.width) densities.set(device.udid, screen.target.pixelSize.width / screen.width);
+    const view = G.viewSize(screen);
     let region = null;
     if (p.region) {
       const r = p.region;
@@ -120,9 +148,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       region = {x, y, width: number(r.width, 'region.width', 1, view.width - x), height: number(r.height, 'region.height', 1, view.height - y)};
     }
     const grid = p.grid === true ? (region ? 25 : 100) : number(p.grid, 'grid', 0, 1000, 0);
-    const id = crypto.randomUUID(), raw = path.join(dir, `${id}.raw.png`), file = path.join(dir, `${id}.${p.format === 'png' ? 'png' : 'jpg'}`);
     try {
-      await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000});
       const radius = p.corners === false ? 0 : await cornerRadius(device, screen);
       const options = {rotate: G.rotation(screen), view, scale, region, radius, grid, format: p.format === 'png' ? 'png' : 'jpeg', quality: 0.82};
       const render = async (out, extra) => JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, out, JSON.stringify({...options, ...extra})], {timeout: 20000})).stdout);
@@ -159,7 +185,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       }
       return {screen, x: element.center[0], y: element.center[1], element: {label: element.label, id: element.id, role: element.role, frame: element.frame}, matches};
     }
-    const {screen} = await observe(device);
+    const {screen} = await geometry(device);
     const view = G.viewSize(screen);
     return {screen, x: number(p.x, 'x', 0, view.width), y: number(p.y, 'y', 0, view.height)};
   }
@@ -197,7 +223,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   async function gesture(device, p) {
     const kind = p.kind;
     if (kind === 'scroll_to') return scrollTo(device, p);
-    const {screen} = await observe(device);
+    const {screen} = await geometry(device);
     const view = G.viewSize(screen);
     const g = {kind, duration: number(p.duration, 'duration', 0.05, 10, undefined)};
     if (kind === 'swipe' || kind === 'drag') {
@@ -308,7 +334,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // ---- capturing a transition ----
   async function capture(device, p, perform) {
     const seconds = number(p.seconds, 'seconds', 0.5, 15, 3), fps = number(p.fps, 'fps', 1, 20, 10), maxFrames = number(p.max_frames, 'max_frames', 2, 30, 12);
-    const {screen} = await observe(device, {fresh: true});
+    const {screen} = await geometry(device, {maxAge: 3000});
     const view = G.viewSize(screen);
     const nativeScale = (screen.target?.pixelSize?.width || screen.width * 3) / screen.width;
     const dir = path.join(await shotsDir('captures'), crypto.randomUUID());
@@ -426,7 +452,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let screen = null;
     if (applied.includes('orientation') || applied.includes('posture')) {
       await sleep(700);
-      try { screen = viewInfo((await observe(device, {fresh: true})).screen); } catch {}
+      try { screen = viewInfo((await geometry(device, {maxAge: 0})).screen); } catch {}
     }
     return {udid: device.udid, execution: 'executed', applied, ...(screen ? {screen} : {}),
       ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'} : {})};
@@ -488,7 +514,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return reports.sort((a, b) => String(b.time).localeCompare(String(a.time)));
   }
 
-  return {observe, forget, describe, screenshot, tap, gesture, waitFor, capture, setState, logs, executableOf};
+  return {observe, geometry, forget, describe, screenshot, tap, gesture, waitFor, capture, setState, logs, executableOf};
 }
 
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9]);

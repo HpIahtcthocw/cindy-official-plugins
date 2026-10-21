@@ -1,19 +1,19 @@
 {
   "name": "iOS シミュレータ",
   "description": "独立 iOS シミュレータ。タスクごとにサイドバーのタブで自分の端末画面を表示し、「シミュレータ」ビューで全端末を管理します。実行スイッチと既定15分のアイドル終了でデータを保持します。macOS 15+、Apple Silicon、完全な Xcode と iOS runtime が必要です。オープンソースの Baguette（tddworks、Apache-2.0）をベースにしています。",
-  "whenToUse": "iOS シミュレーター作業の既定ツール：専用デバイスでビルド済み App をインストール・起動・操作し、スクリーンショット、待機、変化の記録、ログ確認を行い、タスクのサイドバーにライブ表示します。まず environment と devices。空きデバイスを再利用するか新規作成。検証は tap/gesture の実タッチで行い、AXe/idb の取得や Xcode ウィンドウの操作はしない。手順はマニュアル参照。heal は同意が必要。実行スイッチを代わりに戻さない。",
+  "whenToUse": "iOS シミュレーター作業の既定ツール：専用デバイスでビルド済み App をインストール・起動・操作し、スクリーンショット、待機、変化の記録、ログ確認を行い、タスクのサイドバーにライブ表示します。まず devices（新規作成時のみ environment）。空きデバイスを再利用するか新規作成。検証は tap/gesture の実タッチで行い、AXe/idb の取得や Xcode ウィンドウの操作はしない。手順はマニュアル参照。heal は同意が必要。実行スイッチを代わりに戻さない。",
   "tools": {
     "environment": {
-      "description": "最初に呼び出す。macOS 15.0 以降と Apple Silicon を確認し、同梱 Baguette、Xcode、インストール済み iOS ランタイムと機種を読み取ります。何もダウンロードしません。"
+      "description": "デバイスを新規作成するときや環境を調べるときに呼び出す。macOS 15.0 以降と Apple Silicon を確認し、同梱 Baguette、Xcode、インストール済み iOS ランタイムと機種を読み取ります。何もダウンロードしません。既存のデバイスがあれば devices から。"
     },
     "devices": {
-      "description": "このプラグイン専用デバイスと状態を一覧表示。各行に tasks（使用中のタスク数）と thisTask（現在のタスクのものか）。このタスクのデバイスか空き（tasks 0）を再利用し、Cindy 内蔵や Xcode 既定のデバイスは操作しません。"
+      "description": "最初に呼び出す。このプラグイン専用デバイスと状態を一覧表示。各行に tasks（使用中のタスク数）と thisTask（現在のタスクのものか）。このタスクのデバイスか空き（tasks 0）を再利用し、Cindy 内蔵や Xcode 既定のデバイスは操作しません。"
     },
     "device": {
-      "description": "専用デバイスの管理。create：environment の runtime と deviceType で新規作成（1 台約 7–12 GB）。クリーンな環境・特定機種・他タスクとの分離が必要なときだけ。boot：起動して初期化完了まで待機（約 105 秒、タイムアウト時は状態を確認）。shutdown：データを残して停止。rename：データを保持。erase：すべての App とデータを消去。delete：デバイスを完全に削除。erase と delete はユーザーの依頼時のみ。実行スイッチに従い、既定で 15 分放置すると停止（画面表示中や操作中は停止しない）。"
+      "description": "専用デバイスの管理。create：environment の runtime と deviceType で新規作成（1 台約 7–12 GB）。クリーンな環境・特定機種・他タスクとの分離が必要なときだけ。boot：起動して初期化完了まで待機（約 105 秒、タイムアウト時は状態を確認）。screenshot=true なら落ち着いた画面も返す。shutdown：データを残して停止。rename：データを保持。erase：すべての App とデータを消去。delete：デバイスを完全に削除。erase と delete はユーザーの依頼時のみ。実行スイッチに従い、既定で 15 分放置すると停止（画面表示中や操作中は停止しない）。"
     },
     "app": {
-      "description": "App のライフサイクル。install：ローカルでビルドしたシミュレーター用 .app（絶対パス appPath、ビルドはプロジェクト自身の Xcode 手順）をインストール。インストール済みと同一なら省略、変更が少なければ差分のみ同期、長い場合は job を返す（install_status で待機）。info：インストール済みのバージョン、ビルド番号、実行ファイルの指紋。appPath を渡すと matchesLocal で今回のビルドか確認。launch：起動（既定で再起動、arguments・env 可）し、このタスクのサイドバーにライブ表示を開く。viewer.previewOpened を確認（画面の機能は viewer 参照）。terminate、uninstall（データも削除）、open_url（ディープリンク。別 App を開く確認が出たらスクリーンショットを撮ってタップ）。"
+      "description": "App のライフサイクル。install：ローカルでビルドしたシミュレーター用 .app（絶対パス appPath、ビルドはプロジェクト自身の Xcode 手順）をインストール。インストール済みと同一なら省略、変更が少なければ差分のみ同期、長い場合は job を返す（install_status で待機）。info：インストール済みのバージョン、ビルド番号、実行ファイルの指紋。appPath を渡すと matchesLocal で今回のビルドか確認。launch：起動（既定で再起動、arguments・env 可、screenshot=true なら画面が落ち着いた後のスクリーンショットも返す）し、このタスクのサイドバーにライブ表示を開く。viewer.previewOpened を確認（画面の機能は viewer 参照）。terminate、uninstall（データも削除）、open_url（ディープリンク。別 App を開く確認が出たらスクリーンショットを撮ってタップ）。"
     },
     "screenshot": {
       "description": "現在の画面を撮影します。画像は結果に直接添付されます（旧版 Cindy は path のみ返すので画像ツールで開く）。ユーザーが見る向きに補正され、画面の角丸とダイナミックアイランド付き。既定で 1 ピクセル = 1 ビューポイントなので、画像上の座標をそのまま tap と gesture に渡せます。grid=true で目盛り付きグリッド、region で一部を切り出し（小さな文字、枠、セーフエリア）、scale 2–3 で高精細（座標は scale で割る）。"
