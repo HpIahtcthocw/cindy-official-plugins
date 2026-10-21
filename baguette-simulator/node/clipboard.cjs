@@ -5,6 +5,14 @@ const {randomBytes}=require('node:crypto');
 // use the bridge. No clipboard contents, tokens, or request bodies are logged.
 // `preferred` {port, token} comes from the last viewer session: reusing both
 // lets a tab opened earlier reconnect once the plugin runs again.
+const JS='text/javascript; charset=utf-8';
+const STATIC_ASSETS=new Map([
+ ['/control.js',{file:'control.js',type:JS}],
+ ['/control-model.js',{file:'control-model.js',type:JS}],
+ ['/control.css',{file:'control.css',type:'text/css; charset=utf-8'}],
+ ['/viewer-auth.js',{file:'viewer-auth.js',type:JS}],
+ ['/viewer-stage.js',{file:'viewer-stage.js',type:JS}],
+]);
 async function createClipboard(origin,perform,control,preferred={}){
  const token=/^[0-9a-f]{64}$/.test(preferred.token||'')?preferred.token:randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
  // Cindy's plugin pages are not an HTTP origin, so a viewer framed by them can
@@ -21,10 +29,11 @@ async function createClipboard(origin,perform,control,preferred={}){
   const own=`127.0.0.1:${server.address().port}`;
   if(req.headers.host!==own)return reply(403,{error:'Invalid host'});
   if(control&&req.method==='GET'){
-   if(['/control.js','/control-model.js','/control.css','/viewer-auth.js','/viewer-stage.js'].includes(req.url.split('?',1)[0])){
-    const file=req.url.split('?',1)[0];
-    res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8','X-Content-Type-Options':'nosniff'});
-    return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,file.slice(1))));
+   // The file name comes from this fixed table, never from the request.
+   const asset=STATIC_ASSETS.get(req.url.split('?',1)[0]);
+   if(asset){
+    res.writeHead(200,{'Content-Type':asset.type,'X-Content-Type-Options':'nosniff'});
+    return res.end(require('node:fs').readFileSync(require('node:path').join(__dirname,asset.file)));
    }
    if(req.url.startsWith('/control?')){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"frame-ancestors 'self' cindy-ghost://baguette-simulator",'Referrer-Policy':'no-referrer'});return res.end(require('./viewer-proxy.cjs')[new URL(req.url,'http://localhost').searchParams.get('lang')==='zh-CN'?'chineseHtml':'html']);}
    if(!authorized(req))return reply(403,{error:'Viewer capability required'});
