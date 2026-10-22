@@ -4,7 +4,6 @@
 (function (root) {
   const channel = new BroadcastChannel('baguette-pages');
   const pending = new Map(), listeners = new Set();
-  const READS = new Set(['task_state', 'manage_state', 'catalog']);
   channel.onmessage = ({ data: m }) => {
     if (m?.type === 'ready') {
       const p = pending.get(m.id); if (!p?.send) return;
@@ -28,11 +27,18 @@
     if (state === 'off') throw Object.assign(Error('PLUGIN_OFF'), { code: 'PLUGIN_OFF' });
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      const send = () => channel.postMessage({ type: 'request', id, action, ...params });
-      const read = READS.has(action);
+      const send = () => {
+        const p = pending.get(id);
+        clearTimeout(p.timer); p.timer = setTimeout(expire, timeout);
+        channel.postMessage({ type: 'request', id, action, ...params });
+      };
       const probe = () => channel.postMessage({ type: 'ping', id });
       const retry = setInterval(probe, 500);
-      const timer = setTimeout(() => { clearInterval(retry); pending.delete(id); reject(Object.assign(Error(timeoutText), { code: 'TIMEOUT' })); }, read ? 20000 : 125000);
+      // Every worker call may use 120s, including reads that open a viewer or
+      // inspect Xcode. These two compound actions each await two worker calls.
+      const timeout = ['task_boot', 'task_create'].includes(action) ? 245000 : 125000;
+      const expire = () => { clearInterval(retry); pending.delete(id); reject(Object.assign(Error(timeoutText), { code: 'TIMEOUT' })); };
+      const timer = setTimeout(expire, timeout);
       pending.set(id, { resolve, timer, retry, send }); probe();
     });
   }

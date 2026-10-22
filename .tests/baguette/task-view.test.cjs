@@ -21,6 +21,25 @@ test('task bindings persist, count tasks per device, and ignore malformed ids',a
  assert.equal(await gone.forgetDevice(A),false);
 });
 
+test('unreadable task bindings block every access and queued write until the file is restored',async t=>{
+ const original=JSON.stringify({version:1,bindings:{'task-1':{udid:A,at:1},'task-2':{udid:B,at:2}}});
+ for(const broken of ['{', 'null', '{}', '{"version":2,"bindings":{}}', '{"version":1,"bindings":[]}', '{"version":1,"bindings":{"task-1":null}}', 'directory']){
+  const dir=await tmp(t),file=path.join(dir,'task-bindings.json'),store=createTaskBindings(file);
+  if(broken==='directory'){await fs.mkdir(file);await fs.writeFile(path.join(file,'evidence'),original);}
+  else await fs.writeFile(file,broken);
+  const failed=await Promise.allSettled([store.get('task-1'),store.counts(),store.bind('task-3',A),store.bind('task-4',B),store.forgetDevice(A)]);
+  for(const result of failed){assert.equal(result.status,'rejected',broken);assert.equal(result.reason.code,'TASK_BINDINGS_UNREADABLE');assert.equal(result.reason.execution,'not_executed');}
+  if(broken==='directory'){assert.equal(await fs.readFile(path.join(file,'evidence'),'utf8'),original);await fs.rm(file,{recursive:true});}
+  else assert.equal(await fs.readFile(file,'utf8'),broken,'failed writes preserve the exact source');
+  assert.deepEqual(await fs.readdir(dir),broken==='directory'?[]:['task-bindings.json'],'no temporary output was created');
+  await fs.writeFile(file,original);
+  assert.deepEqual(await store.counts(),{[A]:1,[B]:1},'failed reads were not cached');
+  await Promise.all([store.bind('task-3',A),store.bind('task-4',B)]);
+  assert.deepEqual(await createTaskBindings(file).counts(),{[A]:2,[B]:2},'restored bindings survive queued updates');
+  assert.equal(await store.forgetDevice(A),true);assert.deepEqual(await createTaskBindings(file).counts(),{[B]:2});
+ }
+});
+
 async function runtimeFixture(t,{viewerUrl=null}={}){
  const dir=await tmp(t);const tasks=createTaskBindings(path.join(dir,'b.json'));const calls=[];
  const states={[A]:'Shutdown',[B]:'Booted'};

@@ -26,11 +26,12 @@ async function rpc(action,params={}){
   if(!wake.ok)throw Error(T.timeout);
   const id=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
-    const send=()=>channel.postMessage({type:'request',id,action,...params});
+    const send=()=>{const p=pending.get(id);clearTimeout(p.timer);p.timer=setTimeout(expire,125000);channel.postMessage({type:'request',id,action,...params});};
     // Only repeat the readiness probe; dispatch every operation once.
     const probe=()=>channel.postMessage({type:'ping',id});
     const retry=setInterval(probe,500);
-    const timer=setTimeout(()=>{clearInterval(retry);pending.delete(id);reject(Error(T.timeout));},['status','catalog'].includes(action)?20000:125000);
+    const expire=()=>{clearInterval(retry);pending.delete(id);reject(Error(T.timeout));};
+    const timer=setTimeout(expire,125000);
     pending.set(id,{resolve,timer,retry,send});probe();
   });
 }

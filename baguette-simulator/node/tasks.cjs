@@ -14,8 +14,17 @@ function createTaskBindings(file){
  let cache=null,queue=Promise.resolve();
  async function read(){
   if(cache)return cache;
-  try{const raw=JSON.parse(await fs.readFile(file,'utf8'));cache=raw&&typeof raw.bindings==='object'&&raw.bindings?raw.bindings:{};}
-  catch{cache={};}
+  try{
+   const raw=JSON.parse(await fs.readFile(file,'utf8'));
+   if(!raw||raw.version!==1||!raw.bindings||typeof raw.bindings!=='object'||Array.isArray(raw.bindings)||
+    Object.entries(raw.bindings).some(([session,b])=>!validSession(session)||!b||typeof b.udid!=='string'||!UDID.test(b.udid)||!Number.isFinite(b.at)))throw Error('Invalid task bindings');
+   cache=raw.bindings;
+  }catch(error){
+   // A failed read is not an empty store. Leave both disk and cache untouched
+   // so every queued writer fails safely, and a restored file can be read.
+   if(error.code!=='ENOENT')throw Object.assign(Error('Cannot read task bindings. Restore the bindings file before assigning a device.',{cause:error}),{code:'TASK_BINDINGS_UNREADABLE',execution:'not_executed'});
+   cache={};
+  }
   return cache;
  }
  async function write(next){

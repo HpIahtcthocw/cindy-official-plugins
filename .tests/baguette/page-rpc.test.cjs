@@ -3,30 +3,31 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 
-function fixture(page){
+function fixture(page,{steps=1}={}){
   const buses=new Map(),intervals=new Map(),timers=new Map(),messages=[],calls=[];
-  let serial=0,finish;
-  const result=new Promise(resolve=>{finish=resolve;});
+  let serial=0,now=0;
+  const results=Array.from({length:steps},()=>{let finish;const result=new Promise(resolve=>{finish=resolve;});return {result,finish};});
   class BroadcastChannel{
     constructor(name){this.name=name;if(!buses.has(name))buses.set(name,[]);buses.get(name).push(this);}
     postMessage(data){messages.push(data);for(const p of buses.get(this.name))if(p!==this)queueMicrotask(()=>p.onmessage?.({data}));}
   }
   const clock={setInterval:(fn,ms)=>{const id=++serial;intervals.set(id,{fn,ms});return id;},clearInterval:id=>intervals.delete(id),
-    setTimeout:fn=>{const id=++serial;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)};
+    setTimeout:(fn,ms)=>{const id=++serial;timers.set(id,{fn,at:now+ms});return id;},clearTimeout:id=>timers.delete(id)};
   const elements=new Map();
   const context={...clock,BroadcastChannel,crypto:require('node:crypto').webcrypto,AbortSignal,
     document:{documentElement:{},getElementById:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);}},
     CindySimModel:{},fetch:async url=>url==='/app-context'?new Promise(()=>{}):{ok:true,json:async()=>({state:'on'})}};
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(`baguette-simulator/${page}.js`,'utf8'),context);
-  return {messages,calls,finish,intervals,timers,
+  return {messages,calls,finish:(value,index=0)=>results[index].finish(value),intervals,timers,
+    advance:async ms=>{now+=ms;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.fn();}await flush();},
     rpc:action=>page==='pages'?context.CindySimPages.rpc(action,{sessionId:'task-1',udid:'device-1'}):vm.runInContext(`rpc(${JSON.stringify(action)})`,context),
     tick:()=>{for(const {fn,ms} of [...intervals.values()])if(ms===500)fn();},
     ready:id=>{for(const p of buses.get(page==='pages'?'baguette-pages':'baguette-settings'))queueMicrotask(()=>p.onmessage?.({data:{type:'ready',id}}));},
     start:()=>vm.runInNewContext(fs.readFileSync('baguette-simulator/main.js','utf8'),{...clock,BroadcastChannel,
       cindy:{onHostMessage(){},request:async()=>({context:{locale:'en'}}),node:{request:async r=>{
         if(r.method==='device_hold')return {ok:true,result:{running:false}};
-        calls.push(r);return {ok:true,result:await result};
+        calls.push(r);return {ok:true,result:await results[calls.length-1].result};
       }}}})};
 }
 
@@ -50,9 +51,33 @@ test('expired startup and in-flight requests ignore late readiness and results',
     const f=fixture(page),pending=f.rpc('catalog');const rejected=assert.rejects(pending);
     await flush();if(running){f.start();f.tick();await flush();}
     const id=f.messages.find(m=>m.type==='ping').id;
-    for(const timer of f.timers.values())timer();f.timers.clear();await rejected;
+    for(const timer of f.timers.values())timer.fn();f.timers.clear();await rejected;
     if(!running)f.start();
     f.ready(id);f.finish({ok:true});f.tick();await flush();
     assert.equal(f.calls.length,running?1:0);assert.equal(f.intervals.size,0);
+  }
+});
+
+test('page and settings reads wait for the complete worker window without redispatch',async()=>{
+  for(const [page,actions] of [['pages',['task_state','manage_state','catalog']],['settings',['status','catalog']]])for(const action of actions)for(const ok of [true,false]){
+    const f=fixture(page);let settled=false;
+    const pending=f.rpc(action).finally(()=>{settled=true;});await flush();
+    await f.advance(119000);assert.equal(settled,false,'startup is still within its own limit');
+    f.start();f.tick();await flush();
+    await f.advance(30000);assert.equal(settled,false,`${page}/${action} still running after 20s`);
+    f.tick();await flush();assert.equal(f.calls.length,1);
+    await f.advance(89000);assert.equal(settled,false,'page covers the 120s worker request');
+    f.finish({ok});assert.equal((await pending).ok,ok);assert.equal(f.timers.size,0);
+  }
+});
+
+test('compound task actions cover both sequential worker requests',async()=>{
+  for(const action of ['task_boot','task_create']){
+    const f=fixture('pages',{steps:2});f.start();let settled=false;
+    const pending=f.rpc(action).finally(()=>{settled=true;});await flush();
+    await f.advance(119000);f.finish({ok:true,udid:'device-1'});await flush();
+    assert.equal(f.calls.length,2);
+    await f.advance(119000);assert.equal(settled,false,'second worker retains its full window');
+    f.finish({ok:true},1);assert.equal((await pending).ok,true);assert.equal(f.timers.size,0);
   }
 });
