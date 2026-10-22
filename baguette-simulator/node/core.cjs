@@ -164,7 +164,7 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     const [version,xcode,runtimes,types]=await Promise.all([
       runCommand(BINARY,['--version']),runCommand('/usr/bin/xcodebuild',['-version']),
       jsonCommand('/usr/bin/xcrun',['simctl','list','runtimes','--json']),jsonCommand('/usr/bin/xcrun',['simctl','list','devicetypes','--json'])]);
-    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Baguette 0.2.7 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
+    return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Xcode 26/27 are supported; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
   }
   if(method==='close_viewer') return {...await stopViewer(),execution:'executed',note:'Viewer server stopped; simulator and App remain running.'};
   if(method==='devices') return {deviceSet:DEVICE_SET,devices:await listDevices(deadline)};
@@ -310,7 +310,7 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
   if(method==='screenshot'&&p.destination==='desktop') {
     // The viewer's screenshot button: a PNG on the Desktop, named like Simulator's.
     const file=await desktopFile(device.name);
-    const result=await bagCommand('screenshot',device,['--format','png','--output',file]);
+    const result=await bagCommand('screenshot',device,['--format','png','--output',file],{mutation:true});
     const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
     desktopShots.add(file); if(desktopShots.size>50)desktopShots.delete(desktopShots.values().next().value);
     return {...result,path:file,name:path.basename(file),mimeType:'image/png',bytes:stat.size};
@@ -322,9 +322,9 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     try {
       const result=await bagCommand('screenshot',device,['--format','png','--output',file]);
       const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
-      await runCommand('/usr/bin/osascript',['-e','on run argv','-e','set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)','-e','end run',file],{timeout:15000});
-      return {...result,copied:true,mimeType:'image/png',bytes:stat.size};
-    } finally { await fs.rm(file,{force:true}); }
+      await runCommand('/usr/bin/osascript',['-e','on run argv','-e','set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)','-e','end run',file],{timeout:15000,mutation:true});
+      return {...result,execution:'executed',copied:true,mimeType:'image/png',bytes:stat.size};
+    } finally { await fs.rm(file,{force:true}).catch(()=>{}); }
   }
   if(method==='screenshot') return agent().screenshot(device,p);
   if(method==='app_info') return apps().info(device,p);

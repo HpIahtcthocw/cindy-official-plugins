@@ -33,6 +33,37 @@ test('describe_ui needs screen geometry and a successful AX or OCR read before r
  assert.deepEqual(ui.elements,[{i:0,role:'button',label:'Google',frame:[100,200,80,40],center:[140,220]}]);
  assert.deepEqual(ui.screen,{width:402,height:874,orientation:'portrait'});
 });
+test('screenshot exports distinguish unstarted writes, uncertain writes and completed writes despite cleanup failures',async()=>{
+ for(const destination of ['desktop','clipboard'])for(const phase of ['preflight','capture','export','budget','success'])for(const cleanupFails of [false,true]){
+  let clock=0,clipboard='old',desktop=false;const commands=[];
+  const context={module:{exports:{}},__dirname:dir,process:{platform:'darwin',arch:'arm64'},require(name){
+   if(name==='./viewer.cjs')return {};
+   if(name==='./budget.cjs')return {commandBudget:(timeout,deadline)=>require(path.join(dir,'budget.cjs')).commandBudget(timeout,deadline,()=>clock)};
+   if(name==='node:fs/promises')return {mkdir:async()=>{},access:async()=>{throw Error('absent');},stat:async()=>({size:10}),rm:async()=>{if(cleanupFails)throw Error('cleanup failed');}};
+   if(name==='node:child_process')return {execFile(file,args,_options,callback){
+    commands.push({file,args});let data='',error=null;
+    if(file==='/usr/bin/sw_vers'){data='27.0';if(phase==='preflight')error=Error('preflight failed');}
+    else if(args.includes('--json'))data=JSON.stringify({devices:{runtime:[{udid,name:'Phone',state:'Booted'}]}});
+    else if(args[0]==='screenshot'){
+     if(destination==='desktop')desktop=true;
+     if(phase==='capture'||(phase==='export'&&destination==='desktop'))error=Error('capture timed out');
+     if(phase==='budget')clock=1000;
+    }else if(file==='/usr/bin/osascript'){clipboard='new';if(phase==='export')error=Error('clipboard write timed out');}
+    queueMicrotask(()=>callback(error,data,''));return {stdin:{on(){},end(){}}};
+   }};
+   return require(name.startsWith('./')?path.join(dir,name):name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const pending=context.module.exports.dispatch('screenshot',{udid,destination},1000);
+  const succeeds=phase==='success'||(phase==='budget'&&destination==='desktop');
+  if(succeeds){const result=await pending;assert.equal(result.execution,'executed');if(destination==='clipboard')assert.equal(result.copied,true);}
+  else await assert.rejects(pending,error=>error.execution===(phase==='preflight'||(destination==='clipboard'&&['capture','budget'].includes(phase))?'not_executed':'unknown'));
+  assert.equal(clipboard, destination==='clipboard'&&['export','success'].includes(phase)?'new':'old');
+  assert.equal(desktop,destination==='desktop'&&phase!=='preflight');
+  assert.ok(commands.filter(c=>c.file==='/usr/bin/osascript').length<=1,'cleanup failure never repeats the export');
+ }
+});
+
 test('heal distinguishes preflight failure from post-restart polling failure',async()=>{
  const before=core('',1);await assert.rejects(before.dispatch('heal',{udid}),e=>e.execution==='not_executed');assert.equal(before.mutations(),0);
  const after=core('',2);await assert.rejects(after.dispatch('heal',{udid}),e=>e.execution==='unknown');assert.equal(after.mutations(),2);

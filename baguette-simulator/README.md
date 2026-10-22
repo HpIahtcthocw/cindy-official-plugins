@@ -4,6 +4,8 @@
 
 Screenshots fall back to a file path on older hosts or when JPEG compression still exceeds the 130 KB inline budget. Open that path with an image tool before choosing coordinates; the full-resolution file is preserved.
 
+Viewer screenshot exports to the Mac clipboard or Desktop report confirmed writes as `executed` and command failures after dispatch as `unknown`; inspect the destination before retrying. Temporary clipboard-image cleanup cannot replace the export outcome. `environment.baguette` is the detected binary version; compatibility notes do not repeat a fixed version.
+
 Failed automatic OCR in `describe_ui` returns an error; only successful recognition can report an empty text list. Task binding returns its saved `boundUdid` and `execution: executed` even if subsequent status or viewer reads fail (`taskStateError`). Task boot/create pages also preserve the completed step on a failed follow-up. Refresh task state; do not repeat the completed operation. A task page unloads its old screen when the new binding's status is unavailable.
 
 Capture waits for a complete first frame and confirms the screen before starting the action. If the stream fails or the deadline expires first, it returns `captureError` with `execution: not_executed`. An interrupted recording or output that cannot drain within the cleanup deadline also returns `captureError`, retaining the action outcome without generating a contact sheet. Diagnostic read failures return `crashesError` alongside the logs; an empty `crashes` list means the scan completed without matching reports. `crashes=false` skips that scan.
