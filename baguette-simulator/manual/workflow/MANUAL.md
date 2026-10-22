@@ -28,7 +28,7 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 
 ## 3. 坐标：一律用视图点
 
-- `screenshot`、`tap`/`gesture` 的 `observe=screenshot`、`screenshot: true` 以及没等到的 `wait_for` 都会把截图直接附在结果里（旧版 Cindy 只给 `path`，用读图工具打开）。
+- `screenshot`、`tap`/`gesture` 的 `observe=screenshot`、`screenshot: true` 以及没等到的 `wait_for` 会在支持内联图片的 Cindy 中附图。旧版 Cindy，或压缩后图片仍超过 130 KB 时，只给 `path`：必须用读图工具打开后再选坐标，不要把文件路径当成已经看过画面。
 - 截图已按用户看到的方向摆正（横屏、折叠屏内屏都一样），默认 1 像素 = 1 视图点。图上读到的坐标就是 `tap`、`gesture` 要的坐标，不要自己旋转图片、不要换算像素。
 - `scale=2` 或 `3` 的截图更清晰，坐标要除以 scale；`region` 截取的局部图，坐标要加上 region 的起点。
 - `describe_ui` 的 `frame` 与 `center` 也是视图点，`center` 可直接点击。

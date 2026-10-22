@@ -178,3 +178,25 @@ test('parallel viewer startup shares native process and bridge; stop owns both e
   assert.equal(launches,1);assert.equal(bridges,1);assert.equal(children.size,1);assert.equal(result.length,2);
   await viewer.stopViewer();assert.equal(closed,1);assert.equal(children.size,0);
 });
+
+test('management view ignores late viewer successes and failures, including returning to the same device',async()=>{
+  for(const lateFails of [false,true]) {
+    const nodes=new Map(),requests=[];
+    const get=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){}});return nodes.get(id);};
+    const context={document:{getElementById:get,addEventListener(){}},localStorage:{getItem:()=>null},
+      CindySimPages:{locale:()=>new Promise(()=>{}),rpc:()=>{const d=deferred();requests.push(d);return d.promise;},h:()=>({}),GLYPH:{}},CindySimModel:{}};
+    vm.runInNewContext(syncFs.readFileSync(path.resolve('baguette-simulator/manage.js'),'utf8')+'\nglobalThis.page={showScreen,hero};',context);
+    const old=context.page.showScreen({udid:A});
+    const current=context.page.showScreen({udid:B});requests[1].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=B'});await current;
+    if(lateFails)requests[0].reject(Error('late error'));else requests[0].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=A'});
+    await old;assert.match(get('screen').src,/udid=B/);assert.equal(get('screen').hidden,false);
+    // A -> B -> A: device id alone is insufficient to identify an in-flight request.
+    const firstA=context.page.showScreen({udid:A}),middle=context.page.showScreen({udid:B}),lastA=context.page.showScreen({udid:A});
+    requests[4].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=A&new=1'});await lastA;
+    requests[2].reject(Error('obsolete A'));requests[3].reject(Error('obsolete B'));await Promise.all([firstA,middle]);
+    assert.match(get('screen').src,/new=1/);assert.equal(get('screen').hidden,false);
+    const pending=context.page.showScreen({udid:B});context.page.hero(null);
+    requests[5].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=B'});await pending;
+    assert.equal(get('screen').hidden,true,'off/empty selection retires pending requests too');
+  }
+});

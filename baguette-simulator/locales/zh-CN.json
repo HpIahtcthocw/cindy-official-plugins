@@ -16,7 +16,7 @@
       "description": "App 生命周期。install：安装本机已构建的模拟器 .app（appPath 绝对路径，App 由项目自己的 Xcode 流程构建）；与已装内容完全相同时跳过，只改了少量文件时增量同步，耗时长时返回 job，用 install_status 等它完成。info：已装的版本、构建号与可执行文件指纹，传 appPath 时给出 matchesLocal，确认装的就是这次构建。launch：启动（默认先结束旧进程；可传 arguments、env；screenshot=true 时等画面稳定后顺带返回截图），并在当前任务侧栏打开实时画面，检查 viewer.previewOpened（画面能力与副作用见 viewer）。terminate 结束进程；uninstall 删除 App 及其数据；open_url 打开深链，系统若弹出“是否打开”确认，截图后点击处理。 按内容校验和比较；安装登记或签名信息改变时整包安装。"
     },
     "screenshot": {
-      "description": "截取当前画面：图片直接附在结果里给你看（旧版 Cindy 只返回 path，再用读图工具打开）。图片已按用户看到的方向摆正，带屏幕圆角与灵动岛；默认 1 像素 = 1 视图点，图上读到的坐标可直接传给 tap 与 gesture。grid=true 叠加带刻度的坐标网格；region 截取局部（看小字、核对边框与安全区）；scale 2–3 更清晰（坐标除以 scale）。"
+      "description": "截取当前画面：支持内联图片的 Cindy 会在结果里附图；旧版 Cindy 或压缩后仍超过 130 KB 时只返回 path，必须用读图工具打开。图片已按用户看到的方向摆正，带屏幕圆角与灵动岛；默认 1 像素 = 1 视图点，图上读到的坐标可直接传给 tap 与 gesture。grid=true 叠加带刻度的坐标网格；region 截取局部（看小字、核对边框与安全区）；scale 2–3 更清晰（坐标除以 scale）。"
     },
     "describe_ui": {
       "description": "读取当前界面元素（无障碍树）。默认返回精简列表：角色、文字、id、frame 与 center（视图点，可直接点击），按阅读顺序排列。query/role 过滤；x、y 查询某一点下的元素；mode=full 返回完整树。游戏或自绘界面没有无障碍元素时，自动改为识别画面上的文字（source=ocr），同样带坐标；没有文字的图标用 screenshot 看。"

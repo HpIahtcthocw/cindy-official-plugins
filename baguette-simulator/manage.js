@@ -144,18 +144,21 @@ function renderList() {
 // ---- detail ----
 async function showScreen(d) {
   if (shown.udid === d.udid && shown.url) { $('screen').hidden = false; $('hero').hidden = true; return; }
-  shown = { udid: d.udid, url: null };
+  const request = shown = { udid: d.udid, url: null };
   try {
     const r = await rpc('viewer_url', { udid: d.udid }, T.timeout);
-    if (!r?.ok || !r.url || shown.udid !== d.udid) throw r;
+    if (shown !== request) return;
+    if (!r?.ok || !r.url) throw r;
     const [base, hash = ''] = r.url.split('#');
     shown.url = `${base}&embed=hub${hash ? '#' + hash : ''}`;
     $('screen').src = shown.url; $('screen').hidden = false; $('hero').hidden = true;
-  } catch { shown = { udid: null, url: null }; hero(d); } // the hero itself says the screen did not connect
+  } catch { if (shown === request) hero(d); } // only this request may replace its own screen with an error
 }
 function hero(d, note) {
   $('screen').hidden = true; $('hero').hidden = false;
-  if (shown.url) { $('screen').src = 'about:blank'; shown = { udid: null, url: null }; }
+  const previousUrl = shown.url;
+  shown = { udid: null, url: null }; // also retire a pending request when selection becomes off/empty
+  if (previousUrl) $('screen').src = 'about:blank';
   const big = (glyph) => h('div', { class: 'hero-glyph', html: glyph.replace(/width="20" height="20"/, 'width="56" height="56"').replace(/stroke-width="1.5"/, 'stroke-width="1"') });
   let children;
   if (!state) children = [h('div', { class: 'spinner' })];
