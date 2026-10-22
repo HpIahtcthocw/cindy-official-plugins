@@ -727,7 +727,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // ---- device state ----
   async function setState(device, p) {
     const applied = [], operations = [];
-    const add = (name, words, args, options = {}) => operations.push({name, run: () => bag(words, device, args, {mutation: true, ...options})});
+    const add = (name, words, args, options = {}) => operations.push({name, run: () => bag(words, device, args, {mutation: true, ...options, ...budget(options.timeout ?? 30000, p._deadline)})});
     const requiredNumber = (value, name, min, max) => {
       if (value === undefined || value === null) throw failure('INVALID_ARGUMENT', `${name} is required`);
       return number(value, name, min, max);
@@ -779,43 +779,51 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const args = ['privacy', device.udid, action, service];
       if (q.bundleId !== undefined) { if (typeof q.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(q.bundleId)) throw failure('INVALID_ARGUMENT', 'Invalid privacy.bundleId'); args.push(q.bundleId); }
       else if (action !== 'reset') throw failure('INVALID_ARGUMENT', 'privacy.bundleId is required for grant/revoke');
-      operations.push({name: 'privacy', run: () => sim(args, {mutation: true})});
+      operations.push({name: 'privacy', run: () => sim(args, {mutation: true, ...budget(30000, p._deadline)})});
     }
     // Validate the entire request before the first command. Once a command is
     // sent, failures cannot claim that the compound request did nothing.
     for (const operation of operations) {
       try { await operation.run(); applied.push(operation.name); }
-      catch (error) { forget(device.udid); error.execution = applied.length ? 'unknown' : (error.execution || 'unknown'); throw error; }
+      catch (error) {
+        forget(device.udid);
+        return {udid: device.udid, execution: applied.length ? 'unknown' : (error.execution || 'unknown'), applied,
+          stateError: {field: operation.name, code: error.code || 'STATE_FAILED', message: error.message, execution: error.execution || 'unknown'},
+          note: 'Stopped at the failed field; later fields were not sent. Inspect the failed field before retrying; do not replay the whole request.'};
+      }
     }
     // Nothing to change: report the current state (what `set_state` would otherwise have to be trusted for).
     if (!applied.length) {
-      const screen = await geometry(device, {maxAge: 0}).then(g => g.screen, () => null);
+      const screen = await geometry(device, {maxAge: 0, deadline: p._deadline}).then(g => g.screen, () => null);
       if (screen) look(device, screen);
-      return {udid: device.udid, execution: 'not_executed', current: {...await interfaceState(device), ...(screen ? {orientation: screen.orientation} : {})}, ...(screen ? {screen: viewInfo(screen)} : {})};
+      return {udid: device.udid, execution: 'not_executed', current: {...await interfaceState(device, p._deadline), ...(screen ? {orientation: screen.orientation} : {})}, ...(screen ? {screen: viewInfo(screen)} : {})};
     }
     forget(device.udid);
     let screen = null;
     if (applied.includes('orientation') || applied.includes('posture')) {
-      await sleep(700);
-      try { const turned = (await geometry(device, {maxAge: 0})).screen; look(device, turned); screen = viewInfo(turned); } catch {}
+      try {
+        await pause(700, p._deadline);
+        const turned = await geometry(device, {maxAge: 0, deadline: p._deadline});
+        if (!turned.stale) { look(device, turned.screen); screen = viewInfo(turned.screen); }
+      } catch {}
     }
-    const read = applied.some(k => ['appearance', 'contrast', 'text_size'].includes(k)) ? await interfaceState(device) : null;
+    const read = applied.some(k => ['appearance', 'contrast', 'text_size'].includes(k)) ? await interfaceState(device, p._deadline) : null;
     return {udid: device.udid, execution: 'executed', applied, ...(read ? {current: read} : {}), ...(screen ? {screen} : {}),
       ...(applied.includes('network') ? {note: 'Network conditioning reaches apps launched after this call; relaunch the App (app action=launch) if it was already running.'}
         : read ? {note: 'The device changed; an App that reads appearance or text size only at launch shows it after a relaunch (app action=launch). Check with a screenshot.'} : {})};
   }
 
   // Appearance, Increase Contrast and Dynamic Type as the device reports them now.
-  async function interfaceState(device) {
-    const read = async what => { try { return (await bag(['interface', what], device, [], {timeout: 10000})).stdout.trim().split('\n').pop().trim() || null; } catch { return null; } };
+  async function interfaceState(device, deadline) {
+    const read = async what => { try { return (await bag(['interface', what], device, [], budget(10000, deadline))).stdout.trim().split('\n').pop().trim() || null; } catch { return null; } };
     const [appearance, contrast, textSize] = await Promise.all([read('appearance'), read('contrast'), read('text-size')]);
     return {appearance, contrast, text_size: textSize};
   }
 
   // ---- logs and crashes ----
-  async function executableOf(device, bundleId) {
-    const container = (await sim(['get_app_container', device.udid, bundleId, 'app'], {timeout: 10000})).stdout;
-    return (await run('/usr/bin/plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(container, 'Info.plist')], {timeout: 5000})).stdout;
+  async function executableOf(device, bundleId, deadline) {
+    const container = (await sim(['get_app_container', device.udid, bundleId, 'app'], budget(10000, deadline))).stdout;
+    return (await run('/usr/bin/plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(container, 'Info.plist')], budget(5000, deadline))).stdout;
   }
 
   // Both history and live waits keep an explicit app/process scope or fail;
@@ -826,7 +834,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (p.bundleId !== undefined && (typeof p.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(p.bundleId))) throw failure('INVALID_ARGUMENT', 'Invalid bundleId');
     if (p.process !== undefined) return p.process;
     if (p.bundleId === undefined) return null;
-    const name = await executableOf(device, p.bundleId).catch(() => { throw failure('APP_NOT_INSTALLED', `Could not resolve ${p.bundleId} on this device. Check app action=info before reading logs.`); });
+    const name = await executableOf(device, p.bundleId, p._deadline).catch(error => { if (error.code === 'TIME_BUDGET_EXHAUSTED') throw error; throw failure('APP_NOT_INSTALLED', `Could not resolve ${p.bundleId} on this device. Check app action=info before reading logs.`); });
     if (!valid(name)) throw failure('LOGS_UNAVAILABLE', 'The App executable name could not be read; log scope was not widened.');
     return name;
   }
@@ -844,21 +852,23 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (processName) clauses.push(`process == ${JSON.stringify(processName)}`);
     if (level === 'error') clauses.push('(messageType == error OR messageType == fault)');
     if (clauses.length) args.push('--predicate', clauses.join(' AND '));
-    const out = await sim(args, {timeout: 60000, maxBuffer: 64 * 1024 * 1024}).catch(error => { throw failure('LOGS_UNAVAILABLE', error.message); });
+    const out = await sim(args, {...budget(60000, p._deadline), maxBuffer: 64 * 1024 * 1024}).catch(error => { throw failure('LOGS_UNAVAILABLE', error.message); });
     const lines = [];
     for (const line of out.stdout.split('\n')) {
+      budget(1, p._deadline);
       const shown = matchingLogLine(line, pattern);
       if (shown !== null) lines.push(shown);
     }
     const result = {udid: device.udid, ...(processName ? {process: processName} : {}), level, lastSeconds: last, total: lines.length, lines: lines.slice(-limit), truncated: lines.length > limit};
-    if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600)).catch(() => []);
+    if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600), p._deadline).catch(() => []);
     return result;
   }
 
-  async function crashReports(device, processName, withinSeconds) {
+  async function crashReports(device, processName, withinSeconds, deadline) {
     const dir = path.join(require('node:os').homedir(), 'Library/Logs/DiagnosticReports');
     const cutoff = now() - withinSeconds * 1000, reports = [];
     for (const name of await fs.readdir(dir)) {
+      budget(1, deadline);
       if (!name.endsWith('.ips')) continue;
       const file = path.join(dir, name), stat = await fs.stat(file).catch(() => null);
       if (!stat || stat.mtimeMs < cutoff || stat.size > 8 * 1024 * 1024) continue;

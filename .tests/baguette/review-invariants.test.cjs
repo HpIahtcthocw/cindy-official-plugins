@@ -51,6 +51,24 @@ test('bundle comparison detects equal-size equal-time resource changes; registra
   assert.equal((await apps.status({udid:A,wait:0})).job,job.job);
 });
 
+test('foreground App info bounds comparison and hashing without imposing its deadline on install jobs',async t=>{
+  const root=await temporary(t),source=path.join(root,'Game.app');await fs.mkdir(source);
+  const plist={CFBundleIdentifier:'test.example.game',CFBundleExecutable:'Game'};
+  await fs.writeFile(path.join(source,'Game'),Buffer.alloc(256*1024));
+  for(const phase of ['compare','hash']){
+    let clock=0,comparing=false;
+    const apps=require(path.join(dir,'apps.cjs')).createApps({Failure,now:()=>phase==='hash'?(clock+=100):clock,
+      run:async(file,args,options)=>{
+        assert.ok(options.timeout<=1000-clock);
+        if(file.endsWith('plutil')){if(phase==='hash')clock=700;else clock+=100;return {stdout:JSON.stringify(plist)};}
+        comparing=true;assert.equal(options.timeout,700);clock+=options.timeout;
+        throw new Failure('COMMAND_FAILED','checksum comparison timed out');
+      },sim:async(_args,options)=>{assert.ok(options.timeout<=1000-clock);clock+=100;return {stdout:source};}});
+    if(phase==='hash')await assert.rejects(apps.info({udid:A},{appPath:source,_deadline:1000}),e=>e.code==='TIME_BUDGET_EXHAUSTED'&&e.execution==='not_executed');
+    else {const result=await apps.info({udid:A},{appPath:source,_deadline:1000});assert.equal(result.matchesLocal,false);assert.equal(comparing,true);assert.equal(clock,1000);}
+  }
+});
+
 test('installation comparison is already a pollable locked job, then settles as unchanged, sync or full',async t=>{
   for(const mode of ['unchanged','sync','full']){
     const root=await temporary(t),source=path.join(root,'Build.app'),installed=path.join(root,'Installed.app');
@@ -153,7 +171,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
     }
     return {stdout:''};
   };
-  const sim=async args=>{state.calls.push(['sim',args]);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
+  const sim=async(args,options)=>{state.calls.push(['sim',args,options]);onCommand?.('sim',args,options,state);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
   const spawnImpl=(_file,args)=>{
     const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
     if(args[0]==='input') {
@@ -295,8 +313,50 @@ test('compound state requests validate all fields before mutating and preserve p
   }
   assert.equal(state.calls.length,0);
   state.failWord='network';
-  await assert.rejects(agent.setState(device,{orientation:'landscape-left',network:'wifi'}),e=>e.execution==='unknown');
+  const partial=await agent.setState(device,{orientation:'landscape-left',network:'wifi'});
+  assert.equal(partial.execution,'unknown');assert.deepEqual(Array.from(partial.applied),['orientation']);
+  assert.equal(partial.stateError.field,'network');assert.equal(partial.stateError.execution,'not_executed');
   assert.deepEqual(state.calls.map(c=>c[1][0]),['orientation','network']);
+});
+
+test('all state fields stop at the shared deadline and report the completed prefix plus the failed field',async()=>{
+  const fields={orientation:'landscape-left',posture:'open',appearance:'dark',contrast:true,text_size:'large',network:'wifi',location:{lat:1,lon:2},status_bar:'clean',privacy:{action:'grant',service:'camera',bundleId:'test.example.game'}};
+  const names=Object.keys(fields);
+  for(const mode of ['expired-before','expired-between','command-timeout','command-rejected','success'])for(let prefix=0;prefix<names.length;prefix++){
+    let mutations=0;
+    const deadline=mode==='expired-before'?0:mode==='expired-between'?prefix*1000:100000;
+    const f=agentFixture({clockStep:0,onCommand(_file,_args,options,state){
+      assert.ok(options.timeout>0&&options.timeout<=deadline-state.time(),'every command including readback has only remaining time');
+      if(!options.mutation)return;
+      mutations++;
+      if(mode==='command-timeout'&&mutations===prefix+1){state.advance(options.timeout);throw new Failure('COMMAND_FAILED','timeout','unknown');}
+      if(mode==='command-rejected'&&mutations===prefix+1)throw new Failure('STATE_REJECTED','rejected before execution','not_executed');
+      state.advance(1000);
+    },onDelay(ms,state){state.advance(ms);}});
+    const result=await f.agent.setState(f.device,{...fields,_deadline:deadline});
+    if(mode==='success'){
+      assert.equal(result.execution,'executed');assert.deepEqual(Array.from(result.applied),names);assert.equal(result.stateError,undefined);
+    }else{
+      const done=mode==='expired-before'?0:prefix;
+      assert.deepEqual(Array.from(result.applied),names.slice(0,done));
+      assert.equal(result.stateError.field,names[done]);
+      assert.equal(result.execution,done||mode==='command-timeout'?'unknown':'not_executed');
+      assert.equal(result.stateError.execution,mode==='command-timeout'?'unknown':'not_executed');
+      assert.equal(mutations,done+Number(mode.startsWith('command-')),'no later field or readback was attempted');
+    }
+  }
+});
+
+test('state readback never renews the budget or loses a completed mutation',async()=>{
+  for(const p of [{},{orientation:'landscape-left'},{appearance:'dark'}]){
+    const f=agentFixture({clockStep:0,onCommand(_file,_args,options,state){
+      assert.ok(options.timeout<=1000-state.time());state.advance(options.timeout);
+    },onDelay(ms,state){state.advance(ms);}});
+    const result=await f.agent.setState(f.device,{...p,_deadline:1000});
+    assert.equal(result.execution,Object.keys(p).length?'executed':'not_executed');
+    assert.ok(f.state.time()<=1000);
+    assert.equal(f.state.calls.length,1,'no command starts after expiry');
+  }
 });
 
 test('screenshots reject a rotation during capture and refresh a rotation inside the former cache window', async()=>{

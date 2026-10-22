@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {commandBudget} = require('./budget.cjs');
 
 const BUNDLE = /^[A-Za-z0-9][A-Za-z0-9.-]+$/;
 const SYNC_LIMIT = 300;
@@ -19,24 +20,28 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
   const jobs = new Map();
   const failure = (code, message, execution = 'not_executed') => new Failure(code, message, execution);
 
-  async function plist(appDir) {
-    const {stdout} = await run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(appDir, 'Info.plist')], {timeout: 10000});
+  const budget = (timeout, deadline) => commandBudget(timeout, deadline, now);
+  async function plist(appDir, deadline) {
+    const {stdout} = await run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(appDir, 'Info.plist')], budget(10000, deadline));
     try { return JSON.parse(stdout); } catch { throw failure('INVALID_APP', 'Info.plist is unreadable'); }
   }
-  function sha256(file) {
+  function sha256(file, deadline) {
+    budget(1, deadline);
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
-      fs.createReadStream(file).on('data', chunk => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
+      const stream = fs.createReadStream(file);
+      stream.on('data', chunk => { try { budget(1, deadline); hash.update(chunk); } catch (error) { stream.destroy(error); } })
+        .on('error', reject).on('end', () => { try { budget(1, deadline); resolve(hash.digest('hex')); } catch (error) { reject(error); } });
     });
   }
   /** Who an app bundle is: what a tester means by "the same build". */
-  async function identity(appDir) {
-    const info = await plist(appDir);
+  async function identity(appDir, deadline) {
+    const info = await plist(appDir, deadline);
     const executable = info.CFBundleExecutable;
     if (typeof info.CFBundleIdentifier !== 'string' || typeof executable !== 'string') throw failure('INVALID_APP', 'Info.plist has no bundle identifier or executable');
     const exe = path.join(appDir, executable), stat = await fsp.stat(exe);
     return {bundleId: info.CFBundleIdentifier, version: info.CFBundleShortVersionString ?? null, build: info.CFBundleVersion ?? null,
-      executable, executableSha256: await sha256(exe), executableModified: new Date(stat.mtimeMs).toISOString()};
+      executable, executableSha256: await sha256(exe, deadline), executableModified: new Date(stat.mtimeMs).toISOString()};
   }
   async function appPath(value) {
     if (typeof value !== 'string' || !path.isAbsolute(value) || !value.replace(/\/$/, '').endsWith('.app')) throw failure('INVALID_ARGUMENT', 'appPath must be an absolute simulator .app bundle path');
@@ -44,30 +49,30 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     if (!(await fsp.stat(real)).isDirectory()) throw failure('INVALID_ARGUMENT', 'App bundle must be a directory');
     return real;
   }
-  async function installedAt(device, bundleId) {
-    try { return (await sim(['get_app_container', device.udid, bundleId, 'app'], {timeout: 10000})).stdout || null; }
-    catch { return null; }
+  async function installedAt(device, bundleId, deadline) {
+    try { return (await sim(['get_app_container', device.udid, bundleId, 'app'], budget(10000, deadline))).stdout || null; }
+    catch (error) { if (error.code === 'TIME_BUDGET_EXHAUSTED') throw error; return null; }
   }
   /** Compare bytes, including resources whose size and timestamp were preserved. */
-  async function differences(from, to) {
-    const {stdout} = await run(rsync, ['-ac', '--delete', '--dry-run', '--itemize-changes', from + '/', to + '/'], {timeout: 120000, maxBuffer: 32 * 1024 * 1024});
+  async function differences(from, to, deadline) {
+    const {stdout} = await run(rsync, ['-ac', '--delete', '--dry-run', '--itemize-changes', from + '/', to + '/'], {...budget(120000, deadline), maxBuffer: 32 * 1024 * 1024});
     // A line starting with "." changes attributes only (installd resets dylib permissions); count content changes.
     return stdout.split('\n').filter(line => line && !line.startsWith('.'));
   }
 
   async function info(device, p) {
     let local = null;
-    if (p.appPath !== undefined) local = await identity(await appPath(p.appPath));
+    if (p.appPath !== undefined) local = await identity(await appPath(p.appPath), p._deadline);
     const bundleId = p.bundleId ?? local?.bundleId;
     if (typeof bundleId !== 'string' || !BUNDLE.test(bundleId)) throw failure('INVALID_ARGUMENT', 'Pass bundleId or appPath');
-    const container = await installedAt(device, bundleId);
+    const container = await installedAt(device, bundleId, p._deadline);
     if (!container) return {udid: device.udid, bundleId, installed: false, ...(local ? {local} : {})};
-    const installed = await identity(container);
+    const installed = await identity(container, p._deadline);
     const result = {udid: device.udid, bundleId, installed: true, version: installed.version, build: installed.build, executable: installed.executable,
       executableSha256: installed.executableSha256.slice(0, 16), executableModified: installed.executableModified};
     if (local) {
       const sameExecutable = local.executableSha256 === installed.executableSha256;
-      const changedFiles = sameExecutable ? await differences(await appPath(p.appPath), container).then(lines => lines.length).catch(() => null) : null;
+      const changedFiles = sameExecutable ? await differences(await appPath(p.appPath), container, p._deadline).then(lines => lines.length).catch(error => { if (error.code === 'TIME_BUDGET_EXHAUSTED') throw error; return null; }) : null;
       result.local = {version: local.version, build: local.build, executableSha256: local.executableSha256.slice(0, 16), executableModified: local.executableModified};
       result.matchesLocal = sameExecutable && local.version === installed.version && local.build === installed.build && changedFiles === 0;
       if (changedFiles) result.changedFiles = changedFiles;

@@ -45,7 +45,6 @@ function run(file,args,{timeout=30000,mutation=false,input,env,trimOutput=true,e
   });
 }
 async function sim(args, options) { return run('/usr/bin/xcrun',['simctl','--set',DEVICE_SET,...args],options); }
-async function jsonRun(file,args) { const {stdout}=await run(file,args); try{return JSON.parse(stdout);}catch{throw new Failure('INVALID_OUTPUT','Command did not return JSON');} }
 async function listDevices(deadline) {
   await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
   const data=await sim(['list','devices','--json'],commandBudget(5000,deadline));
@@ -75,10 +74,6 @@ async function desktopFile(deviceLabel){
   const base=`${deviceLabel.replace(/[\/:]/g,'-')} ${stamp}`;
   for(let i=1;i<100;i++){const file=path.join(dir,`${base}${i>1?` (${i})`:''}.png`);try{await fs.access(file);}catch{return file;}}
   throw new Failure('SCREENSHOT_NAME','Could not name the screenshot');
-}
-async function baguette(command,device,args=[],options={}) {
-  const result=await run(BINARY,[command,...deviceArgs(device),...args],options);
-  return {udid:device.udid,execution:options.mutation?'executed':'not_applicable',...result};
 }
 let agentImpl=null,appsImpl=null;
 function agent(){return agentImpl||(agentImpl=require('./agent.cjs').createAgent({binary:BINARY,deviceSet:DEVICE_SET,root:ROOT,run,sim,Failure}));}
@@ -141,10 +136,10 @@ async function clipboardAction(p) {
     if(actual.stdout!==text)throw new Failure('CLIPBOARD_UNVERIFIED','Guest clipboard did not match requested text; paste was not sent','unknown');
     if(!p.touch)await nativeKey(device,'KeyV',['command'],p._deadline);
   } else if(p.action==='copy') {
-    await nativeKey(device,'KeyC',['command']);
+    await nativeKey(device,'KeyC',['command'],p._deadline);
     inputCompleted=true;
     await new Promise(resolve=>setTimeout(resolve,250));
-    await sim(['pbsync',device.udid,'host'],{mutation:true});
+    await sim(['pbsync',device.udid,'host'],{mutation:true,...commandBudget(30000,p._deadline)});
   } else throw new Failure('INVALID_ARGUMENT','Unknown input action');
  }catch(error){if(inputCompleted&&error.execution==='not_executed')error.execution='unknown';throw error;}
  finally{keyboardBusy=false;}
@@ -153,27 +148,33 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
   // Core owns the request deadline, including preflight. Nested observation
   // never starts another full budget after a slow boot, launch or input.
   p={...p,_deadline:deadline};
+  // All foreground commands use this request's remaining time by construction.
+  // The app install job deliberately uses the process runner outside this scope.
+  const runCommand=(file,args,options={})=>run(file,args,{...options,...commandBudget(options.timeout??30000,deadline)});
+  const simCommand=(args,options)=>runCommand('/usr/bin/xcrun',['simctl','--set',DEVICE_SET,...args],options);
+  const bagCommand=async(command,device,args=[],options={})=>({udid:device.udid,execution:options.mutation?'executed':'not_applicable',...await runCommand(BINARY,[command,...deviceArgs(device),...args],options)});
+  const jsonCommand=async(file,args)=>{const {stdout}=await runCommand(file,args);try{return JSON.parse(stdout);}catch{throw new Failure('INVALID_OUTPUT','Command did not return JSON');}};
   if(!methods.has(method)) throw new Failure('UNKNOWN_TOOL','Unknown Baguette operation');
   if(process.platform!=='darwin'||process.arch!=='arm64') throw new Failure('UNSUPPORTED_PLATFORM','This package requires an Apple Silicon Mac');
-  const macOS=(await run('/usr/bin/sw_vers',['-productVersion'],commandBudget(3000,deadline))).stdout;
+  const macOS=(await runCommand('/usr/bin/sw_vers',['-productVersion'],{timeout:3000})).stdout;
   if(!/^\d+\.\d+(?:\.\d+)?$/.test(macOS)||Number(macOS.split('.')[0])<15)throw new Failure('UNSUPPORTED_OS',`Requires macOS 15.0 or newer; detected ${macOS || 'unknown'}. Upgrade macOS before using this plugin.`);
   if(method==='environment') {
     const [version,xcode,runtimes,types]=await Promise.all([
-      run(BINARY,['--version']),run('/usr/bin/xcodebuild',['-version']),
-      jsonRun('/usr/bin/xcrun',['simctl','list','runtimes','--json']),jsonRun('/usr/bin/xcrun',['simctl','list','devicetypes','--json'])]);
+      runCommand(BINARY,['--version']),runCommand('/usr/bin/xcodebuild',['-version']),
+      jsonCommand('/usr/bin/xcrun',['simctl','list','runtimes','--json']),jsonCommand('/usr/bin/xcrun',['simctl','list','devicetypes','--json'])]);
     return {macOS,baguette:version.stdout,xcode:xcode.stdout,deviceSet:DEVICE_SET,runtimes:runtimes.runtimes.filter(x=>x.isAvailable&&x.identifier.includes('.iOS-')).map(x=>({name:x.name,identifier:x.identifier,version:x.version,...(Array.isArray(x.supportedDeviceTypes)?{supportedDeviceTypes:x.supportedDeviceTypes.map(d=>d.identifier)}:{})})),deviceTypes:types.devicetypes.filter(x=>x.productFamily==='iPhone'||x.productFamily==='iPad').map(x=>({name:x.name,identifier:x.identifier,minRuntimeVersion:x.minRuntimeVersionString,maxRuntimeVersion:x.maxRuntimeVersionString})),note:'Baguette 0.2.7 supports Xcode 26/27; iPhone Duo requires Xcode 27.1 and iOS 27.1. Use dedicated devices, observe UI before acting, and verify actions afterwards.'};
   }
   if(method==='close_viewer') return {...await stopViewer(),execution:'executed',note:'Viewer server stopped; simulator and App remain running.'};
-  if(method==='devices') return {deviceSet:DEVICE_SET,devices:await listDevices()};
+  if(method==='devices') return {deviceSet:DEVICE_SET,devices:await listDevices(deadline)};
   if(method==='create_device') {
     const name=deviceName(p.name), runtime=string(p.runtime,'runtime'), deviceType=string(p.deviceType,'deviceType');
     if(!/^com\.apple\.CoreSimulator\.SimRuntime\.iOS-[0-9-]+$/.test(runtime)||!/^com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+$/.test(deviceType)) throw new Failure('INVALID_ARGUMENT','Use runtime and deviceType identifiers from environment');
-    const installed=(await jsonRun('/usr/bin/xcrun',['simctl','list','runtimes','--json'])).runtimes.find(r=>r.identifier===runtime&&r.isAvailable);
+    const installed=(await jsonCommand('/usr/bin/xcrun',['simctl','list','runtimes','--json'])).runtimes.find(r=>r.identifier===runtime&&r.isAvailable);
     if(!installed)throw new Failure('RUNTIME_UNAVAILABLE','Select an available installed iOS runtime.');
     if(Array.isArray(installed.supportedDeviceTypes)&&!installed.supportedDeviceTypes.some(d=>d.identifier===deviceType))throw new Failure('DEVICE_RUNTIME_MISMATCH','This runtime does not support the selected model. Refresh the model and iOS options.');
     await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
-    const unique=uniqueName(name,(await listDevices()).map(d=>d.name));
-    const result=await sim(['create',unique,deviceType,runtime],{mutation:true});
+    const unique=uniqueName(name,(await listDevices(deadline)).map(d=>d.name));
+    const result=await simCommand(['create',unique,deviceType,runtime],{mutation:true});
     return {udid:result.stdout,name:unique,runtime,deviceSet:DEVICE_SET,execution:'executed'};
   }
   if(method==='app_install_status') return apps().status(p);
@@ -181,25 +182,36 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     // Only a screenshot this worker just saved; never an arbitrary path.
     const file=string(p.path,'path',1024);
     if(!desktopShots.has(file))throw new Failure('INVALID_ARGUMENT','Unknown screenshot');
-    await run('/usr/bin/open',['-R',file],{timeout:10000});
+    await runCommand('/usr/bin/open',['-R',file],{timeout:10000});
     return {execution:'executed'};
   }
   const device=await target(p,!['boot','shutdown','rename_device','delete_device','erase_device'].includes(method));
   if(method==='delete_device'||method==='erase_device') {
     // simctl refuses to erase a booted device; delete would stop it mid-write.
-    if(device.state!=='Shutdown')await baguette('shutdown',device,[],{timeout:60000,mutation:true});
-    await sim([method==='delete_device'?'delete':'erase',device.udid],{timeout:120000,mutation:true});
+    const action=method==='delete_device'?'delete':'erase';
+    let stopped=false;
+    try {
+      if(device.state!=='Shutdown'){await bagCommand('shutdown',device,[],{timeout:60000,mutation:true});stopped=true;}
+      await simCommand([action,device.udid],{timeout:120000,mutation:true});
+    } catch(error) {
+      if(stopped){
+        const notStarted=error.execution==='not_executed';
+        error.execution='unknown';
+        error.message=`Shutdown completed; ${action} ${notStarted?'was not started':'is unconfirmed; inspect the device before retrying'}. ${error.message}`;
+      }
+      throw error;
+    }
     return {udid:device.udid,execution:'executed'};
   }
   if(method==='rename_device') {
     const name=deviceName(p.name);
-    await sim(['rename',device.udid,name],{mutation:true});
+    await simCommand(['rename',device.udid,name],{mutation:true});
     return {udid:device.udid,name,execution:'executed'};
   }
   if(method==='app_bundle') {
     const bundleId=string(p.bundleId,'bundleId');
     if(!/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundleId))throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');
-    const value=(await sim(['get_app_container',device.udid,bundleId,'app'],{timeout:10000})).stdout;
+    const value=(await simCommand(['get_app_container',device.udid,bundleId,'app'],{timeout:10000})).stdout;
     const real=await fs.realpath(value),root=await fs.realpath(path.join(DEVICE_SET,device.udid,'data'));
     if(!real.endsWith('.app')||!(await fs.stat(real)).isDirectory())throw new Failure('INVALID_APP_PATH','Only this private simulator application bundle may be reused.');
     // System apps live in the runtime, outside the device data directory.
@@ -211,22 +223,22 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
   if(method==='boot') {
     // Upstream 0.1.98's automatic heal omits --set in its internal simctl calls.
     // Wait for this exact custom-set device ourselves; do not silently restart apps.
-    const started=device.state==='Booted'?null:await baguette('boot',device,['--no-heal'],{...commandBudget(15000,p._deadline),mutation:true});
-    const ready=await sim(['bootstatus',device.udid,'-b'],{...commandBudget(90000,p._deadline),mutation:true});
+    const started=device.state==='Booted'?null:await bagCommand('boot',device,['--no-heal'],{timeout:15000,mutation:true});
+    const ready=await simCommand(['bootstatus',device.udid,'-b'],{timeout:90000,mutation:true});
     // Baguette always warns about Simulator.app's lifetime setting; it does not apply to these headless devices.
     const warnings=(started?.warnings||ready.warnings||'').split('\n').filter(l=>l.trim()&&!/lifetime|^\[baguette\] Booted /.test(l)).join('\n');
     // A fresh device shows the slide-to-type introduction over the keyboard the first time it appears; it is not part of any App.
-    if(started){try{await sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','DidShowContinuousPathIntroduction','-bool','true'],{...commandBudget(10000,p._deadline),mutation:true});}catch{}}
+    if(started){try{await simCommand(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','DidShowContinuousPathIntroduction','-bool','true'],{timeout:10000,mutation:true});}catch{}}
     return settledShot(device,p,{udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'});
   }
   if(method==='shutdown') {
     if(device.state==='Shutdown') return {udid:device.udid,state:'Shutdown',execution:'not_executed'};
-    return baguette('shutdown',device,[],{timeout:60000,mutation:true});
+    return bagCommand('shutdown',device,[],{timeout:60000,mutation:true});
   }
   if(method==='describe_ui') return agent().describe(device,p);
   if(method==='tap') return agent().tap(device,p);
   if(method==='gesture') return agent().gesture(device,p);
-  if(method==='swipe') return agent().gesture(device,{kind:'swipe',from:[p.startX,p.startY],to:[p.endX,p.endY],duration:p.duration,observe:'none'});
+  if(method==='swipe') return agent().gesture(device,{kind:'swipe',from:[p.startX,p.startY],to:[p.endX,p.endY],duration:p.duration,observe:'none',_deadline:deadline});
   if(method==='wait_for') return agent().waitFor(device,p);
   if(method==='set_state') return agent().setState(device,p);
   if(method==='logs') return agent().logs(device,p);
@@ -289,14 +301,14 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     if(!allowed.includes(p.button)) throw new Failure('INVALID_ARGUMENT',`button must be one of ${allowed.join(', ')} or release-input`);
     const args=['--button',p.button];
     if(p.duration!==undefined)args.push('--duration',String(number(p.duration,'duration',0,10)));
-    const pressed=await baguette('press',device,args,{mutation:true,...commandBudget(30000,p._deadline)});
+    const pressed=await bagCommand('press',device,args,{mutation:true});
     agent().forget(device.udid);
     return {udid:device.udid,execution:pressed.execution};
   }
   if(method==='screenshot'&&p.destination==='desktop') {
     // The viewer's screenshot button: a PNG on the Desktop, named like Simulator's.
     const file=await desktopFile(device.name);
-    const result=await baguette('screenshot',device,['--format','png','--output',file]);
+    const result=await bagCommand('screenshot',device,['--format','png','--output',file]);
     const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
     desktopShots.add(file); if(desktopShots.size>50)desktopShots.delete(desktopShots.values().next().value);
     return {...result,path:file,name:path.basename(file),mimeType:'image/png',bytes:stat.size};
@@ -306,9 +318,9 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     const dir=path.join(ROOT,'screenshots');await fs.mkdir(dir,{recursive:true,mode:0o700});
     const file=path.join(dir,crypto.randomUUID()+'.png');
     try {
-      const result=await baguette('screenshot',device,['--format','png','--output',file]);
+      const result=await bagCommand('screenshot',device,['--format','png','--output',file]);
       const stat=await fs.stat(file); if(!stat.size) throw new Failure('EMPTY_SCREENSHOT','No image produced');
-      await run('/usr/bin/osascript',['-e','on run argv','-e','set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)','-e','end run',file],{timeout:15000});
+      await runCommand('/usr/bin/osascript',['-e','on run argv','-e','set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)','-e','end run',file],{timeout:15000});
       return {...result,copied:true,mimeType:'image/png',bytes:stat.size};
     } finally { await fs.rm(file,{force:true}); }
   }
@@ -317,20 +329,20 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
   if(method==='app_install') return apps().install(device,p,{terminate:id=>sim(['terminate',device.udid,id],{mutation:true})});
   if(method==='app_terminate') {
     const id=bundleId(p.bundleId);
-    try{await sim(['terminate',device.udid,id],{mutation:true,timeout:15000});}
+    try{await simCommand(['terminate',device.udid,id],{mutation:true,timeout:15000});}
     catch(error){if(/not running|found nothing|No matching processes/i.test(error.message))return {udid:device.udid,bundleId:id,execution:'not_executed',note:'The App was not running.'};throw error;}
     return {udid:device.udid,bundleId:id,execution:'executed'};
   }
   if(method==='app_uninstall') {
     const id=bundleId(p.bundleId);
     if(apps().runningFor(device.udid))throw new Failure('INSTALL_RUNNING','An install is running on this device; wait for it first.');
-    await sim(['uninstall',device.udid,id],{mutation:true,timeout:60000});
+    await simCommand(['uninstall',device.udid,id],{mutation:true,timeout:60000});
     return {udid:device.udid,bundleId:id,execution:'executed',note:'Uninstalled; the App and its data are gone from this device.'};
   }
   if(method==='open_url') {
     const url=string(p.url,'url',4096);
     if(!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url))throw new Failure('INVALID_ARGUMENT','url needs a scheme, e.g. myapp://path or https://…');
-    await run(BINARY,['openurl',...deviceArgs(device),url],{mutation:true,...commandBudget(20000,p._deadline)});
+    await runCommand(BINARY,['openurl',...deviceArgs(device),url],{mutation:true,timeout:20000});
     agent().forget(device.udid);
     return {udid:device.udid,execution:'executed',note:'Opened. iOS may ask whether to open another App; take a screenshot and tap the system prompt if one appears.'};
   }
@@ -351,7 +363,7 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
       for(const [k,v] of Object.entries(p.env)){if(!/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(k)||typeof v!=='string'||v.length>4000)throw new Failure('INVALID_ARGUMENT','env names must be identifiers and values strings');env['SIMCTL_CHILD_'+k]=v;}
     }
     agent().forget(device.udid);
-    const launched={udid:device.udid,bundleId:id,...await sim(args,{mutation:true,env,...commandBudget(30000,p._deadline)}),execution:'executed'};
+    const launched={udid:device.udid,bundleId:id,...await simCommand(args,{mutation:true,env}),execution:'executed'};
     if(p.showViewer===false)return settledShot(device,p,launched);
     let viewer;
     try{viewer={viewer:await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale)};}
@@ -360,18 +372,22 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
   }
   if(method==='heal') {
     // Baguette's documented repair sequence, scoped to our private device set.
-    const jobs=await sim(['spawn',device.udid,'launchctl','list']);
+    const jobs=await simCommand(['spawn',device.udid,'launchctl','list']);
     const pid=text=>text.split('\n').find(l=>l.trim().endsWith('com.apple.SpringBoard'))?.trim().split(/\s+/)[0];
     const before=pid(jobs.stdout);
-    await sim(['spawn',device.udid,'notifyutil','-s','com.apple.coredevice.dtuhidd.active','0'],{timeout:10000,mutation:true});
-    await sim(['spawn',device.udid,'launchctl','kickstart','-k','system/com.apple.backboardd'],{timeout:10000,mutation:true});
-    const deadline=Date.now()+25000;
-    while(Date.now()<deadline) {
-      await new Promise(r=>setTimeout(r,500));
-      const now=pid((await sim(['spawn',device.udid,'launchctl','list'],{timeout:5000,mutation:true})).stdout);
-      if(now&&/^\d+$/.test(now)&&now!==before) return {udid:device.udid,execution:'executed',note:'SpringBoard restarted. Observe UI before continuing.'};
-    }
-    throw new Failure('HEAL_TIMEOUT','Restart requested but SpringBoard readiness not confirmed','unknown');
+    let restarted=false;
+    try {
+      await simCommand(['spawn',device.udid,'notifyutil','-s','com.apple.coredevice.dtuhidd.active','0'],{timeout:10000,mutation:true});
+      restarted=true;
+      await simCommand(['spawn',device.udid,'launchctl','kickstart','-k','system/com.apple.backboardd'],{timeout:10000,mutation:true});
+      const pollingDeadline=Math.min(p._deadline,Date.now()+25000);
+      while(Date.now()<pollingDeadline) {
+        await new Promise(r=>setTimeout(r,Math.min(500,Math.max(0,pollingDeadline-Date.now()))));
+        const now=pid((await simCommand(['spawn',device.udid,'launchctl','list'],{timeout:5000,mutation:true})).stdout);
+        if(now&&/^\d+$/.test(now)&&now!==before) return {udid:device.udid,execution:'executed',note:'SpringBoard restarted. Observe UI before continuing.'};
+      }
+      throw new Failure('HEAL_TIMEOUT','Restart requested but SpringBoard readiness not confirmed','unknown');
+    } catch(error){if(restarted&&error.execution==='not_executed')error.execution='unknown';throw error;}
   }
 }
 function reply(value){process.stdout.write(JSON.stringify(value)+'\n');}

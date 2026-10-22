@@ -5,7 +5,7 @@
   "name": "iOS 模拟器",
   "description": "独立的 iOS 模拟器：每个任务在自己的侧栏页签里看到自己的设备画面，「模拟器」主视图管理所有设备。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。基于开源项目 Baguette（tddworks，Apache-2.0）。",
   "whenToUse": "iOS 模拟器任务默认使用：在独立设备上安装、启动和操作已构建的 App，截图、等待、录下变化、看日志，画面实时显示在任务侧栏。先 devices，复用本任务或空闲设备（新建设备时才需要 environment）。用 tap/gesture 的真实触摸验证，不要另外下载 AXe/idb 或去点 Xcode 窗口。完整流程见手册。heal 须用户同意；不替用户重开运行开关。",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "kind": "chip",
   "entry": "main.js",
   "icon": "assets/icon.png",
@@ -709,7 +709,7 @@
     },
     {
       "name": "set_state",
-      "description": "改变设备状态，可一次改多项：orientation 方向；posture 折叠屏姿态 closed/open/flat 或角度；appearance light/dark；contrast 增强对比度；text_size 动态字体档位；network 网络条件（profile 名、offline、clear 或 {latency, bandwidth, loss}，对之后启动的 App 生效）；location {lat, lon} 或 clear；status_bar clean（9:41、满格满电，适合截图）或 clear；privacy {action: grant/revoke/reset, service, bundleId}，提前授权可避免权限弹窗。改方向或姿态后返回新的屏幕尺寸与方向。改权限会结束该 App，请在启动前设置。",
+      "description": "改变设备状态，可一次改多项：orientation 方向；posture 折叠屏姿态 closed/open/flat 或角度；appearance light/dark；contrast 增强对比度；text_size 动态字体档位；network 网络条件（profile 名、offline、clear 或 {latency, bandwidth, loss}，对之后启动的 App 生效）；location {lat, lon} 或 clear；status_bar clean（9:41、满格满电，适合截图）或 clear；privacy {action: grant/revoke/reset, service, bundleId}，提前授权可避免权限弹窗。改权限会结束该 App，请在启动前设置。所有步骤与读回共用本次调用截止时间；applied 列出已完成字段，失败或预算耗尽时停止后续步骤，stateError 含失败字段 field、code、message、execution，先核对该字段，不整批重试。方向/姿态变化后的屏幕信息仅在剩余时间内确认成功时返回；current 中 null 表示未确认。",
       "parameters": {
         "type": "object",
         "properties": {

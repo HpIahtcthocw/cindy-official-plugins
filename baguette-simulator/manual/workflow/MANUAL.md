@@ -83,6 +83,8 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 - `status_bar: "clean"`：9:41、满格满电，适合出商店图与对比截图；`clear` 还原。
 - `privacy`：`{action: "grant", service: "photos", bundleId: …}` 等，提前授权以免权限弹窗挡住流程。改权限会结束该 App，请在启动前设置。
 
+全部写入与读回共用本次调用截止时间。`applied` 列出已完成字段；失败或预算耗尽时停止后续步骤，并返回 `stateError`（`field`、`code`、`message`、`execution`）。先核对失败字段，不整批重试。方向/姿态变化后的 `screen` 仅在剩余时间内确认成功时返回；未返回时另取截图，`current` 中的 `null` 表示未确认。
+
 ## 8. 日志与崩溃
 
 - `logs bundleId=… level=error`：最近的错误与故障；`match` 是不区分大小写的 JavaScript 正则（不支持 `(?i)` 写法），匹配整行（时间、类型、subsystem/category 与正文）；`last_seconds` 控制时间窗。`logs` 查已记录的历史，`wait_for log=` 等之后新出现的行。

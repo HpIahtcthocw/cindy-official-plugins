@@ -187,3 +187,42 @@ test('a clipboard screenshot puts the PNG on the pasteboard by path argument and
  assert.ok(!osa.slice(1,-1).some(a=>a.includes(file)));
  assert.deepEqual(removed,[file]);
 });
+
+test('erase and delete share preflight and shutdown time, never start a late mutation, and retain shutdown evidence',async()=>{
+ for(const method of ['erase_device','delete_device'])for(const deviceState of ['Booted','Shutdown'])for(const mode of ['success','shutdown-timeout','expired-after-shutdown','removal-timeout']){
+  if(deviceState==='Shutdown'&&['shutdown-timeout','expired-after-shutdown'].includes(mode))continue;
+  let clock=0;const calls=[];const deadline=mode==='expired-after-shutdown'?58000:110000;
+  const {commandBudget}=require(path.join(dir,'budget.cjs'));
+  const context={module:{exports:{}},__dirname:dir,Date:{now:()=>clock},process:{platform:'darwin',arch:'arm64'},require(name){
+   if(name==='./budget.cjs')return {commandBudget:(timeout,limit)=>commandBudget(timeout,limit,()=>clock)};
+   if(name==='./viewer.cjs')return {};
+   if(name==='node:fs/promises')return {mkdir:async()=>{}};
+   if(name==='node:child_process')return {execFile(file,args,options,cb){
+    const left=deadline-clock;assert.ok(options.timeout>0&&options.timeout<=left);
+    const shutting=args[0]==='shutdown',removing=args.includes('erase')||args.includes('delete');
+    calls.push({args,timeout:options.timeout});
+    let cost=0,data='',error=null;
+    if(file==='/usr/bin/sw_vers'){cost=3000;data='27.0';}
+    else if(args.includes('--json')){cost=5000;data=JSON.stringify({devices:{r:[{udid,state:deviceState}]}});}
+    else if(shutting)cost=mode==='shutdown-timeout'?70000:mode==='expired-after-shutdown'?50000:55000;
+    else if(removing)cost=mode==='removal-timeout'?120000:1000;
+    clock+=Math.min(cost,options.timeout);
+    if(cost>options.timeout)error=Error('command killed at deadline');
+    queueMicrotask(()=>cb(error,data,''));return {stdin:{on(){},end(){}}};
+   }};
+   return require(name.startsWith('./')?path.join(dir,name):name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const result=await context.module.exports.dispatch(method,{udid},deadline).catch(e=>e);
+  assert.ok(clock<=deadline);
+  const remove=calls.find(c=>c.args.includes('erase')||c.args.includes('delete'));
+  if(mode==='success')assert.equal(result.execution,'executed');
+  else {
+   assert.equal(result.execution,'unknown');
+   if(mode==='expired-after-shutdown'){assert.equal(remove,undefined);assert.match(result.message,/Shutdown completed; .*was not started/);}
+   if(mode==='shutdown-timeout')assert.equal(remove,undefined);
+   if(mode==='removal-timeout')assert.ok(remove);
+  }
+  if(remove)assert.equal(remove.timeout,deviceState==='Booted'?47000:102000);
+ }
+});
