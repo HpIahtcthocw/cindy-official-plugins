@@ -73,12 +73,16 @@ test('background install retains the device lock through success and failure, wh
 
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
-function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay}={}) {
+function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCommand,clockStep=10}={}) {
   const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   state.target={litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}};
   const screen=()=>({width:state.width||402,height:874,orientation:state.orientation,target:state.target});
-  const run=async(file,args)=>{
-    state.calls.push([file,args]);
+  let clock=0;
+  state.advance=ms=>{clock+=ms;};
+  state.time=()=>clock;
+  const run=async(file,args,options)=>{
+    state.calls.push([file,args,options]);
+    onCommand?.(file,args,options,state);
     if(args[0]==='input'){if(state.failConfirm||!require('node:util').isDeepStrictEqual(JSON.parse(args[args.indexOf('--expected-screen')+1]),screen()))throw Error('changed');return {stdout:''};}
     if(args[0]==='describe-ui'){if(state.failTree)throw Error('tree unavailable');return {stdout:JSON.stringify({screen:screen(),children:state.treeChildren})};}
     if(args[0]==='screenshot') {state.files.set(args[args.indexOf('--output')+1],Buffer.from('raw'));if(state.turnOnShot)state.orientation='landscape-left';return {stdout:''};}
@@ -113,8 +117,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay}={}) 
     require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async p=>p.endsWith('DiagnosticReports')?[...state.diagnostics.keys()]:[],stat:async p=>state.diagnostics.get(path.basename(p)),rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{const report=state.diagnostics.get(path.basename(p));if(report)return report.text;if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
       return require(name.startsWith('./')?path.join(dir,name):name);}};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'agent.cjs'),'utf8'),context);
-  let clock=0;
-  const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl,now:()=>++clock*100});
+  const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl,now:()=>{clock+=clockStep;return clock;}});
   return {agent,state,device:{udid:A}};
 }
 
@@ -251,6 +254,54 @@ test('a log wait timeout includes the current screenshot without a separate requ
   const {agent,device}=agentFixture();
   const result=await agent.waitFor(device,{log:'never printed',timeout:1});
   assert.equal(result.met,false);assert.ok(result.screenshot.path);
+});
+
+test('all wait outcomes retain their result when slow optional images exhaust the shared host budget',async()=>{
+  for(const mode of ['log-timeout','log-match','id-timeout','stable-timeout','ocr-timeout']) {
+    const f=agentFixture({clockStep:0,frames:mode==='log-match'?[JSON.stringify({eventMessage:'ready'})+'\n']:[],
+      onDelay:(ms,s)=>s.advance(ms),
+      onCommand:(file,args,options,s)=>{
+        // Model commands honoring their supplied timeout; screenshots retry,
+        // geometry and OCR compete for the same finite remaining budget.
+        const cost=mode==='ocr-timeout'?file.endsWith('osascript')&&args[2].endsWith('ocr.jxa.js')?40000:1000:mode==='log-match'?20000:args[0]==='describe-ui'?16000:20000;
+        s.advance(Math.min(cost,options.timeout));
+        if(cost>=options.timeout)throw new Failure('COMMAND_TIMEOUT','slow command');
+      }});
+    const p=mode.startsWith('log')?{log:'ready'}:mode==='stable-timeout'?{stable:1}:mode==='ocr-timeout'?{text:'ready'}:{id:'ready'};
+    const result=await f.agent.waitFor(f.device,{...p,timeout:90,screenshot:true,_inline:true});
+    assert.equal(result.met,mode==='log-match',mode);
+    assert.ok(mode==='ocr-timeout'?result.screenshot.path:result.screenshot.error,mode);
+    assert.ok(f.state.time()<=100500,`${mode}: ${f.state.time()}ms`);
+    assert.ok(!result.reason?.includes('is attached'));
+    assert.ok(f.state.calls.every(([, ,o])=>o.timeout>0&&o.timeout<=40000));
+    if(mode==='ocr-timeout')assert.ok(f.state.calls.some(([,args])=>args[2]?.endsWith?.('ocr.jxa.js')));
+  }
+});
+
+test('supplemental capture retries and inline renders never renew a wait deadline',async()=>{
+  for(const phase of ['capture','render','inline']) {
+    let captures=0,renders=0;
+    const f=agentFixture({clockStep:0,onDelay:(ms,s)=>s.advance(ms),
+      onCommand:(file,args,options,s)=>{
+        if(args[0]==='screenshot'){
+          captures++;
+          if(phase==='capture') {s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow capture');}
+        }
+        if(file.endsWith('osascript')&&args[2].endsWith('image.jxa.js')){
+          renders++;
+          if(phase==='inline'&&renders===1)return;
+          s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow render');
+        }
+      }});
+    f.state.imageBytes=130001;
+    const result=await f.agent.waitFor(f.device,{log:'never',timeout:90,_inline:true});
+    assert.equal(result.met,false);assert.ok(result.screenshot.error);
+    assert.ok(f.state.time()<=100300);
+    assert.equal(captures,1,'exhausted budget does not start a second capture');
+    assert.equal(renders,phase==='capture'?0:phase==='render'?1:2);
+    const direct=agentFixture({clockStep:0});
+    assert.ok((await direct.agent.screenshot(direct.device,{corners:false})).path);
+  }
 });
 
 test('live log waits and history use the same message field with eventMessage taking precedence',async()=>{

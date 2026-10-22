@@ -29,6 +29,14 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   const dargs = device => ['--udid', device.udid, '--device-set', deviceSet];
   const bag = (words, device, args = [], options) => run(binary, [...words, ...dargs(device), ...args], options);
   const failure = (code, message, execution = 'not_executed') => new Failure(code, message, execution);
+  // Reuse command timeouts; a wait's observation and optional image share a
+  // deadline rather than each starting a fresh full command budget.
+  const budget = (timeout, deadline) => {
+    if (deadline === undefined) return {timeout};
+    const remaining = Math.floor(deadline - now());
+    if (remaining <= 0) throw failure('WAIT_TIMEOUT', 'Wait image/observation budget exhausted. Request screenshot separately if needed.');
+    return {timeout: Math.min(timeout, remaining)};
+  };
   const number = (value, name, min, max, fallback) => {
     if (value === undefined || value === null) return fallback;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw failure('INVALID_ARGUMENT', `${name} must be ${min}–${max}`);
@@ -40,16 +48,16 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   };
 
   // ---- observing ----
-  async function readTree(device, extra = []) {
-    const {stdout} = await bag(['describe-ui'], device, extra, {timeout: 20000});
+  async function readTree(device, extra = [], deadline) {
+    const {stdout} = await bag(['describe-ui'], device, extra, budget(20000, deadline));
     try { return JSON.parse(stdout); } catch { throw failure('INVALID_OUTPUT', 'Accessibility output was not JSON'); }
   }
   /** Current screen geometry (and tree). Cached briefly so taps stay fast. */
-  async function observe(device, {fresh = false} = {}) {
+  async function observe(device, {fresh = false, deadline} = {}) {
     const cached = screens.get(device.udid);
     if (!fresh && cached?.tree && now() - cached.treeAt < SCREEN_TTL_MS) return cached;
     let tree;
-    try { tree = await readTree(device); }
+    try { tree = await readTree(device, [], deadline); }
     catch (error) {
       // An old tree cannot prove what is currently visible or safe to tap.
       // Geometry has its own separately confirmed cache for coordinate input.
@@ -70,22 +78,22 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
    * Is a cached screen still the live one? An input session pinned to it binds
    * only if it is (about 0.3 s, nothing is sent), versus about 2 s for a probe.
    */
-  async function confirm(device, screen) {
+  async function confirm(device, screen, deadline) {
     const pin = pinned(screen);
     if (!pin.length) return false;
-    try { await bag(['input'], device, pin, {timeout: 5000}); return true; } catch { return false; }
+    try { await bag(['input'], device, pin, budget(5000, deadline)); return true; } catch { return false; }
   }
   /**
    * Screen geometry only (orientation, size, lit panel), for screenshots and
    * coordinate input. A one-point hit test reports it without walking the tree
    * or sweeping the status bar: about 1.6 s on iPhone Duo versus 4–6 s.
    */
-  async function geometry(device, {maxAge = SCREEN_TTL_MS} = {}) {
+  async function geometry(device, {maxAge = SCREEN_TTL_MS, deadline} = {}) {
     const cached = screens.get(device.udid);
     if (cached && now() - cached.at < maxAge) return cached;
-    if (cached && await confirm(device, cached.screen)) { cached.at = now(); return cached; }
+    if (cached && await confirm(device, cached.screen, deadline)) { cached.at = now(); return cached; }
     let probe;
-    try { probe = await readTree(device, ['--x', '1', '--y', '1']); }
+    try { probe = await readTree(device, ['--x', '1', '--y', '1'], deadline); }
     catch (error) {
       if (cached) return {...cached, stale: true};
       throw failure('SCREEN_UNAVAILABLE', `Could not read the screen geometry: ${error.message}. Take a screenshot and retry.`);
@@ -110,12 +118,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   const densities = new Map();
   const viewInfo = screen => ({...G.viewSize(screen), orientation: screen.orientation, ...(screen.target?.litPanel && screen.target.litPanel !== 'primary' ? {panel: screen.target.litPanel} : {})});
 
-  async function cornerRadius(device, screen) {
+  async function cornerRadius(device, screen, deadline) {
     const panel = screen.target?.litPanel || 'primary', key = `${device.udid}|${panel}`;
     if (corners.has(key)) return corners.get(key);
     let radius = 0;
     try {
-      const layout = JSON.parse((await bag(['chrome', 'layout'], device, panel !== 'primary' ? ['--panel', panel] : [], {timeout: 10000})).stdout);
+      const layout = JSON.parse((await bag(['chrome', 'layout'], device, panel !== 'primary' ? ['--panel', panel] : [], budget(10000, deadline))).stdout);
       if (layout.innerCornerRadius > 0 && layout.screen?.width > 0) radius = layout.innerCornerRadius * screen.width / layout.screen.width;
     } catch {}
     corners.set(key, radius);
@@ -164,10 +172,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
    * Text on the screen image, via Vision on this Mac, as view-point elements.
    * With `find`, a longer line containing it is located by just that part.
    */
-  async function readText(device, {find} = {}) {
-    const shot = await screenshot(device, {scale: 2, corners: false, format: 'png', _internal: true});
+  async function readText(device, {find, deadline} = {}) {
+    const shot = await screenshot(device, {scale: 2, corners: false, format: 'png', _internal: true, _deadline: deadline});
     try {
-      const items = JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'ocr.jxa.js'), shot.path, JSON.stringify(typeof find === 'string' && find.trim() ? {find: find.trim()} : {})], {timeout: 40000})).stdout);
+      const items = JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'ocr.jxa.js'), shot.path, JSON.stringify(typeof find === 'string' && find.trim() ? {find: find.trim()} : {})], budget(40000, deadline))).stdout);
       const {width, height} = G.viewSize(shot._screen);
       const elements = items.filter(o => o.text && o.text.trim()).map(o => {
         const b = o.part || o.box, frame = [b[0] * width, b[1] * height, b[2] * width, b[3] * height].map(round);
@@ -200,13 +208,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     // establish which orientation and panel these pixels belong to.
     const known = densities.get(device.udid);
     const divisor = known ? Math.max(1, Math.floor(known / scale)) : 1;
-    const before = await geometry(device, {maxAge: 0});
+    const before = await geometry(device, {maxAge: 0, deadline: p._deadline});
     if (before.stale) throw failure('SCREEN_UNAVAILABLE', 'Current screen geometry could not be confirmed.');
     const screen = before.screen;
     // Baguette's capture occasionally fails once with an internal error; the next frame is fine.
-    await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})
-      .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})));
-    const afterFrame = await geometry(device, {maxAge: 0});
+    await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], budget(20000, p._deadline))
+      .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], budget(20000, p._deadline))));
+    const afterFrame = await geometry(device, {maxAge: 0, deadline: p._deadline});
     if (afterFrame.stale || !sameScreen(afterFrame.screen, screen)) {
       await fs.rm(raw, {force: true});
       throw failure('SCREEN_CHANGED', 'The screen turned or folded while capturing. Take a new screenshot.');
@@ -221,9 +229,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     const grid = p.grid === true ? (region ? 25 : 100) : number(p.grid, 'grid', 0, 1000, 0);
     try {
-      const radius = p.corners === false ? 0 : await cornerRadius(device, screen);
+      const radius = p.corners === false ? 0 : await cornerRadius(device, screen, p._deadline);
       const options = {rotate: G.rotation(screen), view, scale, region, radius, grid, format: p.format === 'png' ? 'png' : 'jpeg', quality: 0.82};
-      const render = async (out, extra) => JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, out, JSON.stringify({...options, ...extra})], {timeout: 20000})).stdout);
+      const render = async (out, extra) => JSON.parse((await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'image.jxa.js'), raw, out, JSON.stringify({...options, ...extra})], budget(20000, p._deadline))).stdout);
       const size = await render(file, {});
       if (p._internal) return {path: file, _screen: screen};
       look(device, screen);
@@ -249,9 +257,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   // ---- acting ----
   // Text on screen that has an element with no accessibility behind it: read it off the pixels.
-  async function findByText(device, p, nth) {
+  async function findByText(device, p, nth, deadline) {
     if (p.id !== undefined || typeof p.text !== 'string' || (p.role !== undefined && p.role !== 'text')) return null;
-    const read = await readText(device, {find: p.text});
+    const read = await readText(device, {find: p.text, deadline});
     const {element, matches} = G.findElement(read.elements, {text: p.text, nth, view: G.viewSize(read.screen)});
     return {read, element, matches};
   }
@@ -397,9 +405,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   // ---- waiting ----
   // A small PNG of the whole screen in native orientation (about 270 px wide on iPad).
-  async function frame(device) {
-    const {stdout} = await run(binary, ['screenshot', ...dargs(device), '--format', 'png', '--scale', '6'], {timeout: 10000, trimOutput: false, encoding: 'buffer'}).catch(() => ({stdout: null}));
-    return stdout && stdout.length ? {bytes: stdout, image: pixels.decodePng(stdout)} : null;
+  async function frame(device, deadline) {
+    try {
+      const {stdout} = await run(binary, ['screenshot', ...dargs(device), '--format', 'png', '--scale', '6'], {...budget(10000, deadline), trimOutput: false, encoding: 'buffer'});
+      return stdout && stdout.length ? {bytes: stdout, image: pixels.decodePng(stdout)} : null;
+    } catch { return null; }
   }
   // A view-point region as a rectangle on that native-orientation frame.
   function frameRect(screen, image, region) {
@@ -440,11 +450,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   async function waitFor(device, p) {
     const timeout = number(p.timeout, 'timeout', 1, 90, 15) * 1000, started = now();
+    const deadline = started + timeout;
     const done = extra => ({udid: device.udid, met: true, waitedMs: now() - started, ...extra});
-    // A screenshot when asked, and always when the wait ran out: what is on screen is the next question.
+    // Leave 20s of the Host's 120s ceiling for worker preflight and delivery.
+    // Optional images must not consume the wait result when the simulator is slow.
     const finish = async (result, look = p.screenshot === true) => {
       if (!look) return result;
-      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline}); return {...result, screenshot: shot, ...(_modelImages ? {_modelImages} : {})}; }
+      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline, _deadline: started + 100000}); return {...result, screenshot: shot, ...(_modelImages ? {_modelImages} : {})}; }
       catch (error) { return {...result, screenshot: {error: error.message}}; }
     };
     const unmet = (reason, extra = {}) => finish({udid: device.udid, met: false, waitedMs: now() - started, reason, ...extra}, true);
@@ -454,12 +466,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     }
     if (p.stable !== undefined) {
       const quiet = number(p.stable, 'stable', 0.2, 30, 1) * 1000, tolerance = number(p.tolerance, 'tolerance', 0, 50, 0.5) / 100;
-      const {screen} = p.region !== undefined ? await geometry(device) : {screen: null};
+      const {screen} = p.region !== undefined ? await geometry(device, {deadline}) : {screen: null};
       const region = screen ? viewRegion(screen, p.region) : null;
       let prev = null, since = now(), rect = null;
       const changes = [];
       while (now() - started < timeout) {
-        const f = await frame(device);
+        const f = await frame(device, deadline);
         if (f) {
           if (region && f.image && !rect) rect = frameRect(screen, f.image, region);
           const moved = prev ? share(prev, f, rect) : 1;
@@ -472,7 +484,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       }
       const typical = changes.length ? [...changes].sort((a, b) => a - b)[Math.floor(changes.length / 2)] * 100 : null;
       const ambient = typical !== null && typical < 15;
-      return unmet(`The ${region ? 'region' : 'screen'} kept changing for ${Math.round(timeout / 1000)} s${typical !== null ? `, typically ${typical.toFixed(1)}% of pixels per frame` : ''}.${ambient ? ` That looks like ongoing animation (a game scene); if so, wait with tolerance=${Math.min(50, Math.ceil(typical * 1.5 + 1))} or watch a calm region.` : ''} The current screen is attached.`);
+      return unmet(`The ${region ? 'region' : 'screen'} kept changing for ${Math.round(timeout / 1000)} s${typical !== null ? `, typically ${typical.toFixed(1)}% of pixels per frame` : ''}.${ambient ? ` That looks like ongoing animation (a game scene); if so, wait with tolerance=${Math.min(50, Math.ceil(typical * 1.5 + 1))} or watch a calm region.` : ''}`);
     }
     G.validateSelector(p);
     if (typeof p.text !== 'string' && typeof p.id !== 'string') throw failure('INVALID_ARGUMENT', 'wait_for needs text, id, stable or log');
@@ -480,13 +492,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let seenText = [], source = 'ui';
     while (now() - started < timeout) {
       try {
-        const {screen, tree} = await observe(device, {fresh: true});
+        const {screen, tree} = await observe(device, {fresh: true, deadline});
         const {elements} = G.compactTree(tree, screen, {limit: 1000});
         let {element} = G.findElement(elements, {text: p.text, id: p.id, role: p.role});
         seenText = elements.filter(e => e.label).slice(0, 20).map(e => e.label);
         // No accessibility (a game): look for the text in the pixels.
         if (!element && !elements.length && typeof p.text === 'string') {
-          const hit = await findByText(device, p, 0);
+          const hit = await findByText(device, p, 0, deadline);
           if (!hit) throw failure('SCREEN_UNAVAILABLE', 'The requested text could not be read from this screen.');
           if (hit) { source = 'ocr'; element = hit.element; seenText = hit.read.elements.slice(0, 20).map(e => e.label); }
         }
@@ -494,7 +506,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       } catch {}
       await sleep(400);
     }
-    return unmet(`${gone ? 'Still visible' : 'Not visible'} after ${Math.round(timeout / 1000)} s: ${JSON.stringify(p.text ?? p.id)}. On screen${source === 'ocr' ? ' (text read from the image)' : ''}: ${JSON.stringify(seenText)}. The current screen is attached.`);
+    return unmet(`${gone ? 'Still visible' : 'Not visible'} after ${Math.round(timeout / 1000)} s: ${JSON.stringify(p.text ?? p.id)}. On screen${source === 'ocr' ? ' (text read from the image)' : ''}: ${JSON.stringify(seenText)}.`);
   }
 
   async function waitForLog(device, p, timeout, started, done) {

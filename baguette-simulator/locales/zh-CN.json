@@ -34,7 +34,7 @@
       "description": "硬件按钮：home、lock、power、volume-up、volume-down、action、app-switcher、swipe-to-app-switcher、swipe-to-home、pull-down-to-notification-center、pull-down-to-lock-screen；duration 为按住秒数。release-input：只释放卡住的按键、停止重复输入，不重启系统也不关闭 App。"
     },
     "wait_for": {
-      "description": "等条件成立再返回（最长 90 秒），代替固定 sleep 加反复截图。text 或 id 出现（gone=true 时等它消失；游戏里按识别出的文字判断）；stable=秒数：画面变化低于 tolerance（像素百分比，默认 0.5）持续这么久，可用 region 只看局部；log=正则：App 日志出现匹配行（配合 bundleId）。screenshot=true 附上成立时的截图。没等到返回 met=false、原因与当时截图，游戏动画会给出建议的 tolerance。"
+      "description": "等条件成立再返回（最长 90 秒），代替固定 sleep 加反复截图。text 或 id 出现（gone=true 时等它消失；游戏里按识别出的文字判断）；stable=秒数：画面变化低于 tolerance（像素百分比，默认 0.5）持续这么久，可用 region 只看局部；log=正则：App 日志出现匹配行（配合 bundleId）。screenshot=true 附上成立时的截图。没等到返回 met=false、原因与当时截图，游戏动画会给出建议的 tolerance。 附图受本次调用剩余预算限制；失败或预算不足时保留等待结果并返回 screenshot.error，需要画面时另调 screenshot。"
     },
     "capture": {
       "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。支持内联图片的 Cindy 会附上联系表；旧版 Cindy 或联系表超过 130 KB 时只返回 sheet 路径，须用读图工具打开。 execution 保留动作执行状态；动作失败时 actionError 含 code、message、execution，不据此盲目重试。 仅支持录制期间方向、尺寸与面板不变；在动作后和录制结束核验，变化或无法确认时不生成联系表并保留 execution。不提供逐帧转向证据。"
