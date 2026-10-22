@@ -147,7 +147,7 @@ test('background install retains the device lock through success and failure, wh
 
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
-function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCommand,clockStep=10}={}) {
+function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCommand,onFile,clockStep=10}={}) {
   const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   state.target={litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}};
   const screen=()=>({width:state.width||402,height:874,orientation:state.orientation,target:state.target});
@@ -179,7 +179,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
       c.stdin.end=()=>c.emit('exit',0);return c;
     }
     const streaming=args.includes('stream');
-    if(streaming){c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>c.emit('close',null,'SIGKILL');}
+    if(streaming){c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=signal=>c.emit('close',null,signal);state.stream=c;}
     queueMicrotask(()=>{
       if(streamError)c.emit('error',Error('stream failed'));else for(const f of frames){if(streaming)c.stdout.write(f);else c.stdout.emit('data',f);}
       for(const {source,event,args:values} of streamEvents){
@@ -188,8 +188,8 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
     });return c;
   };
   const context={module:{exports:{}},__dirname:dir,Buffer,Date,
-    setTimeout:(fn,ms)=>{const timer=setTimeout(()=>{onDelay?.(ms,state);fn();},ms===2000?2000:0);if(ms===2000)timer.unref();return timer;},clearTimeout,
-    require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async p=>p.endsWith('DiagnosticReports')?[...state.diagnostics.keys()]:[],stat:async p=>state.diagnostics.get(path.basename(p)),rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{const report=state.diagnostics.get(path.basename(p));if(report)return report.text;if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
+    setTimeout:(fn,ms)=>setTimeout(()=>{onDelay?.(ms,state);fn();},ms===2000?2000:0),clearTimeout,
+    require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async p=>{onFile?.('readdir',p,state);return p.endsWith('DiagnosticReports')?[...state.diagnostics.keys()]:[];},stat:async p=>{onFile?.('stat',p,state);return state.diagnostics.get(path.basename(p));},rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{onFile?.('readFile',p,state);const report=state.diagnostics.get(path.basename(p));if(report)return report.text;if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
       return require(name.startsWith('./')?path.join(dir,name):name);}};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'agent.cjs'),'utf8'),context);
   const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl,now:()=>{clock+=clockStep;return clock;}});
@@ -293,6 +293,24 @@ test('crash summaries take the latest five from all matching reports regardless 
   f.state.diagnostics.set('another-filename.ips',headerOnly);
   const result=await f.agent.logs(f.device,{process:'Game'});
   assert.deepEqual(Array.from(result.crashes,r=>path.basename(r.file)),['another-filename.ips','unrelated-filename.ips',... [9,8,7].map(n=>`Game-${n}.ips`)]);
+});
+
+test('crash scanning distinguishes empty, skipped, unreadable and incomplete while retaining the logs',async()=>{
+  for(const phase of ['empty','skipped','readdir','stat','readFile','deadline','partial']){
+    let reads=0;
+    const f=agentFixture({clockStep:0,onFile(operation,_file,state){
+      reads++;
+      if(operation===phase||(phase==='partial'&&operation==='stat'&&reads>3))throw Object.assign(Error('diagnostic access denied'),{code:'EACCES'});
+      if(phase==='deadline'&&operation==='readdir')state.advance(10000);
+    }});
+    f.state.logEntries=[{eventMessage:'ready'}];
+    if(phase!=='empty')for(const n of [1,2])f.state.diagnostics.set('Game-'+n+'.ips',{mtimeMs:1000,size:200,text:JSON.stringify({timestamp:'2026-10-22T10:00:00Z'})+'\n'+JSON.stringify({device:A,procName:'Game'})});
+    const result=await f.agent.logs(f.device,{process:'Game',_deadline:10000,...(phase==='skipped'?{crashes:false}:{})});
+    assert.ok(result.lines[0].includes('ready'),'diagnostic failure does not lose the primary logs');
+    if(phase==='empty'){assert.deepEqual(Array.from(result.crashes),[]);assert.equal(result.crashesError,undefined);}
+    else if(phase==='skipped'){assert.equal(result.crashes,undefined);assert.equal(result.crashesError,undefined);assert.equal(reads,0);}
+    else {assert.equal(result.crashes,undefined,'unverified coverage is not reported as an empty or complete list');assert.equal(result.crashesError.code,phase==='deadline'?'TIME_BUDGET_EXHAUSTED':'EACCES');}
+  }
 });
 
 test('explicit log scope is shared by history and waits and never widens after lookup or validation failure', async()=>{
@@ -523,7 +541,44 @@ test('capture keeps same-length different frames and carries action execution th
   assert.equal(failed.execution,'executed');assert.equal(failed.action.bundleId,'test.example.app');assert.equal(failed.captureError.code,'RENDER_FAILED');
   const broken=agentFixture({streamError:true});
   const empty=await broken.agent.capture(broken.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'}));
-  assert.equal(empty.captureError.code,'CAPTURE_EMPTY');assert.equal(empty.execution,'executed');assert.equal(empty.action.execution,'executed');
+  assert.equal(empty.captureError.code,'CAPTURE_FAILED');assert.equal(empty.execution,'executed');assert.equal(empty.action.execution,'executed');
+});
+
+test('capture rejects interrupted streams with or without frames and preserves every action outcome',async()=>{
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+  for(const terminal of ['exit','close','error','stdout-error'])for(const when of ['before','action','window'])for(const frames of [[],[jpeg]])for(const execution of ['executed','unknown','not_executed']){
+    const interrupt=state=>{for(let i=0;i<2;i++)terminal==='stdout-error'?state.stream.stdout.emit('error',Error('pipe failed')):state.stream.emit(terminal,...(terminal==='error'?[Error('stream failed')]:[0]));};
+    const f=agentFixture({frames,onDelay(ms,state){if((when==='before'&&ms===400)||(when==='window'&&ms===500))interrupt(state);}});
+    const result=await f.agent.capture(f.device,{seconds:0.5,action:{tool:'tap'}},async()=>{
+      if(when==='action')interrupt(f.state);
+      if(execution!=='executed')throw new Failure('ACTION_FAILED','action not confirmed',execution);
+      return {execution,marker:'original action result'};
+    });
+    assert.ok(result.captureError);assert.equal(result.sheet,undefined);assert.equal(result.execution,execution);
+    assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('sheet.jxa.js')));
+    if(execution==='executed')assert.equal(result.action.marker,'original action result');
+    else assert.equal(result.actionError.execution,execution);
+  }
+});
+
+test('capture drains trailing stdout after its own stop and bounds missing close with the existing cleanup window',async()=>{
+  const a=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]),b=Buffer.from([0xff,0xd8,3,4,0xff,0xd9]);
+  for(const mode of ['drained','missing-close','deadline']){
+    let drained=false;const signals=[];
+    const f=agentFixture({frames:[a],clockStep:0,onDelay(ms,state){
+      state.advance(ms);
+      if(ms===400)state.stream.kill=signal=>{
+        signals.push(signal);
+        if(mode!=='drained')return;
+        state.stream.emit('exit',null,signal);
+        queueMicrotask(()=>{state.stream.stdout.write(b);state.stream.stdout.end();drained=true;state.stream.emit('close',null,signal);});
+      };
+    },onCommand(_file,args){if(args[2]?.endsWith?.('sheet.jxa.js'))assert.equal(drained,true,'exit alone does not permit rendering');}});
+    const result=await f.agent.capture(f.device,{seconds:0.5,_deadline:mode==='deadline'?1000:10000,action:{tool:'tap'}},async()=>({execution:'executed'}));
+    assert.equal(result.execution,'executed');assert.ok(f.state.time()<=(mode==='deadline'?1000:10000));
+    if(mode==='drained'){assert.ok(result.sheet);assert.equal(result.received,2);assert.equal(result.distinct,2);assert.deepEqual(signals,['SIGTERM']);}
+    else {assert.equal(result.captureError.code,'CAPTURE_DRAIN_TIMEOUT');assert.equal(result.sheet,undefined);assert.deepEqual(signals,['SIGTERM','SIGKILL']);}
+  }
 });
 
 test('capture refuses changed or unconfirmed geometry at action/end boundaries while preserving action execution',async()=>{

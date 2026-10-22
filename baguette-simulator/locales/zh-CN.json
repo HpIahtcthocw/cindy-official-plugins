@@ -43,7 +43,7 @@
       "description": "改变设备状态，可一次改多项：orientation 方向；posture 折叠屏姿态 closed/open/flat 或角度；appearance light/dark；contrast 增强对比度；text_size 动态字体档位；network 网络条件（profile 名、offline、clear 或 {latency, bandwidth, loss}，对之后启动的 App 生效）；location {lat, lon} 或 clear；status_bar clean（9:41、满格满电，适合截图）或 clear；privacy {action: grant/revoke/reset, service, bundleId}，提前授权可避免权限弹窗。改权限会结束该 App，请在启动前设置。所有步骤与读回共用本次调用截止时间；applied 列出已完成字段，失败或预算耗尽时停止后续步骤，stateError 含失败字段 field、code、message、execution，先核对该字段，不整批重试。方向/姿态变化后的屏幕信息仅在剩余时间内确认成功时返回；current 中 null 表示未确认。"
     },
     "logs": {
-      "description": "读取 App 最近的日志与崩溃报告。bundleId 或 process 指定进程；last_seconds 默认 120；level：error（只看错误与故障）、default、info、debug；match 用正则过滤；默认附带本设备上该进程最近的崩溃摘要（异常类型、原因、崩溃线程调用栈）。"
+      "description": "读取 App 最近的日志与崩溃报告。bundleId 或 process 指定进程；last_seconds 默认 120；level：error（只看错误与故障）、default、info、debug；match 用正则过滤；默认附带本设备上该进程最近的崩溃摘要（异常类型、原因、崩溃线程调用栈）。读取失败或预算不足时保留日志，返回 crashesError（code、message），不返回 crashes 空列表；crashes=false 跳过诊断。"
     },
     "heal": {
       "description": "按 Baguette 修复流程显式修复 Device Hub 导致的 iOS 27 输入失效；使用 simctl 指定独立设备集合。会重启 SpringBoard、终止设备中运行的 App，仅用户接受影响后调用。卡键先用 press(release-input)。"

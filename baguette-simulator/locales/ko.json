@@ -43,7 +43,7 @@
       "description": "기기 상태 변경(여러 개 동시 가능): orientation, 폴더블 posture(closed/open/flat 또는 각도), appearance light/dark, contrast, text_size(Dynamic Type), network(프로필 이름, offline, clear 또는 {latency, bandwidth, loss}. 이후 실행한 App에 적용), location {lat, lon} 또는 clear, status_bar clean(9:41, 신호와 배터리 가득, 스크린샷용) 또는 clear, privacy {action grant/revoke/reset, service, bundleId}로 권한 창을 미리 처리. 권한을 바꾸면 해당 App이 종료되니 실행 전에 설정하세요. 모든 단계와 상태 읽기는 같은 호출 마감 시간을 공유합니다. applied는 완료된 항목이며, 실패나 시간 소진 시 이후 단계를 중단하고 stateError에 field, code, message, execution을 반환합니다. 해당 항목을 확인한 뒤 재시도하고 전체 요청을 반복하지 마세요. 방향·자세 변경 후 화면 정보는 남은 시간 안에 확인된 경우에만 반환하며 current의 null은 미확인을 뜻합니다."
     },
     "logs": {
-      "description": "App의 최근 로그와 충돌 보고서를 읽습니다. bundleId나 process로 지정. last_seconds 기본 120, level은 error(오류와 결함만), default, info, debug, match는 정규식 필터. 기본적으로 이 기기에서 해당 프로세스의 최근 충돌 요약(예외, 이유, 충돌한 스레드의 프레임)을 포함합니다."
+      "description": "App의 최근 로그와 충돌 보고서를 읽습니다. bundleId나 process로 지정. last_seconds 기본 120, level은 error(오류와 결함만), default, info, debug, match는 정규식 필터. 기본적으로 이 기기에서 해당 프로세스의 최근 충돌 요약(예외, 이유, 충돌한 스레드의 프레임)을 포함합니다. 진단 읽기 실패나 시간 부족 시 로그를 유지하고 빈 crashes 목록 대신 crashesError(code, message)를 반환합니다. crashes=false는 진단을 건너뜁니다."
     },
     "heal": {
       "description": "Device Hub에 가려진 iOS 27 입력을 Baguette 절차로 명시적으로 복구합니다(전용 기기 세트에 simctl 사용). SpringBoard를 재시작하고 실행 중인 App을 종료하므로 사용자가 동의한 뒤에만. 눌린 키는 먼저 press(release-input)."

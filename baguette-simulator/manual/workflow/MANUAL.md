@@ -69,7 +69,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 `execution` 表示动作是 `not_executed`、`executed` 还是 `unknown`；动作失败时 `actionError` 含 `code`、`message`、`execution`。即使没有录到帧，动作也可能已经发生；先核对设备实际状态，不要盲目重发。
 
-内部动作（含附图）、录制、几何核验与联系表渲染共用本次调用截止时间。预算不足或录制失败时返回 `captureError`（`code`、`message`），保留完整的 `action` 或 `actionError` 与 `execution`，不生成联系表；不会为录制结果重新执行动作。需要核对当前画面时另调 `screenshot`。
+内部动作（含附图）、录制、几何核验与联系表渲染共用本次调用截止时间。录屏流提前退出、发生错误或停止后未能在剩余时间内排空输出，都视为录制失败，即使已经收到部分帧也不生成联系表。预算不足或录制失败时返回 `captureError`（`code`、`message`），保留完整的 `action` 或 `actionError` 与 `execution`；不会为录制结果重新执行动作。需要核对当前画面时另调 `screenshot`。
 
 ## 7. 设备状态
 
@@ -89,7 +89,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 - `logs bundleId=… level=error`：最近的错误与故障；`match` 是不区分大小写的 JavaScript 正则（不支持 `(?i)` 写法），匹配整行（时间、类型、subsystem/category 与正文）；`last_seconds` 控制时间窗。`logs` 查已记录的历史，`wait_for log=` 等之后新出现的行。
 - React Native、Expo 开发版的 `console.warn`/`console.error` 显示在 Metro 终端和 App 内的提示条里，不一定进系统日志。
-- 默认附带本设备上该进程最近的崩溃摘要：异常类型、原因、崩溃线程调用栈。App 闪退、白屏、卡在启动页时先看这里。
+- 默认附带本设备上该进程最近的崩溃摘要：异常类型、原因、崩溃线程调用栈。读取失败或预算不足时保留日志，返回 `crashesError`（`code`、`message`），不返回 `crashes: []`；后者只表示检查完成但未找到匹配报告。`crashes=false` 跳过诊断。App 闪退、白屏、卡在启动页时先看这里。
 
 ## 9. 系统弹窗
 

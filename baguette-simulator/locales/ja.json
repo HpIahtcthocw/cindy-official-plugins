@@ -43,7 +43,7 @@
       "description": "デバイス状態を変更（複数同時可）：orientation、折りたたみの posture（closed/open/flat または角度）、appearance light/dark、contrast、text_size（Dynamic Type）、network（プロファイル名、offline、clear、または {latency, bandwidth, loss}。以後に起動した App に適用）、location {lat, lon} または clear、status_bar clean（9:41・電波と電池満タン、スクリーンショット向け）または clear、privacy {action grant/revoke/reset, service, bundleId} で権限ダイアログを事前に回避。権限を変えるとその App は終了するので、起動前に設定してください。全手順と読み戻しは同じ呼び出し期限を共有します。applied は完了した項目、失敗・時間切れでは後続を止め、stateError に field、code、message、execution を返します。該当項目を確認してから再試行し、一括で再実行しないでください。向き・姿勢変更後の画面情報は残り時間内に確認できた場合のみ返し、current の null は未確認を意味します。"
     },
     "logs": {
-      "description": "App の最近のログとクラッシュレポートを読み取ります。bundleId か process で指定。last_seconds は既定 120、level は error（エラーとフォールトのみ）、default、info、debug、match は正規表現で絞り込み。既定でこのデバイスでの当該プロセスの最近のクラッシュ要約（例外、理由、クラッシュしたスレッドのフレーム）を含みます。"
+      "description": "App の最近のログとクラッシュレポートを読み取ります。bundleId か process で指定。last_seconds は既定 120、level は error（エラーとフォールトのみ）、default、info、debug、match は正規表現で絞り込み。既定でこのデバイスでの当該プロセスの最近のクラッシュ要約（例外、理由、クラッシュしたスレッドのフレーム）を含みます。診断の読み取り失敗や時間切れではログを保持し、空の crashes ではなく crashesError（code、message）を返します。crashes=false で診断を省略します。"
     },
     "heal": {
       "description": "Device Hub に奪われた iOS 27 の入力を Baguette の手順で明示的に修復します（専用デバイスセットに simctl を使用）。SpringBoard を再起動し実行中の App を終了するため、ユーザーの了承後のみ。押しっぱなしのキーにはまず press(release-input)。"

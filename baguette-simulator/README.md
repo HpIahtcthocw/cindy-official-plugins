@@ -4,6 +4,8 @@
 
 Screenshots fall back to a file path on older hosts or when JPEG compression still exceeds the 130 KB inline budget. Open that path with an image tool before choosing coordinates; the full-resolution file is preserved.
 
+An interrupted recording or output that cannot drain within the cleanup deadline returns `captureError`, retaining the action outcome without generating a contact sheet. Diagnostic read failures return `crashesError` alongside the logs; an empty `crashes` list means the scan completed without matching reports. `crashes=false` skips that scan.
+
 Installation compares bundle content checksums, including resources whose timestamps were preserved. Registration or signing changes use a full install. A background install keeps the device busy until its writes settle. `method=touch` rejects `clear=true` and `keys` to preserve the on-screen keyboard; capture results retain the action's execution state even when no frames arrive.
 
 Cindy's official iOS simulator for Apple Silicon Macs, using bundled Baguette 0.2.10. It replaces the retired embedded simulator; Cindy shows previous users a one-time migration notice pointing here (plugin id `baguette-simulator`).

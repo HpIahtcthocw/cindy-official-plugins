@@ -654,7 +654,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const child = spawnImpl(binary, ['stream', ...dargs(device), '--format', 'mjpeg', '--fps', String(fps), '--scale', String(Math.max(1, Math.round(nativeScale))), '--quality', '0.6'], {stdio: ['pipe', 'pipe', 'ignore']});
     const frames = [];
     let buffer = Buffer.alloc(0), t0 = null;
-    child.stdout.on('data', chunk => {
+    const collect = chunk => {
       buffer = Buffer.concat([buffer, chunk]);
       let s, e;
       while ((s = buffer.indexOf(SOI)) >= 0 && (e = buffer.indexOf(EOI, s + 2)) >= 0) {
@@ -662,10 +662,19 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         frames.push({at: now(), jpeg: Buffer.from(jpeg)});
       }
       if (buffer.length > 8 * 1024 * 1024) buffer = Buffer.alloc(0);
-    });
+    };
+    child.stdout.on('data', collect);
     child.stdin.on('error', () => {});
-    let streamFailure = null;
-    child.once('error', error => { streamFailure = error; });
+    let streamFailure = null, stopping = false, closed = false, finishDrain;
+    const drained = new Promise(resolve => { finishDrain = resolve; });
+    child.on('error', error => { streamFailure ||= error; });
+    child.stdout.on('error', error => { streamFailure ||= error; });
+    const interrupted = (code, signal) => {
+      if (!stopping && !streamFailure) streamFailure = failure('CAPTURE_INTERRUPTED', `Recording ended before capture completed (${signal || code}).`);
+    };
+    child.once('exit', interrupted);
+    // close, unlike exit, proves all stdout data has been delivered.
+    child.once('close', (code, signal) => { interrupted(code, signal); closed = true; finishDrain(); });
     let actionResult = null, actionError = null, screenError = null;
     const checkScreen = async () => {
       const current = await geometry(device, {maxAge: 0, deadline});
@@ -685,12 +694,29 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       await pause(seconds * 1000, deadline);
       await checkScreen();
     } catch (error) { screenError = error; }
-    finally { child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 2000).unref?.(); }
+    finally {
+      stopping = true;
+      if (!closed) {
+        // Reuse the existing two-second TERM→KILL cleanup window, capped by
+        // the request deadline. A missing close cannot produce a valid sheet.
+        const timer = setTimeout(() => {
+          streamFailure ||= failure('CAPTURE_DRAIN_TIMEOUT', 'Recording output did not finish draining before the cleanup deadline.');
+          child.kill('SIGKILL');
+          child.stdout.destroy?.();
+          finishDrain();
+        }, Math.max(0, Math.min(2000, deadline - now())));
+        child.kill('SIGTERM');
+        await drained;
+        clearTimeout(timer);
+      }
+      child.stdout.removeListener('data', collect);
+    }
     const execution = actionError ? (actionError.execution || 'unknown') : actionResult ? (actionResult.execution || 'executed') : 'not_executed';
     const outcome = {udid: device.udid, execution, ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: {code: actionError.code, message: actionError.message, execution}} : {})};
     const failed = error => ({...outcome, captureError: {code: error.code || 'CAPTURE_FAILED', message: error.message}, note: 'No contact sheet was generated. The action outcome is retained; inspect execution before continuing.'});
     if (screenError) return failed(screenError);
-    if (!frames.length) return failed(failure('CAPTURE_EMPTY', `No frames arrived. ${streamFailure ? streamFailure.message : 'The screen may not have changed, or streaming failed.'}`));
+    if (streamFailure) return failed(streamFailure);
+    if (!frames.length) return failed(failure('CAPTURE_EMPTY', 'No frames arrived. The screen may not have changed, or streaming failed.'));
     try {
       // Keep frames that differ from the last kept one; then thin evenly in time.
       const kept = [];
@@ -860,19 +886,25 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       if (shown !== null) lines.push(shown);
     }
     const result = {udid: device.udid, ...(processName ? {process: processName} : {}), level, lastSeconds: last, total: lines.length, lines: lines.slice(-limit), truncated: lines.length > limit};
-    if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600), p._deadline).catch(() => []);
+    if (p.crashes !== false) {
+      try { result.crashes = await crashReports(device, processName, Math.max(last, 3600), p._deadline); }
+      catch (error) { result.crashesError = {code: error.code || 'CRASHES_UNAVAILABLE', message: error.message}; }
+    }
     return result;
   }
 
   async function crashReports(device, processName, withinSeconds, deadline) {
     const dir = path.join(require('node:os').homedir(), 'Library/Logs/DiagnosticReports');
     const cutoff = now() - withinSeconds * 1000, reports = [];
+    budget(1, deadline);
     for (const name of await fs.readdir(dir)) {
       budget(1, deadline);
       if (!name.endsWith('.ips')) continue;
-      const file = path.join(dir, name), stat = await fs.stat(file).catch(() => null);
-      if (!stat || stat.mtimeMs < cutoff || stat.size > 8 * 1024 * 1024) continue;
-      const text = await fs.readFile(file, 'utf8').catch(() => '');
+      const file = path.join(dir, name), stat = await fs.stat(file);
+      budget(1, deadline);
+      if (stat.mtimeMs < cutoff || stat.size > 8 * 1024 * 1024) continue;
+      const text = await fs.readFile(file, 'utf8');
+      budget(1, deadline);
       if (!text.includes(device.udid)) continue;
       const newline = text.indexOf('\n');
       let header = {}, body = {};
