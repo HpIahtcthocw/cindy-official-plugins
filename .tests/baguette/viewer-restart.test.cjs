@@ -4,7 +4,7 @@ test('new processes exiting during manual recovery count crashes and eventually 
  const context={module:{exports:{}},process:{stderr:{write(){}}},setTimeout:fn=>setImmediate(fn),clearTimeout:clearImmediate,require(name){
   if(name==='./clipboard.cjs')return {};
   if(name==='node:child_process')return {spawn(){launches++;const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.exitCode=null;child.signalCode=null;setImmediate(()=>{child.exitCode=1;child.emit('close',1,null);});return child;}};
-  return require(name);
+  return require(name.startsWith('./')?require('node:path').resolve('baguette-simulator/node',name):name);
  }};
  vm.runInNewContext(fs.readFileSync('baguette-simulator/node/viewer.cjs','utf8')+'\nmodule.exports.testRestart=c=>{active=c;return restartNative(c);};',context);
  const current={binary:'fixture',deviceSet:'fixture',children:new Set(),stopped:false,child:null,crashes:[],port:1};
@@ -38,7 +38,7 @@ test('an idle server past the memory budget restarts; a watched or small one is 
   if(name==='./clipboard.cjs')return {};
   if(name==='node:child_process')return {execFileSync(){return '';},spawn(){const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.exitCode=null;child.signalCode=null;child.pid=500+launched.length;child.kill=signal=>{sent.push(signal);child.signalCode=signal;setImmediate(()=>child.emit('close',null,signal));};launched.push(child);setImmediate(()=>{child.stdout.emit('data',Buffer.from('listening'));});return child;}};
   if(name==='node:http')return {get(url,options,cb){const res=new EventEmitter();res.statusCode=200;res.resume=()=>{};setImmediate(()=>{cb(res);res.emit('end');});const req=new EventEmitter();req.destroy=()=>{};return req;}};
-  return require(name);
+  return require(name.startsWith('./')?require('node:path').resolve('baguette-simulator/node',name):name);
  }};
  vm.runInNewContext(fs.readFileSync('baguette-simulator/node/viewer.cjs','utf8')+'\nmodule.exports.testSetActive=c=>{active=c;launch(c);};',context);
  const {testSetActive,recycleIfBloated}=context.module.exports;

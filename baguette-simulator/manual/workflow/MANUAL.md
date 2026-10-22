@@ -106,6 +106,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 ## 11. 异常恢复
 
 - `BUSY`：同一台设备上的上一个操作还没结束（安装、录制等），等它完成。不同设备的普通输入可并行；启动 App 要保存共享记录，全局操作要协调全部设备，这些操作仍会互相等待。
+- 工具与查看器的键盘/剪贴板输入按同一规范化 UDID 互斥，不同设备互不阻塞。设置页的全部关闭与关闭运行开关共用一次截止时间，耗尽后停止后续关机；`completed` 是已完成的关机命令，`outcomes` 保留逐设备执行归属，`unprocessed` 是未执行的设备。若返回 `devicesError`，列表是上次状态，仍须刷新确认，不能把命令完成当作全部设备已核实关闭。单台设置关机的复核失败同样保留 `completed`。
 - 键盘连发或卡键：`press button=release-input`。
 - iOS 27 上所有触摸都“成功”却没反应：多半是 Xcode Device Hub 抢占了输入，先告知用户，经同意后 `heal`（会重启 SpringBoard、结束运行中的 App）。
 - `SCREEN_UNAVAILABLE`：App 正在启动或切换，稍等后 `wait_for stable=1` 再试。

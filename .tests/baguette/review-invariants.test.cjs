@@ -789,19 +789,24 @@ test('hidden subtrees and unreachable centres never become text tap targets; 3D 
 });
 
 test('parallel viewer startup shares native process and bridge; stop owns both exactly once',async()=>{
-  let launches=0,bridges=0,closed=0;const children=new Set();
+  let launches=0,bridges=0,closed=0,controller;const children=new Set();
   const context={module:{exports:{}},__dirname:dir,process:{stderr:{write(){}}},setTimeout,clearTimeout,
     require(name){
       if(name==='node:fs')return {readFileSync:()=>{throw Error('no saved session');},mkdirSync(){},writeFileSync(){},renameSync(){}};
-      if(name==='./clipboard.cjs')return {createClipboard:async()=>{bridges++;await new Promise(r=>setImmediate(r));return {devices:new Set(),base:'http://127.0.0.1:1',fragment:'capability',session:{port:1,token:'test'},close:()=>closed++};}};
+      if(name==='./clipboard.cjs')return {createClipboard:async(_origin,_perform,control)=>{controller=control;bridges++;await new Promise(r=>setImmediate(r));return {devices:new Set(),base:'http://127.0.0.1:1',fragment:'capability',session:{port:1,token:'test'},close:()=>closed++};}};
       if(name==='node:child_process')return {spawn(){launches++;const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.exitCode=null;child.signalCode=null;child.kill=signal=>{child.signalCode=signal;queueMicrotask(()=>child.emit('close',null,signal));};queueMicrotask(()=>child.stdout.emit('data',Buffer.from('listening')));return child;}};
       if(name==='node:http')return {get(url,opts,callback){const request=new EventEmitter(),response=new EventEmitter();response.statusCode=200;response.resume=()=>{};queueMicrotask(()=>{callback(response);response.emit('end');});return request;}};
-      return require(name);
+      return require(name.startsWith('./')?path.join(dir,name):name);
     }};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'viewer.cjs'),'utf8'),context);
   const viewer=context.module.exports;
   const result=await Promise.all([viewer.openViewer('/bag','/set',children,A,async()=>{}),viewer.openViewer('/bag','/set',children,B,async()=>{})]);
   assert.equal(launches,1);assert.equal(bridges,1);assert.equal(children.size,1);assert.equal(result.length,2);
+  const keys=[];
+  viewer.configureControls({exclusive:async(fn,key)=>{keys.push(key);return fn();},assertEnabled:async()=>{},touch(){}});
+  const lower='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  await controller.run(async()=>{},lower);await controller.release({udid:lower});await controller.run(async()=>{});
+  assert.deepEqual(keys,['device:'+lower.toUpperCase(),'device:'+lower.toUpperCase(),'*']);
   await viewer.stopViewer();assert.equal(closed,1);assert.equal(children.size,0);
 });
 

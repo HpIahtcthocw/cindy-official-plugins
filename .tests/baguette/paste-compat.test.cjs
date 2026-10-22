@@ -103,3 +103,36 @@ test('input tri-state follows completed steps, preserving busy and preflight rej
   if(mode==='after-clipboard'){assert.equal(clipboard,'new');assert.equal(keyboardCalls,1,'no paste key was sent after the Xcode lookup failed');}
  }
 });
+
+test('tool and viewer keyboard input excludes only the same normalized device and releases after every outcome',async()=>{
+ const a='AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA',b='BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB';
+ for(const action of ['key','paste','copy','release','tool-keys','tool-release'])for(const failed of [false,true]){
+  let finish,started;const entered=new Promise(resolve=>started=resolve),held=new Promise(resolve=>finish=resolve),calls=[],clipboards=new Map();let heldOnce=false;
+  const context={module:{exports:{}},__dirname:path.resolve('baguette-simulator/node'),setTimeout,clearTimeout,process:{platform:'darwin',arch:'arm64',env:{}},require(name){
+   if(name==='./viewer.cjs')return {};
+   if(name==='node:fs/promises')return {mkdir:async()=>{}};
+   if(name==='node:child_process')return {execFile(file,args,options,callback){
+    const call={file,args,input:''};calls.push(call);let output='';
+    if(file.endsWith('sw_vers'))output='27.0';
+    if(file.endsWith('xcode-select'))output='/Xcode';
+    if(args.includes('--json'))output=JSON.stringify({devices:{r:[a,b].map(udid=>({udid,state:'Booted'}))}});
+    const device=file.endsWith('/keyboard')?args[1]:args[4];
+    if(file.endsWith('/keyboard')&&device===a&&!heldOnce){heldOnce=true;started();held.then(()=>callback(failed?Error('ACK lost'):null,'',''));}
+    else queueMicrotask(()=>{if(args.includes('pbcopy'))clipboards.set(device,call.input);callback(null,args.includes('pbpaste')?clipboards.get(device):output,'');});
+    return {stdin:{on(){},end(value){call.input=value;}}};
+   }};
+   return require(name.startsWith('./')?path.resolve('baguette-simulator/node',name):name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.resolve('baguette-simulator/node/core.cjs'),'utf8'),context);
+  const input=vm.runInContext('clipboardAction',context),dispatch=context.module.exports.dispatch;
+  const first=action==='tool-keys'?dispatch('type_text',{udid:a,keys:['a']}):action==='tool-release'?dispatch('press',{udid:a,button:'release-input'}):input({udid:a,action,code:'KeyA',text:'test'});
+  const settled=first.then(value=>({value}),error=>({error}));await entered;
+  try{
+   await assert.rejects(input({udid:a.toLowerCase(),action:'release'}),e=>e.code==='INPUT_BUSY'&&e.execution==='not_executed');
+   await input({udid:b,action:'key',code:'KeyB'});
+   assert.equal(calls.filter(c=>c.file.endsWith('/keyboard')&&c.args[1]===b).length,1,'another device proceeds while the first is held');
+  }finally{finish();}
+  const result=await settled;assert.equal(!!result.error,failed);
+  await input({udid:a.toLowerCase(),action:'release'});
+ }
+});

@@ -117,3 +117,64 @@ test('damaged settings preserve incomplete shutdown evidence and recover after f
   const status=await f.runtime.request('settings_status');assert.equal(status.settingsError,undefined);
   assert.deepEqual(status.settings,{enabled:false,idleMinutes:30});
 });
+
+test('all shutdown entry points share one deadline and retain completed, failed and unprocessed devices',async t=>{
+  const ids=[udid,'00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003'];
+  const {commandBudget}=require('../../baguette-simulator/node/budget.cjs');
+  for(const entry of ['manual','disable','idle','exit'])for(const phase of ['success','slow','failed','viewer','status']){
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'bag-stop-budget-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+    let clock=0,reads=0;const states=new Map(ids.map(id=>[id,'Booted'])),calls=[];
+    const file=path.join(root,'settings.json');
+    const runtime=createRuntime({settingsFile:file,now:()=>clock,dispatch:async(method,p={},deadline)=>{
+      const limit=commandBudget(60000,deadline,()=>clock).timeout;
+      calls.push({method,udid:p.udid,deadline});
+      const cost=phase==='slow'&&method==='shutdown'?60000:1000;clock+=Math.min(cost,limit);
+      if(cost>limit)throw Object.assign(Error('shutdown timed out'),{code:'COMMAND_TIMEOUT',execution:'unknown'});
+      if(method==='devices'){
+        if(++reads===2&&phase==='status')throw Object.assign(Error('status unavailable'),{code:'STATUS_FAILED',execution:'not_executed'});
+        return {devices:ids.map(id=>({udid:id,state:states.get(id)}))};
+      }
+      if(method==='shutdown'){
+        if(phase==='failed'&&p.udid===ids[1])throw Object.assign(Error('shutdown unconfirmed'),{code:'STOP_FAILED',execution:'unknown'});
+        states.set(p.udid,'Shutdown');
+      }
+      if(method==='close_viewer'&&phase==='viewer')throw Object.assign(Error('viewer stop unavailable'),{code:'VIEWER_FAILED',execution:'unknown'});
+      return {execution:'executed'};
+    }});
+    if(entry==='idle')clock=15*60000;
+    const start=clock,deadline=start+110000;
+    const result=entry==='manual'?await runtime.request('settings_stop_all'):
+      entry==='disable'?await runtime.request('settings_save',{enabled:false,idleMinutes:15}):
+      entry==='idle'?await runtime.checkIdle():await runtime.close();
+    assert.ok(clock<=deadline,entry+': '+phase);assert.ok(calls.every(c=>c.deadline===deadline));
+    assert.equal(result.ok,phase==='success');
+    if(phase==='slow'){
+      assert.deepEqual(result.completed,[ids[0]]);assert.deepEqual(result.unprocessed,[ids[2]]);
+      assert.equal(result.outcomes[1].execution,'unknown');assert.equal(result.devicesError.code,'TIME_BUDGET_EXHAUSTED');
+      assert.equal(calls.filter(c=>c.method==='shutdown').length,2,'no later device starts after expiry');
+      assert.ok(!calls.some(c=>c.method==='close_viewer'));
+    }else if(phase==='failed'){
+      assert.deepEqual(result.completed,[ids[0],ids[2]]);assert.deepEqual(result.remaining,[ids[1]]);assert.deepEqual(result.unprocessed,[]);
+    }else {assert.deepEqual(result.completed,ids);if(phase==='viewer')assert.equal(result.viewerError.code,'VIEWER_FAILED');if(phase==='status')assert.equal(result.devicesError.code,'STATUS_FAILED');}
+    if(entry==='disable')assert.equal(JSON.parse(await fs.readFile(file)).enabled,false);
+    const settledCalls=calls.length;await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,settledCalls,'no shutdown work continues after return');
+  }
+});
+
+test('single-device shutdown keeps completion evidence when its status confirmation fails or expires',async t=>{
+  for(const phase of ['failed','expired','unconfirmed']){
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'bag-stop-one-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+    let clock=0;const calls=[];
+    const runtime=createRuntime({settingsFile:path.join(root,'settings.json'),now:()=>clock,dispatch:async(method,p,deadline)=>{
+      calls.push(method);assert.equal(deadline,110000);
+      if(method==='shutdown'){if(phase==='expired')clock=110000;return {execution:'executed'};}
+      if(phase==='unconfirmed')return {devices:[{udid,state:'Booted'}]};
+      throw Object.assign(Error('cannot read status'),{code:'STATUS_FAILED',execution:'not_executed'});
+    }});
+    const result=await runtime.request('settings_shutdown',{udid});
+    assert.equal(result.ok,false);assert.equal(result.execution,'unknown');assert.deepEqual(result.completed,[udid]);
+    if(phase==='unconfirmed')assert.deepEqual(result.remaining,[udid]);
+    else assert.equal(result.devicesError.code,phase==='failed'?'STATUS_FAILED':'TIME_BUDGET_EXHAUSTED');
+    assert.deepEqual(calls,phase==='expired'?['shutdown']:['shutdown','devices']);
+  }
+});

@@ -95,7 +95,7 @@ async function settledShot(device,p,result){
     return {...result,screenshot:shot,...(_modelImages?{_modelImages}:{})};}
   catch(error){return {...result,screenshot:{error:error.message}};}
 }
-let keyboardBusy=false;
+const keyboardBusy=new Set();
 // Any key event makes iOS treat a hardware keyboard as attached and hide the on-screen one from then on.
 // A touch-only phone shows it on focus, so forget the hardware keyboard once typing is over
 // (iOS records it about 2 s late; clearing sooner would be overwritten).
@@ -111,8 +111,9 @@ async function nativeKey(device,code,modifiers=[],deadline) {
  return run(path.join(__dirname,'../native/keyboard'),[DEVICE_SET,device.udid,dev,String(key),String(mask)],{mutation:true,...commandBudget(15000,deadline)});
 }
 async function clipboardAction(p) {
- if(keyboardBusy)throw new Failure('INPUT_BUSY','Another keyboard operation is running; retry after it finishes');
- keyboardBusy=true;
+ const key=deviceId(p.udid);
+ if(keyboardBusy.has(key))throw new Failure('INPUT_BUSY','Another keyboard operation on this device is running; retry after it finishes');
+ keyboardBusy.add(key);
  let inputCompleted=false;
  try{
   const device=await target(p);
@@ -143,7 +144,7 @@ async function clipboardAction(p) {
     await sim(['pbsync',device.udid,'host'],{mutation:true,...commandBudget(30000,p._deadline)});
   } else throw new Failure('INVALID_ARGUMENT','Unknown input action');
  }catch(error){if(inputCompleted&&error.execution==='not_executed')error.execution='unknown';throw error;}
- finally{keyboardBusy=false;}
+ finally{keyboardBusy.delete(key);}
 }
 async function dispatch(method,p={},deadline=Date.now()+110000) {
   // Core owns the request deadline, including preflight. Nested observation

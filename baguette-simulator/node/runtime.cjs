@@ -2,6 +2,7 @@
 const fs = require('node:fs/promises');
 const {validSession} = require('./tasks.cjs');
 const {deviceId} = require('./device-id.cjs');
+const {commandBudget} = require('./budget.cjs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
@@ -47,7 +48,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     } finally { await fs.rm(temporary, {force:true}).catch(() => {}); }
   }
   function touch() { lastActivity = now(); idleHandled = false; }
-  async function status() {
+  async function status(deadline, knownDevices) {
     let settings, settingsError;
     try { settings = await load(); }
     catch (error) {
@@ -56,29 +57,47 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       settings = {enabled:false, idleMinutes:null};
       settingsError = {code:error.code, message:error.message};
     }
-    return {...await dispatch('devices'), settings: {...settings}, settingsError, lastStop,
+    if (!knownDevices) commandBudget(1, deadline, now);
+    return {...(knownDevices || await dispatch('devices', {}, deadline)), settings: {...settings}, settingsError, lastStop,
       deviceJob:manager.snapshot(),idleDeadline: settings.idleMinutes ? lastActivity + settings.idleMinutes * 60000 : null};
   }
-  async function stopAll(reason) {
-    const before = (await dispatch('devices')).devices;
+  async function stopAll(reason, deadline = now() + 110000) {
+    const run = (method, params = {}) => {
+      commandBudget(1, deadline, now);
+      return dispatch(method, params, deadline);
+    };
+    const before = await run('devices');
     const outcomes = [];
     // Enumerate exact private-set UDIDs; never use simctl shutdown all.
-    for (const device of before.filter(d => d.state !== 'Shutdown')) {
-      try { await dispatch('shutdown', {udid:device.udid}); }
-      catch (error) { outcomes.push({udid:device.udid, errorCode:error.code || 'STOP_FAILED', execution:error.execution || 'unknown'}); }
+    for (const device of before.devices.filter(d => d.state !== 'Shutdown')) {
+      try { await run('shutdown', {udid:device.udid}); outcomes.push({udid:device.udid, execution:'executed'}); }
+      catch (error) { outcomes.push({udid:device.udid, errorCode:error.code || 'STOP_FAILED', message:error.message, execution:error.execution || 'unknown'}); }
     }
-    await dispatch('close_viewer');
-    const result = await status(), after = result.devices;
+    let viewerError, result;
+    try { await run('close_viewer'); }
+    catch (error) { viewerError = {code:error.code || 'STOP_FAILED', message:error.message, execution:error.execution || 'unknown'}; }
+    try { result = await status(deadline); }
+    catch (error) {
+      // A last-known list is not fresh shutdown evidence. Return it explicitly
+      // marked, while preserving every command outcome and the saved switch.
+      result = {...await status(deadline, before), devicesError:{code:error.code || 'STATUS_FAILED', message:error.message}};
+    }
+    const after = result.devices;
     const remaining = after.filter(d => d.state !== 'Shutdown').map(d => d.udid);
-    lastStop = {reason, at:now(), remaining};
-    if (remaining.length) return {...result, ok:false, errorCode:'STOP_INCOMPLETE', execution:'unknown', remaining, outcomes, lastStop};
-    return {...result, ok:true, execution:'executed', lastStop};
+    const completed = outcomes.filter(o => o.execution === 'executed').map(o => o.udid);
+    const unprocessed = outcomes.filter(o => o.execution === 'not_executed').map(o => o.udid);
+    lastStop = {reason, at:now(), remaining, completed, unprocessed};
+    const evidence = {remaining, completed, unprocessed, outcomes, ...(viewerError ? {viewerError} : {}), lastStop};
+    if (remaining.length || result.devicesError || viewerError) return {...result, ...evidence, ok:false, errorCode:'STOP_INCOMPLETE', execution:'unknown'};
+    return {...result, ...evidence, ok:true, execution:'executed'};
   }
-  async function stopOne(udid) {
-    await dispatch('shutdown', {udid});
-    const result = await status();
+  async function stopOne(udid, deadline) {
+    await dispatch('shutdown', {udid}, deadline);
+    let result;
+    try { result = await status(deadline); }
+    catch (error) { return {ok:false, errorCode:'STOP_UNCONFIRMED', execution:'unknown', completed:[udid], devicesError:{code:error.code || 'STATUS_FAILED', message:error.message}}; }
     const device = result.devices.find(d => deviceId(d.udid) === deviceId(udid));
-    if (!device || device.state !== 'Shutdown') throw failure('STOP_UNCONFIRMED', 'Device shutdown is not confirmed. Refresh the device list.', 'unknown');
+    if (!device || device.state !== 'Shutdown') return {...result, ok:false, errorCode:'STOP_UNCONFIRMED', execution:'unknown', completed:[udid], remaining:[udid]};
     return {...result, ok:true, execution:'executed'};
   }
   async function exclusive(fn, key = '*') {
@@ -133,7 +152,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   };
   // Reading a device never changes it, so it does not wait for (or block) input.
   const READ_ONLY = new Set(['describe_ui', 'wait_for', 'logs', 'app_info', 'app_install_status']);
-  async function request(method, params = {}) {
+  async function request(method, params = {}, deadline = now() + 110000) {
     // Normalize before routing, locks, lookups and binding writes. Do not mutate
     // the caller's object or bypass the existing device validation/ownership checks.
     params = {...params, ...(typeof params?.udid === 'string' ? {udid:deviceId(params.udid)} : {}),
@@ -141,7 +160,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     if (Object.hasOwn(ROUTES, method)) {
       const actual = ROUTES[method][params?.action];
       if (!actual) throw failure('INVALID_ARGUMENT', `action must be one of ${Object.keys(ROUTES[method]).join(', ')}`);
-      return request(actual, params);
+      return request(actual, params, deadline);
     }
     if (READ_ONLY.has(method) || (method === 'screenshot' && !params?.destination)) {
       if (!(await load()).enabled) throw failure('RUNTIME_DISABLED', 'Baguette is paused. Enable simulator operation in Plugins → Baguette settings.');
@@ -189,8 +208,8 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
         forgetViewer();
         return dispatch(method, params);
       }
-      if (method === 'settings_shutdown') return stopOne(params.udid);
-      if (method === 'settings_stop_all') return stopAll('manual');
+      if (method === 'settings_shutdown') return stopOne(params.udid, deadline);
+      if (method === 'settings_stop_all') return stopAll('manual', deadline);
       // Managing devices never starts one, so it works while simulators are paused.
       if (method === 'reveal_screenshot') return dispatch(method, params);
       if (method === 'delete_device' || method === 'erase_device') {
@@ -209,7 +228,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
         // not allow a new boot to undo the user's decision.
         await save({enabled:params.enabled, idleMinutes:params.idleMinutes});
         // Turning simulators off also retires the saved viewer address.
-        if (!params.enabled) { const result = await stopAll('disabled'); forgetViewer(); return result; }
+        if (!params.enabled) { const result = await stopAll('disabled', deadline); forgetViewer(); return result; }
         touch();
         return {...await status(), ok:true, execution:'executed'};
       }

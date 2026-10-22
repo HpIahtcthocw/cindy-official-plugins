@@ -1,6 +1,7 @@
 'use strict';
 const http=require('node:http');
 const {randomBytes}=require('node:crypto');
+const {deviceId}=require('./device-id.cjs');
 // An unguessable capability plus exact viewer Origin: other local pages cannot
 // use the bridge. No clipboard contents, tokens, or request bodies are logged.
 // `preferred` {port, token} comes from the last viewer session: reusing both
@@ -14,7 +15,7 @@ const STATIC_ASSETS=new Map([
  ['/viewer-stage.js',{file:'viewer-stage.js',type:JS}],
 ]);
 async function createClipboard(origin,perform,control,preferred={}){
- const token=/^[0-9a-f]{64}$/.test(preferred.token||'')?preferred.token:randomBytes(32).toString('hex'),devices=new Set();let busy=false;const sockets=new Set(),clients=new Set();
+ const token=/^[0-9a-f]{64}$/.test(preferred.token||'')?preferred.token:randomBytes(32).toString('hex'),devices=new Set(),busy=new Set();const sockets=new Set(),clients=new Set();
  // Cindy's plugin pages are not an HTTP origin, so a viewer framed by them can
  // store no cookie. It carries the same capability in its own URL instead:
  // same-origin subresources pass it in Referer, the stream socket appends it
@@ -61,7 +62,8 @@ async function createClipboard(origin,perform,control,preferred={}){
   try{
    for await(const chunk of req){bytes+=chunk.length;if(bytes>40000){reply(413,{error:'Text too long',execution:'not_executed'});req.destroy();return;}chunks.push(chunk);}
    const p=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-   if(!devices.has(p.udid))return reply(400,{error:'Unknown device',execution:'not_executed'});
+   if(![...devices].some(id=>deviceId(id)===deviceId(p.udid)))return reply(400,{error:'Unknown device',execution:'not_executed'});
+   p.udid=deviceId(p.udid);
    if(req.url==='/control-api'){
     res.setHeader('Set-Cookie',`cindy_viewer_${server.address().port}=${token}; HttpOnly; SameSite=Strict; Path=/`);
     if(!['status','restart','release','shutdown','boot','screenshot','activity','catalog','create','rename','switch','reveal'].includes(p.action))return reply(400,{error:'Invalid action'});
@@ -69,11 +71,12 @@ async function createClipboard(origin,perform,control,preferred={}){
     catch(error){return reply(503,{errorCode:error.code||'CONTROL_FAILED',error:'Operation not confirmed. Refresh the device status in Baguette settings.',execution:error.execution||'unknown'});}
    }
    if(!['paste','copy','key','release'].includes(p.action)||(p.action==='paste'&&(typeof p.text!=='string'||!p.text.length||p.text.length>8000||p.text.includes('\0'))))return reply(400,{error:'Invalid clipboard request',execution:'not_executed'});
-   if(busy)return reply(409,{error:'Clipboard busy; try again',execution:'not_executed'});
-   busy=true;
-   try{const operation=async()=>{await control?.guard?.();await perform(p);control?.touch?.();};await(control?.run?control.run(operation):operation());reply(200,{ok:true,execution:'executed'});}
+   const key=deviceId(p.udid);
+   if(busy.has(key))return reply(409,{error:'Clipboard busy on this device; try again',execution:'not_executed'});
+   busy.add(key);
+   try{const operation=async()=>{await control?.guard?.();await perform(p);control?.touch?.();};await(control?.run?control.run(operation,p.udid):operation());reply(200,{ok:true,execution:'executed'});}
    catch(error){reply(500,{error:'Clipboard operation failed; check the device and retry.',execution:error.execution||'unknown'});}
-   finally{busy=false;}
+   finally{busy.delete(key);}
   }catch{if(!res.headersSent)reply(400,{error:'Invalid request',execution:'not_executed'});}
  });
  if(control)require('./viewer-proxy.cjs').attachUpgrade(server,control.port,sockets,authorized,clients);

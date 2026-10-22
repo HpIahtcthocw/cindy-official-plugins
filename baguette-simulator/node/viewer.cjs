@@ -5,6 +5,7 @@ const http=require('node:http');
 const fs=require('node:fs');
 const path=require('node:path');
 const {createClipboard}=require('./clipboard.cjs');
+const {deviceId}=require('./device-id.cjs');
 // The viewer address (port + capability) survives worker restarts so open tabs
 // can reconnect. It is forgotten when the user turns simulators off.
 const sessionFile=deviceSet=>path.join(path.dirname(deviceSet),'viewer-session.json');
@@ -145,7 +146,7 @@ async function initializeBridge(server,deviceSet,clipboardAction){
   rename:async p=>{await controls.request('rename_device',{udid:p.targetUdid,name:p.name});return {ok:true,devices:(await controls.status()).devices};},
   switch:async p=>{const job=await controls.request('viewer_switch',{udid:p.udid,targetUdid:p.targetUdid,_locale:p.locale,task:p.task});server.clipboard.devices.add(job.targetUdid);return {ok:true,job};},
   restart:()=>controls?controls.exclusive(async()=>{await controls.assertEnabled();return restartNative(server);}):restartNative(server),
-  release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};}):clipboardAction({udid:p.udid,action:'release'}),
+  release:p=>controls?controls.exclusive(async()=>{await controls.assertEnabled();await clipboardAction({udid:p.udid,action:'release'});controls.touch();return {ok:true};},`device:${deviceId(p.udid)}`):clipboardAction({udid:p.udid,action:'release'}),
   shutdown:p=>controls.request('settings_shutdown',{udid:p.udid}),
   // Both run under the runtime lock and the user's run switch, like Agent tools.
   boot:p=>controls.request('settings_boot',{udid:p.udid}),
@@ -153,7 +154,7 @@ async function initializeBridge(server,deviceSet,clipboardAction){
   reveal:p=>controls.request('reveal_screenshot',{path:p.path}),
   activity:async()=>{await controls?.assertEnabled();controls?.touch();return {ok:true};},
   guard:()=>controls?.assertEnabled(),
-  run:fn=>controls?controls.exclusive(fn):fn(),
+  run:(fn,udid)=>controls?controls.exclusive(fn,udid?`device:${deviceId(udid)}`:'*'):fn(),
   touch:()=>controls?.touch()
  },preferred);
  const session=server.clipboard.session;
