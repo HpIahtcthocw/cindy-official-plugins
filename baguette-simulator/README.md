@@ -2,6 +2,8 @@
 
 [简体中文](README.zh-CN.md)
 
+Installation compares bundle content checksums, including resources whose timestamps were preserved. Registration or signing changes use a full install. A background install keeps the device busy until its writes settle. `method=touch` rejects `clear=true` and `keys` to preserve the on-screen keyboard; capture results retain the action's execution state even when no frames arrive.
+
 Cindy's official iOS simulator for Apple Silicon Macs, using bundled Baguette 0.2.10. It replaces the retired embedded simulator; Cindy shows previous users a one-time migration notice pointing here (plugin id `baguette-simulator`).
 Requires macOS 15.0+, Apple Silicon, Cindy 0.1.83+, full Xcode and an installed iOS runtime. No first-run dependency download. Packaging collects nine portable USDZ model assets from the hash-pinned official release via `binary-dependencies.json`; the native executables remain tracked and macOS-only.
 

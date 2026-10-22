@@ -48,8 +48,8 @@ function stagedPage(url){
 function authScript(token){
  return token?`<script src="/viewer-auth.js?cindyViewer=${encodeURIComponent(token)}"></script>`:'';
 }
-function injectStage(html,token){
- const inject=STAGE_HEAD+authScript(token);
+function injectStage(html,token,staged=true){
+ const inject=(staged?STAGE_HEAD:'')+authScript(token);
  const at=html.search(/<\/head>/i);
  if(at>=0)return html.slice(0,at)+inject+html.slice(at);
  const open=html.search(/<head[^>]*>/i);
@@ -59,18 +59,19 @@ function injectStage(html,token){
 function proxyRequest(req,res,port,token){
  if(blockedRoute(req.url)){res.writeHead(404,{'Content-Type':'application/json; charset=utf-8'});return res.end(JSON.stringify({error:'Not available in Cindy'}));}
  const forwarded={...req.headers};delete forwarded.cookie;delete forwarded['x-cindy-clipboard'];
- const staging=req.method==='GET'&&stagedPage(req.url);
- if(staging)delete forwarded['accept-encoding'];
+ const devicePage=req.method==='GET'&&DEVICE_PAGE.test(req.url);
+ const staging=stagedPage(req.url);
+ if(devicePage)delete forwarded['accept-encoding'];
  const upstream=http.request({hostname:'127.0.0.1',port,path:req.url,method:req.method,headers:{...forwarded,host:`127.0.0.1:${port}`,origin:`http://127.0.0.1:${port}`}},response=>{
   const headers={...response.headers};delete headers['x-frame-options'];
   // Only our controller (same origin) under this plugin's Cindy panel page may embed the native page.
   headers['content-security-policy']=((headers['content-security-policy']||'').replace(/frame-ancestors[^;]*(;|$)/gi,'')+"; frame-ancestors 'self' cindy-ghost://baguette-simulator").replace(/^;\s*/,'');
-  const html=staging&&response.statusCode===200&&/text\/html/i.test(headers['content-type']||'')&&!headers['content-encoding'];
+  const html=devicePage&&response.statusCode===200&&/text\/html/i.test(headers['content-type']||'')&&!headers['content-encoding'];
   if(!html){res.writeHead(response.statusCode,headers);return response.pipe(res);}
   const chunks=[];
   response.on('data',chunk=>chunks.push(chunk));
   response.on('end',()=>{
-   const body=Buffer.from(injectStage(Buffer.concat(chunks).toString('utf8'),token),'utf8');
+   const body=Buffer.from(injectStage(Buffer.concat(chunks).toString('utf8'),token,staging),'utf8');
    delete headers['content-length'];delete headers['transfer-encoding'];
    // Same-origin requests from this page must keep the capability in Referer;
    // nothing is ever sent to another origin.

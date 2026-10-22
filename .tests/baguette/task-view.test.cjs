@@ -123,3 +123,14 @@ test('the management view offers "open in current task" only when a task is in f
  assert.deepEqual(front.calls.filter(c=>c.method==='manage_state').map(c=>c.params._task),['front']);
  assert.deepEqual(none.calls.filter(c=>c.method==='manage_state').map(c=>c.params._task),[undefined]);
 });
+
+test('an already streaming task page polls binding changes and follows a newly assigned device',async()=>{
+ const nodes=new Map();const get=id=>{if(!nodes.has(id))nodes.set(id,{replaceChildren(){},append(){}});return nodes.get(id);};
+ let device=A,poll;
+ const context={URLSearchParams,location:{search:'?session=task-1'},document:{hidden:false,documentElement:{},getElementById:get,addEventListener(){}},
+  setInterval:fn=>{poll=fn;},CindySimPages:{locale:async()=> 'en',onPush(){},h:()=>({}),GLYPH:{},
+   rpc:async()=>({ok:true,settings:{enabled:true},device:{udid:device,state:'Booted'},viewer:{url:'http://127.0.0.1:1/control?udid='+device}})},CindySimModel:{}};
+ vm.runInNewContext(require('node:fs').readFileSync('baguette-simulator/task.js','utf8'),context);
+ await settle();assert.match(get('screen').src,new RegExp(A));
+ device=B;poll();await settle();assert.match(get('screen').src,new RegExp(B));
+});

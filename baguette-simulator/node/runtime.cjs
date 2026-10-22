@@ -11,14 +11,15 @@ const {randomUUID} = require('node:crypto');
 // recycling of on-demand workers.
 const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
 function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false, forgetViewer = () => {},
-  tasks = null, existingViewerUrl = () => null,
+  tasks = null, existingViewerUrl = () => null, pendingOperation = () => null,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
   let config, lastActivity = now(), lastStop = null, closing = false;
   // One operation at a time per device; '*' (settings, stop-all, idle) excludes everything.
   const busyKeys = new Set();
   let idleHandled = false;
   const assertEnabled=async()=>{if(!(await load()).enabled||closing)throw failure('RUNTIME_DISABLED','Baguette is paused. Open plugin settings.');};
-  const manager=require('./device-manager.cjs').createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile:settingsFile+'.apps.json'});
+  const manager=require('./device-manager.cjs').createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile:settingsFile+'.apps.json',
+    onSettled:async(entry,p)=>{if(tasks&&validSession(p.task)&&entry.activeUdid)await tasks.bind(p.task,entry.activeUdid);}});
   const failure = (code, message, execution = 'not_executed') => Object.assign(new Error(message), {code, execution});
   async function load() {
     if (config) return config;
@@ -80,7 +81,13 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     const blocked = key === '*' ? busyKeys.size > 0 : busyKeys.has('*') || busyKeys.has(key);
     if (blocked || closing) throw failure('BUSY', 'Another operation on this device is still running. Wait for it to finish, then try again.');
     busyKeys.add(key);
-    try { return await fn(); } finally { busyKeys.delete(key); }
+    try { return await fn(); } finally {
+      // A tool may return a pollable install job; retain its existing lock until
+      // the underlying write settles, including failure. Reads remain available.
+      const pending = pendingOperation(key === '*' ? null : key.slice('device:'.length));
+      if (pending) pending.then(() => busyKeys.delete(key), () => busyKeys.delete(key));
+      else busyKeys.delete(key);
+    }
   }
   // The Cindy task a call belongs to: injected session context for Agent tools,
   // or the task page's own task (main.js sets `_task` for page actions only).
@@ -137,10 +144,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     // Reading simulator state is safe while a command is in flight.
     if (method === 'settings_status') return status();
     if (method === 'viewer_switch') {
-      const job = await manager.start(params);
-      // Switching inside a task's page moves that task to the new device.
-      if (tasks && validSession(params.task)) await tasks.bind(params.task, params.targetUdid).catch(() => {});
-      return job;
+      return manager.start(params);
     }
     if (method === 'task_state') return taskState(params._task, params._locale);
     if (method === 'task_bind') {

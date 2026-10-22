@@ -18,3 +18,7 @@ import './baguette/defaults-routes.test.cjs';
 import './baguette/control-model.test.cjs';
 import './baguette/vendor-syntax.test.cjs';
 import './baguette/agent-tools.test.cjs';
+import './baguette/idle-in-use.test.cjs';
+import './baguette/task-view.test.cjs';
+import './baguette/viewer-session.test.cjs';
+import './baguette/review-invariants.test.cjs';

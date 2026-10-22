@@ -117,7 +117,7 @@ onPush((m) => { if (m?.type === 'viewer' && m.sessionId === session && typeof m.
   lang = await locale(); T = TEXT[lang] || TEXT.en; document.documentElement.lang = lang;
   $('screen').title = lang === 'zh-CN' ? 'iOS 模拟器' : 'iOS Simulator';
   render(); await refresh();
-  // Poll only while no screen is shown: picks up a device Cindy starts or assigns.
-  setInterval(() => { if (!document.hidden && !viewerUrl && !busy) refresh(); }, 4000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && !viewerUrl) refresh(); });
+  // Bindings can change even while the current device keeps streaming.
+  setInterval(() => { if (!document.hidden && !busy) refresh(); }, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !busy) refresh(); });
 })();

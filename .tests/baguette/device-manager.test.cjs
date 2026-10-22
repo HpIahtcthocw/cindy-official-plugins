@@ -6,7 +6,8 @@ async function fixture(t){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'baguette-switch-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  const devices=[{udid:a,name:'Duo',state:'Booted',isAvailable:true},{udid:b,name:'Phone',state:'Shutdown',isAvailable:true}],calls=[];
  let failAt,hold,unconfirmed=false;
- const opts={settingsFile:path.join(dir,'settings.json'),dispatch:async(method,p={})=>{
+ const bindings=new Map();
+ const opts={settingsFile:path.join(dir,'settings.json'),tasks:{bind:async(s,id)=>bindings.set(s,id)},dispatch:async(method,p={})=>{
   calls.push({method,...p});if(method==='devices')return {devices:devices.map(d=>({...d}))};
   if(method===failAt)throw Object.assign(Error('Fixture failure'),{code:'FIXTURE_ERROR',execution:'unknown'});
   if(method==='shutdown'){if(hold)await hold;if(!unconfirmed)devices.find(d=>d.udid===p.udid).state='Shutdown';}
@@ -16,7 +17,7 @@ async function fixture(t){
   return {ok:true};
  }};
  const runtime=createRuntime(opts);
- return {runtime,devices,calls,restart:()=>createRuntime(opts),fail:m=>failAt=m,hold:p=>hold=p,unconfirmed:()=>unconfirmed=true};
+ return {runtime,devices,calls,bindings,restart:()=>createRuntime(opts),fail:m=>failAt=m,hold:p=>hold=p,unconfirmed:()=>unconfirmed=true};
 }
 async function finish(f){for(let i=0;i<100;i++){const job=(await f.runtime.status()).deviceJob;if(job.state!=='running')return job;await new Promise(r=>setTimeout(r,2));}assert.fail('switch did not finish');}
 test('switch preserves app context across runtime restart, shuts down before boot, and installs only app bundle',async t=>{
@@ -51,4 +52,17 @@ test('two concurrent switches cannot interleave; idle shutdown cannot interrupt 
 test('a failed boot preserves devices and reports no running target',async t=>{
  const f=await fixture(t);f.fail('boot');await f.runtime.request('viewer_switch',{udid:a,targetUdid:b});const job=await finish(f);
  assert.equal(job.state,'failed');assert.equal(job.activeUdid,null);assert.ok(f.devices.every(d=>d.state==='Shutdown'));assert.equal(f.devices.length,2);
+});
+
+test('task binding follows the settled actual device, including failure before and after shutdown',async t=>{
+ for(const failAt of [null,'shutdown','install_app']) {
+  const f=await fixture(t);let release;f.hold(new Promise(r=>release=r));
+  await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.app',session_context:{session_id:'task-1'}});
+  if(failAt)f.fail(failAt);
+  await f.runtime.request('viewer_switch',{udid:a,targetUdid:b,task:'task-1'});
+  assert.equal(f.bindings.get('task-1'),a,'starting a switch never changes binding speculatively');
+  release();const job=await finish(f);
+  assert.equal(f.bindings.get('task-1'),job.activeUdid);
+  assert.equal(job.activeUdid,failAt==='shutdown'?a:b);
+ }
 });

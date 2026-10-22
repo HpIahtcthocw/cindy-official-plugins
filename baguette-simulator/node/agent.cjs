@@ -194,15 +194,21 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const scale = number(p.scale, 'scale', 1, 3, 1);
     const dir = await shotsDir();
     const id = crypto.randomUUID(), raw = path.join(dir, `${id}.raw.png`), file = path.join(dir, `${id}.${p.format === 'png' ? 'png' : 'jpg'}`);
-    // Geometry and pixels are read at the same time: the rotation must match the frame.
+    // Confirm live geometry on both sides of capture; cached age alone cannot
+    // establish which orientation and panel these pixels belong to.
     const known = densities.get(device.udid);
     const divisor = known ? Math.max(1, Math.floor(known / scale)) : 1;
-    const [{screen}] = await Promise.all([
-      geometry(device, {maxAge: p._internal ? SCREEN_TTL_MS : 3000}),
-      // Baguette's capture occasionally fails once with an internal error; the next frame is fine.
-      bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})
-        .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000}))),
-    ]);
+    const before = await geometry(device, {maxAge: 0});
+    if (before.stale) throw failure('SCREEN_UNAVAILABLE', 'Current screen geometry could not be confirmed.');
+    const screen = before.screen;
+    // Baguette's capture occasionally fails once with an internal error; the next frame is fine.
+    await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})
+      .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})));
+    const afterFrame = await geometry(device, {maxAge: 0});
+    if (afterFrame.stale || JSON.stringify(afterFrame.screen) !== JSON.stringify(screen)) {
+      await fs.rm(raw, {force: true});
+      throw failure('SCREEN_CHANGED', 'The screen turned or folded while capturing. Take a new screenshot.');
+    }
     if (screen.target?.pixelSize?.width) densities.set(device.udid, screen.target.pixelSize.width / screen.width);
     const view = G.viewSize(screen);
     let region = null;
@@ -440,7 +446,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const unmet = (reason, extra = {}) => finish({udid: device.udid, met: false, waitedMs: now() - started, reason, ...extra}, true);
     if (typeof p.log === 'string') {
       try { return await finish(await waitForLog(device, p, timeout, started, done)); }
-      catch (error) { if (error.code === 'WAIT_TIMEOUT') return finish({udid: device.udid, met: false, waitedMs: now() - started, reason: error.message}); throw error; }
+      catch (error) { if (error.code === 'WAIT_TIMEOUT') return unmet(error.message); throw error; }
     }
     if (p.stable !== undefined) {
       const quiet = number(p.stable, 'stable', 0.2, 30, 1) * 1000, tolerance = number(p.tolerance, 'tolerance', 0, 50, 0.5) / 100;
@@ -488,9 +494,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   async function waitForLog(device, p, timeout, started, done) {
     let pattern;
     try { pattern = new RegExp(p.log, 'i'); } catch { throw failure('INVALID_ARGUMENT', 'log must be a valid regular expression'); }
-    const processName = typeof p.bundleId === 'string' ? await executableOf(device, p.bundleId).catch(() => null) : null;
+    const processName = await logProcess(device, p);
     const args = ['simctl', '--set', deviceSet, 'spawn', device.udid, 'log', 'stream', '--style', 'ndjson', '--level', 'debug'];
-    if (processName) args.push('--predicate', `process == "${processName.replace(/"/g, '')}"`);
+    if (processName) args.push('--predicate', `process == ${JSON.stringify(processName)}`);
     return new Promise((resolve, reject) => {
       const child = spawnImpl('/usr/bin/xcrun', args, {stdio: ['ignore', 'pipe', 'ignore']});
       let buffer = '', settled = false;
@@ -593,7 +599,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // ---- capturing a transition ----
   async function capture(device, p, perform) {
     const seconds = number(p.seconds, 'seconds', 0.5, 15, 3), fps = number(p.fps, 'fps', 1, 20, 10), maxFrames = number(p.max_frames, 'max_frames', 2, 30, 12);
-    const {screen} = await geometry(device, {maxAge: 3000});
+    const {screen, stale} = await geometry(device, {maxAge: 0});
+    if (stale) throw failure('SCREEN_UNAVAILABLE', 'Current screen geometry could not be confirmed.');
     const view = G.viewSize(screen);
     const nativeScale = (screen.target?.pixelSize?.width || screen.width * 3) / screen.width;
     const dir = path.join(await shotsDir('captures'), crypto.randomUUID());
@@ -611,6 +618,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       if (buffer.length > 8 * 1024 * 1024) buffer = Buffer.alloc(0);
     });
     child.stdin.on('error', () => {});
+    let streamFailure = null;
+    child.once('error', error => { streamFailure = error; });
     let actionResult = null, actionError = null;
     try {
       await sleep(400); // first frame = the "before" state
@@ -622,79 +631,86 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       t0 = now();
       await sleep(seconds * 1000);
     } finally { child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 2000).unref?.(); }
-    if (!frames.length) throw failure('CAPTURE_EMPTY', 'No frames arrived. The screen may not have changed, or streaming failed.', actionResult ? 'executed' : 'not_executed');
-    // Keep frames that differ from the last kept one; then thin evenly in time.
-    const kept = [];
-    let lastHash = null, lastSize = 0;
-    for (const f of frames) {
-      const hash = crypto.createHash('sha1').update(f.jpeg).digest('hex');
-      if (hash === lastHash || (lastSize && Math.abs(f.jpeg.length - lastSize) / lastSize < 0.002)) continue;
-      kept.push(f); lastHash = hash; lastSize = f.jpeg.length;
-    }
-    const chosen = kept.length <= maxFrames ? kept : Array.from({length: maxFrames}, (_, i) => kept[Math.round(i * (kept.length - 1) / (maxFrames - 1))]);
-    const base = t0 ?? frames[0].at;
-    const files = [];
-    for (const [i, f] of chosen.entries()) {
-      const file = path.join(dir, `frame-${String(i).padStart(2, '0')}.jpg`);
-      await fs.writeFile(file, f.jpeg);
-      const ms = f.at - base;
-      files.push({path: file, ms, label: `${ms >= 0 ? '+' : ''}${ms}ms`});
-    }
-    const columns = Math.min(files.length, view.width > view.height ? 3 : 6);
-    const cellWidth = Math.min(view.width, Math.floor(1560 / columns)), cellHeight = Math.round(cellWidth * view.height / view.width);
-    const sheet = path.join(dir, 'sheet.jpg');
-    await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], {timeout: 30000});
-    // The contact sheet is what the model asked for; the host may scale it to fit (no coordinates on it).
-    const sheetBytes = await fs.readFile(sheet).catch(() => null);
-    return {udid: device.udid, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
-      ...(sheetBytes && sheetBytes.length <= 600 * 1024 ? {_modelImages: [{data: sheetBytes.toString('base64')}]} : {}),
-      screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: actionError.message} : {}),
-      note: `${sheetBytes && sheetBytes.length <= 600 * 1024 ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
+    const execution = actionError ? (actionError.execution || 'unknown') : actionResult ? (actionResult.execution || 'executed') : 'not_executed';
+    if (!frames.length) throw failure('CAPTURE_EMPTY', `No frames arrived. ${streamFailure ? streamFailure.message : 'The screen may not have changed, or streaming failed.'}`, execution);
+    try {
+      // Keep frames that differ from the last kept one; then thin evenly in time.
+      const kept = [];
+      let lastHash = null;
+      for (const f of frames) {
+        const hash = crypto.createHash('sha1').update(f.jpeg).digest('hex');
+        if (hash === lastHash) continue;
+        kept.push(f); lastHash = hash;
+      }
+      const chosen = kept.length <= maxFrames ? kept : Array.from({length: maxFrames}, (_, i) => kept[Math.round(i * (kept.length - 1) / (maxFrames - 1))]);
+      const base = t0 ?? frames[0].at;
+      const files = [];
+      for (const [i, f] of chosen.entries()) {
+        const file = path.join(dir, `frame-${String(i).padStart(2, '0')}.jpg`);
+        await fs.writeFile(file, f.jpeg);
+        const ms = f.at - base;
+        files.push({path: file, ms, label: `${ms >= 0 ? '+' : ''}${ms}ms`});
+      }
+      const columns = Math.min(files.length, view.width > view.height ? 3 : 6);
+      const cellWidth = Math.min(view.width, Math.floor(1560 / columns)), cellHeight = Math.round(cellWidth * view.height / view.width);
+      const sheet = path.join(dir, 'sheet.jpg');
+      await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], {timeout: 30000});
+      // The contact sheet is what the model asked for; the host may scale it to fit (no coordinates on it).
+      const sheetBytes = await fs.readFile(sheet).catch(() => null);
+      return {udid: device.udid, execution, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
+        ...(sheetBytes && sheetBytes.length <= 600 * 1024 ? {_modelImages: [{data: sheetBytes.toString('base64')}]} : {}),
+        screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: {code: actionError.code, message: actionError.message, execution}} : {}),
+        note: `${sheetBytes && sheetBytes.length <= 600 * 1024 ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
+    } catch (error) { error.execution = execution; throw error; }
   }
 
   // ---- device state ----
   async function setState(device, p) {
-    const applied = [];
+    const applied = [], operations = [];
+    const add = (name, words, args, options = {}) => operations.push({name, run: () => bag(words, device, args, {mutation: true, ...options})});
+    const requiredNumber = (value, name, min, max) => {
+      if (value === undefined || value === null) throw failure('INVALID_ARGUMENT', `${name} is required`);
+      return number(value, name, min, max);
+    };
     const enumOf = (value, list, name) => { if (!list.includes(value)) throw failure('INVALID_ARGUMENT', `${name} must be one of ${list.join(', ')}`); return value; };
-    if (p.orientation !== undefined) { await bag(['orientation'], device, [enumOf(p.orientation, Object.keys(G.ROTATION), 'orientation')], {mutation: true}); applied.push('orientation'); }
+    if (p.orientation !== undefined) add('orientation', ['orientation'], [enumOf(p.orientation, Object.keys(G.ROTATION), 'orientation')]);
     if (p.posture !== undefined) {
-      const args = typeof p.posture === 'number' ? ['--angle', String(number(p.posture, 'posture', 0, 180))] : ['--pose', enumOf(p.posture, ['closed', 'open', 'flat'], 'posture')];
-      await bag(['hinge'], device, args, {mutation: true, timeout: 20000}); applied.push('posture');
+      const args = typeof p.posture === 'number' ? ['--angle', String(requiredNumber(p.posture, 'posture', 0, 180))] : ['--pose', enumOf(p.posture, ['closed', 'open', 'flat'], 'posture')];
+      add('posture', ['hinge'], args, {timeout: 20000});
     }
-    if (p.appearance !== undefined) { await bag(['interface', 'appearance'], device, [enumOf(p.appearance, ['light', 'dark'], 'appearance')], {mutation: true}); applied.push('appearance'); }
-    if (p.contrast !== undefined) { await bag(['interface', 'contrast'], device, [p.contrast ? 'enabled' : 'disabled'], {mutation: true}); applied.push('contrast'); }
+    if (p.appearance !== undefined) add('appearance', ['interface', 'appearance'], [enumOf(p.appearance, ['light', 'dark'], 'appearance')]);
+    if (p.contrast !== undefined) {
+      if (typeof p.contrast !== 'boolean') throw failure('INVALID_ARGUMENT', 'contrast must be boolean');
+      add('contrast', ['interface', 'contrast'], [p.contrast ? 'enabled' : 'disabled']);
+    }
     if (p.text_size !== undefined) {
-      await bag(['interface', 'text-size'], device, [enumOf(p.text_size, ['extra-small', 'small', 'medium', 'large', 'extra-large', 'extra-extra-large', 'extra-extra-extra-large', 'accessibility-medium', 'accessibility-large', 'accessibility-extra-large', 'accessibility-extra-extra-large', 'accessibility-extra-extra-extra-large'], 'text_size')], {mutation: true});
-      applied.push('text_size');
+      add('text_size', ['interface', 'text-size'], [enumOf(p.text_size, ['extra-small', 'small', 'medium', 'large', 'extra-large', 'extra-extra-large', 'extra-extra-extra-large', 'accessibility-medium', 'accessibility-large', 'accessibility-extra-large', 'accessibility-extra-extra-large', 'accessibility-extra-extra-extra-large'], 'text_size')]);
     }
     if (p.network !== undefined) {
       const n = p.network;
-      if (n === 'clear') await bag(['network', 'clear'], device, [], {mutation: true});
-      else if (n === 'offline' || n?.offline === true) await bag(['network', 'set'], device, ['--offline'], {mutation: true});
-      else if (typeof n === 'string') await bag(['network', 'set'], device, ['--profile', enumOf(n, ['wifi', 'dsl', 'lte', '3g', 'edge', 'very-bad-network', '100-loss'], 'network')], {mutation: true});
+      if (n === 'clear') add('network', ['network', 'clear'], []);
+      else if (n === 'offline' || n?.offline === true) add('network', ['network', 'set'], ['--offline']);
+      else if (typeof n === 'string') add('network', ['network', 'set'], ['--profile', enumOf(n, ['wifi', 'dsl', 'lte', '3g', 'edge', 'very-bad-network', '100-loss'], 'network')]);
       else if (n && typeof n === 'object') {
         const args = [];
-        if (n.latency !== undefined) args.push('--latency', String(number(n.latency, 'network.latency', 0, 60000)));
-        if (n.bandwidth !== undefined) args.push('--bandwidth', String(number(n.bandwidth, 'network.bandwidth', 1, 10000000)));
-        if (n.loss !== undefined) args.push('--loss', String(number(n.loss, 'network.loss', 0, 100)));
+        if (n.latency !== undefined) args.push('--latency', String(requiredNumber(n.latency, 'network.latency', 0, 60000)));
+        if (n.bandwidth !== undefined) args.push('--bandwidth', String(requiredNumber(n.bandwidth, 'network.bandwidth', 1, 10000000)));
+        if (n.loss !== undefined) args.push('--loss', String(requiredNumber(n.loss, 'network.loss', 0, 100)));
         if (!args.length) throw failure('INVALID_ARGUMENT', 'network needs a profile, "offline", "clear" or latency/bandwidth/loss');
-        await bag(['network', 'set'], device, args, {mutation: true});
+        add('network', ['network', 'set'], args);
       } else throw failure('INVALID_ARGUMENT', 'Invalid network');
-      applied.push('network');
     }
     if (p.location !== undefined) {
-      if (p.location === 'clear') await bag(['location', 'clear'], device, [], {mutation: true});
+      if (p.location === 'clear') add('location', ['location', 'clear'], []);
       else {
-        const lat = number(p.location?.lat, 'location.lat', -90, 90), lon = number(p.location?.lon, 'location.lon', -180, 180);
-        await bag(['location', 'set'], device, [`${lat},${lon}`], {mutation: true});
+        const lat = requiredNumber(p.location?.lat, 'location.lat', -90, 90), lon = requiredNumber(p.location?.lon, 'location.lon', -180, 180);
+        add('location', ['location', 'set'], [`${lat},${lon}`]);
       }
-      applied.push('location');
     }
     if (p.status_bar !== undefined) {
-      if (p.status_bar === 'clear') await bag(['status-bar', 'clear'], device, [], {mutation: true});
-      else if (p.status_bar === 'clean') await bag(['status-bar', 'override'], device, ['--time', '9:41', '--data-network', 'wifi', '--wifi-mode', 'active', '--wifi-bars', '3', '--cellular-mode', 'active', '--cellular-bars', '4', '--battery-state', 'charged', '--battery-level', '100'], {mutation: true});
+      if (p.status_bar === 'clear') add('status_bar', ['status-bar', 'clear'], []);
+      else if (p.status_bar === 'clean') add('status_bar', ['status-bar', 'override'], ['--time', '9:41', '--data-network', 'wifi', '--wifi-mode', 'active', '--wifi-bars', '3', '--cellular-mode', 'active', '--cellular-bars', '4', '--battery-state', 'charged', '--battery-level', '100']);
       else throw failure('INVALID_ARGUMENT', 'status_bar must be "clean" or "clear"');
-      applied.push('status_bar');
     }
     if (p.privacy !== undefined) {
       const q = p.privacy || {};
@@ -703,8 +719,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const args = ['privacy', device.udid, action, service];
       if (q.bundleId !== undefined) { if (typeof q.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(q.bundleId)) throw failure('INVALID_ARGUMENT', 'Invalid privacy.bundleId'); args.push(q.bundleId); }
       else if (action !== 'reset') throw failure('INVALID_ARGUMENT', 'privacy.bundleId is required for grant/revoke');
-      await sim(args, {mutation: true});
-      applied.push('privacy');
+      operations.push({name: 'privacy', run: () => sim(args, {mutation: true})});
+    }
+    // Validate the entire request before the first command. Once a command is
+    // sent, failures cannot claim that the compound request did nothing.
+    for (const operation of operations) {
+      try { await operation.run(); applied.push(operation.name); }
+      catch (error) { forget(device.udid); error.execution = applied.length ? 'unknown' : (error.execution || 'unknown'); throw error; }
     }
     // Nothing to change: report the current state (what `set_state` would otherwise have to be trusted for).
     if (!applied.length) {
@@ -737,18 +758,30 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return (await run('/usr/bin/plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(container, 'Info.plist')], {timeout: 5000})).stdout;
   }
 
+  // Both history and live waits keep an explicit app/process scope or fail;
+  // lookup/validation failure must never widen it to the entire device.
+  async function logProcess(device, p) {
+    const valid = value => typeof value === 'string' && value.length > 0 && value.length <= 100 && !/[\x00-\x1f\x7f]/.test(value);
+    if (p.process !== undefined && !valid(p.process)) throw failure('INVALID_ARGUMENT', 'process must be 1–100 characters without control characters');
+    if (p.bundleId !== undefined && (typeof p.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(p.bundleId))) throw failure('INVALID_ARGUMENT', 'Invalid bundleId');
+    if (p.process !== undefined) return p.process;
+    if (p.bundleId === undefined) return null;
+    const name = await executableOf(device, p.bundleId).catch(() => { throw failure('APP_NOT_INSTALLED', `Could not resolve ${p.bundleId} on this device. Check app action=info before reading logs.`); });
+    if (!valid(name)) throw failure('LOGS_UNAVAILABLE', 'The App executable name could not be read; log scope was not widened.');
+    return name;
+  }
+
   async function logs(device, p) {
     const last = number(p.last_seconds, 'last_seconds', 5, 3600, 120), limit = number(p.limit, 'limit', 1, 1000, 150);
     let pattern = null;
     if (p.match !== undefined) { try { pattern = new RegExp(p.match, 'i'); } catch { throw failure('INVALID_ARGUMENT', 'match must be a valid regular expression'); } }
-    let processName = typeof p.process === 'string' && /^[\w .+-]{1,100}$/.test(p.process) ? p.process : null;
-    if (!processName && typeof p.bundleId === 'string') processName = await executableOf(device, p.bundleId).catch(() => { throw failure('APP_NOT_INSTALLED', `${p.bundleId} is not installed on this device.`); });
+    const processName = await logProcess(device, p);
     const level = ['error', 'default', 'info', 'debug'].includes(p.level) ? p.level : 'default';
     const args = ['spawn', device.udid, 'log', 'show', '--last', `${last}s`, '--style', 'ndjson'];
     if (level === 'info' || level === 'debug') args.push('--info');
     if (level === 'debug') args.push('--debug');
     const clauses = [];
-    if (processName) clauses.push(`process == "${processName.replace(/"/g, '')}"`);
+    if (processName) clauses.push(`process == ${JSON.stringify(processName)}`);
     if (level === 'error') clauses.push('(messageType == error OR messageType == fault)');
     if (clauses.length) args.push('--predicate', clauses.join(' AND '));
     const out = await sim(args, {timeout: 60000, maxBuffer: 64 * 1024 * 1024}).catch(error => { throw failure('LOGS_UNAVAILABLE', error.message); });

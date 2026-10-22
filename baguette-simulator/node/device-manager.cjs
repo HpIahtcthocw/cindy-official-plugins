@@ -3,7 +3,7 @@ const {randomUUID}=require('node:crypto');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 // Device changes run through the same runtime lock as Agent tools and shutdown.
-function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile}) {
+function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile,onSettled=async()=>{}}) {
  let job=null,apps=null;
  const fail=(code,message,execution='not_executed')=>Object.assign(Error(message),{code,execution});
  async function contexts(){
@@ -36,35 +36,42 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
   // Reserve before yielding; two HTTP requests cannot both start a switch.
   if(job?.state==='running')throw fail('BUSY','A device switch is already in progress.');
   const entry={id:randomUUID(),sourceUdid:source.udid,targetUdid:target.udid,state:'running',phase:'preparing',execution:'not_executed'};job=entry;
-  const operation=exclusive(async()=>{
-   await assertEnabled();
-   ({source,target}=await selection(p));
-   const bundleId=await currentApp(source.udid);entry.bundleId=bundleId;
-   let appPath=null;
-   if(bundleId&&source.state==='Booted'){
-    // Only the application bundle is reused. No app data or credentials move.
-    const app=await dispatch('app_bundle',{udid:source.udid,bundleId});appPath=app.appPath;
-   }
-   if(source.udid!==target.udid&&source.state!=='Shutdown'){
-    entry.phase='stopping';entry.execution='unknown';await dispatch('shutdown',{udid:source.udid});
-    if((await dispatch('devices')).devices.find(d=>d.udid===source.udid)?.state!=='Shutdown')throw fail('STOP_UNCONFIRMED','Previous device shutdown was not confirmed.','unknown');
-    entry.execution='executed';
-   }
-   await assertEnabled();entry.phase='booting';entry.execution='unknown';await dispatch('boot',{udid:target.udid});entry.execution='executed';
-   if(bundleId){
-    if(appPath&&source.udid!==target.udid){entry.phase='installing';let job=await dispatch('install_app',{udid:target.udid,appPath});while(job?.state==='running')job=await dispatch('app_install_status',{udid:target.udid,job:job.job});}
-    entry.phase='launching';await dispatch('launch_app',{udid:target.udid,bundleId,showViewer:false});
-    await remember(target.udid,bundleId).catch(()=>{});
-   }
-   entry.phase='opening';const viewer=await dispatch('open_viewer',{udid:target.udid,_locale:p._locale});
-   entry.activeUdid=target.udid;entry.url=viewer.url;entry.state='done';entry.phase='done';touch();
-  });
-  operation.catch(async error=>{
+  const failed=async error=>{
    entry.errorCode=error.code||'SWITCH_FAILED';entry.execution=entry.execution==='not_executed'?(error.execution||'not_executed'):'unknown';
    try{const actual=(await dispatch('devices')).devices;entry.activeUdid=actual.find(d=>d.udid===target.udid&&d.state==='Booted')?.udid||actual.find(d=>d.udid===source.udid&&d.state==='Booted')?.udid||null;}
    catch{entry.activeUdid=null;}
+   await onSettled(entry,p).catch(()=>{});
    entry.state='failed';entry.phase='failed';touch();
+  };
+  const operation=exclusive(async()=>{
+   try{
+    await assertEnabled();
+    ({source,target}=await selection(p));
+    const bundleId=await currentApp(source.udid);entry.bundleId=bundleId;
+    let appPath=null;
+    if(bundleId&&source.state==='Booted'){
+     // Only the application bundle is reused. No app data or credentials move.
+     const app=await dispatch('app_bundle',{udid:source.udid,bundleId});appPath=app.appPath;
+    }
+    if(source.udid!==target.udid&&source.state!=='Shutdown'){
+     entry.phase='stopping';entry.execution='unknown';await dispatch('shutdown',{udid:source.udid});
+     if((await dispatch('devices')).devices.find(d=>d.udid===source.udid)?.state!=='Shutdown')throw fail('STOP_UNCONFIRMED','Previous device shutdown was not confirmed.','unknown');
+     entry.execution='executed';
+    }
+    await assertEnabled();entry.phase='booting';entry.execution='unknown';await dispatch('boot',{udid:target.udid});entry.execution='executed';
+    if(bundleId){
+     if(appPath&&source.udid!==target.udid){entry.phase='installing';let job=await dispatch('install_app',{udid:target.udid,appPath});while(job?.state==='running')job=await dispatch('app_install_status',{udid:target.udid,job:job.job});}
+     entry.phase='launching';await dispatch('launch_app',{udid:target.udid,bundleId,showViewer:false});
+     await remember(target.udid,bundleId).catch(()=>{});
+    }
+    entry.phase='opening';const viewer=await dispatch('open_viewer',{udid:target.udid,_locale:p._locale});
+    entry.activeUdid=target.udid;entry.url=viewer.url;
+    await onSettled(entry,p);entry.state='done';entry.phase='done';touch();
+   }catch(error){await failed(error);}
   });
+  // Lock acquisition can reject before the operation starts. Once acquired,
+  // failure reconciliation and task binding complete before releasing it.
+  operation.catch(failed);
   return snapshot();
  }
  return {snapshot,currentApp,remember,start};

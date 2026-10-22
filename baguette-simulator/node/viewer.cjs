@@ -79,14 +79,25 @@ async function ready(current){
  }
  throw Error('Viewer startup timed out: '+(current.error?.message||current.log));
 }
-async function startViewer(binary,deviceSet,children){
- if(active&&!active.stopped){if(active.parked)await restartNative(active);return ready(active);}
+async function startViewer(binary,deviceSet,children,clipboardAction){
+ if(active&&!active.stopped){if(active.starting)return active.starting;if(active.parked)await restartNative(active);return ready(active);}
  const previousPort=active?.port;
  if(active)await stopViewer();
- const port=previousPort||await freePort();
- const current={binary,deviceSet,children,port,base:'http://127.0.0.1:'+port,child:null,log:'',error:null,stopped:false,parked:false,crashes:[],lastExit:null,restartTimer:null};active=current;
- launch(current);
- try{return await ready(current);}catch(error){if(active===current)await stopViewer();throw error;}
+ const current={binary,deviceSet,children,child:null,log:'',error:null,stopped:false,parked:false,crashes:[],lastExit:null,restartTimer:null};active=current;
+ // Reserve the shared server before the first await. Its bridge is part of the
+ // same startup, so all devices receive one completely initialized owner.
+ current.starting=(async()=>{
+  try{
+   current.port=previousPort||await freePort();current.base='http://127.0.0.1:'+current.port;
+   if(current.stopped)throw Error('Viewer stopped');
+   launch(current);await ready(current);
+   await initializeBridge(current,deviceSet,clipboardAction);
+   if(current.stopped){current.clipboard.close();throw Error('Viewer stopped');}
+   return current;
+  }catch(error){if(active===current)await stopViewer();throw error;}
+  finally{current.starting=null;}
+ })();
+ return current.starting;
 }
 async function restartNative(current){
  if(current.restartPromise)return current.restartPromise;
@@ -123,10 +134,7 @@ async function viewerStatus(server){
  let available=false;try{await probe(server.base+'/simulators');available=true;}catch{}
  return {ready:available,parked:server.parked,generation:server.generation};
 }
-async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale){
- const server=await startViewer(binary,deviceSet,children);
- const page=server.base+'/simulators/'+encodeURIComponent(udid);await probe(page);
- if(!server.clipboard){
+async function initializeBridge(server,deviceSet,clipboardAction){
  const preferred=readSession(deviceSet);
  server.clipboard=await createClipboard(server.base,clipboardAction,{
   port:server.port,
@@ -149,7 +157,10 @@ async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale)
  },preferred);
  const session=server.clipboard.session;
  if(session.port!==preferred.port||session.token!==preferred.token)writeSession(deviceSet,session);
- }
+}
+async function openViewer(binary,deviceSet,children,udid,clipboardAction,locale){
+ const server=await startViewer(binary,deviceSet,children,clipboardAction);
+ const page=server.base+'/simulators/'+encodeURIComponent(udid);await probe(page);
  server.clipboard.devices.add(udid);
  lastViewerSeen=Date.now();
  const url=server.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+server.clipboard.fragment;

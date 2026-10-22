@@ -4,6 +4,8 @@
 
 [English](README.md)
 
+安装按包内容校验和比较，资源保留时间戳也不会漏过；安装登记或签名信息变化时整包安装。后台安装完成写入前，设备保持占用。`method=touch` 拒绝搭配 `clear=true` 或 `keys`，以保留屏幕键盘；录帧即使没有收到画面，也会保留动作真实的执行状态。
+
 Cindy 官方 iOS 模拟器，适用于 Apple Silicon Mac，随包带 Baguette 0.2.10。它替代已下线的内置模拟器；原内置模拟器用户会在 Cindy 中看到一次指向这里的迁移提示（插件 ID 为 `baguette-simulator`）。需要 Cindy 0.1.83+、完整 Xcode 和已安装的 iOS runtime，首次运行不下载依赖。打包时通过 binary-dependencies.json 从固定哈希的官方归档收集九个可移植 USDZ 模型；原生可执行文件仍保留在 Git，仅支持 macOS。
 
 iOS 模拟器任务默认使用。先 environment、devices，复用适合的已登录设备，必要时 `device action=boot`。App 仍由项目正常流程构建（独立设备用 `-destination 'generic/platform=iOS Simulator'`），再用 `app action=install`、`app action=launch` 安装和启动模拟器 .app。启动默认打开当前任务的模拟器页签；检查 viewer.previewOpened，不能把服务启动成功说成页面已显示。切换 session 后通过 `viewer action=open` 打开已有设备。

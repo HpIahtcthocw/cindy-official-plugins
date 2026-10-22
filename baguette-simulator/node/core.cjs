@@ -236,6 +236,7 @@ async function dispatch(method,p={}) {
     if(p.text===undefined&&p.keys===undefined&&p.clear!==true)throw new Failure('INVALID_ARGUMENT','Pass text, keys or clear');
     const how=p.method??'auto';
     if(!['auto','paste','type','touch'].includes(how))throw new Failure('INVALID_ARGUMENT','method must be auto, paste, type or touch');
+    if(how==='touch'&&(p.clear===true||p.keys!==undefined))throw new Failure('INVALID_ARGUMENT','method=touch preserves the on-screen keyboard; omit clear and keys.');
     const {parseKey,typeable}=require('./keys.cjs');
     // Every key is checked before anything is sent.
     const rawKeys=p.keys===undefined?[]:Array.isArray(p.keys)?p.keys:[p.keys];
@@ -372,6 +373,7 @@ function startWorker() {
     return (await require('./activity.cjs').externalUse(running)).length>0;
   };
   const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json'),inUse,viewing:()=>require('./viewer.cjs').viewing(),forgetViewer:()=>require('./viewer.cjs').forgetSession(DEVICE_SET),
+    pendingOperation:udid=>appsImpl?.pending(udid),
     tasks:require('./tasks.cjs').createTaskBindings(path.join(ROOT,'task-bindings.json')),
     existingViewerUrl:(udid,locale)=>require('./viewer.cjs').existingViewerUrl(udid,locale)});
   configureControls(runtime);

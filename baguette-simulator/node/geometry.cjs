@@ -84,8 +84,9 @@ function compactTree(tree, screen, {query, role, limit = 250, turned = axTurned(
     const node = pending.shift();
     if (Array.isArray(node)) { pending.unshift(...node); continue; }
     if (!node || typeof node !== 'object') continue;
+    if (node.hidden === true) continue;
     if (Array.isArray(node.children)) pending.unshift(...node.children);
-    if (node.hidden === true || !node.frame) continue;
+    if (!node.frame) continue;
     const kind = ROLE[node.role] || (typeof node.role === 'string' ? node.role.replace(/^AX/, '').toLowerCase() : 'element');
     if (kind === 'app') continue;
     const label = text(node.label) || text(node.title), id = text(node.identifier), value = text(node.value);
@@ -131,7 +132,7 @@ function findElement(elements, {text: wanted, id, role, nth = 0, view}) {
   // A finger can only reach what is on screen: drop matches whose centre is off it.
   if (view) {
     const onScreen = pool.filter(e => e.center[0] >= 0 && e.center[0] <= view.width && e.center[1] >= 0 && e.center[1] <= view.height);
-    if (onScreen.length) pool = onScreen;
+    pool = onScreen;
   }
   // Prefer something a finger can act on over static text that merely mentions it.
   const actionable = pool.filter(e => INTERACTIVE.has(e.role) && e.enabled !== false);

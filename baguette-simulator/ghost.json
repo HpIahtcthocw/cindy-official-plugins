@@ -76,7 +76,7 @@
     },
     {
       "name": "app",
-      "description": "App 生命周期。install：安装本机已构建的模拟器 .app（appPath 绝对路径，App 由项目自己的 Xcode 流程构建）；与已装内容完全相同时跳过，只改了少量文件时增量同步，耗时长时返回 job，用 install_status 等它完成。info：已装的版本、构建号与可执行文件指纹，传 appPath 时给出 matchesLocal，确认装的就是这次构建。launch：启动（默认先结束旧进程；可传 arguments、env；screenshot=true 时等画面稳定后顺带返回截图），并在当前任务侧栏打开实时画面，检查 viewer.previewOpened（画面能力与副作用见 viewer）。terminate 结束进程；uninstall 删除 App 及其数据；open_url 打开深链，系统若弹出“是否打开”确认，截图后点击处理。",
+      "description": "App 生命周期。install：安装本机已构建的模拟器 .app（appPath 绝对路径，App 由项目自己的 Xcode 流程构建）；与已装内容完全相同时跳过，只改了少量文件时增量同步，耗时长时返回 job，用 install_status 等它完成。info：已装的版本、构建号与可执行文件指纹，传 appPath 时给出 matchesLocal，确认装的就是这次构建。launch：启动（默认先结束旧进程；可传 arguments、env；screenshot=true 时等画面稳定后顺带返回截图），并在当前任务侧栏打开实时画面，检查 viewer.previewOpened（画面能力与副作用见 viewer）。terminate 结束进程；uninstall 删除 App 及其数据；open_url 打开深链，系统若弹出“是否打开”确认，截图后点击处理。 按内容校验和比较；安装登记或签名信息改变时整包安装。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -479,7 +479,7 @@
     },
     {
       "name": "type_text",
-      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键会让 iOS 当作接了硬件键盘，本次开机内不再弹屏幕键盘；要检查键盘遮挡，开机后用 method=touch。",
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键会让 iOS 当作接了硬件键盘，本次开机内不再弹屏幕键盘；要检查键盘遮挡，开机后用 method=touch。 method=touch 不可与 clear=true 或 keys 同用。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -656,7 +656,7 @@
     },
     {
       "name": "capture",
-      "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。联系表图片同样直接附在结果里。",
+      "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。联系表图片同样直接附在结果里。 execution 保留动作执行状态；动作失败时 actionError 含 code、message、execution，不据此盲目重试。",
       "parameters": {
         "type": "object",
         "properties": {

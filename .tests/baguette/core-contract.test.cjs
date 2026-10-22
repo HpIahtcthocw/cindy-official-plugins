@@ -58,6 +58,14 @@ test('invalid paste text never reaches key release or clipboard mutation',async(
  }
 });
 
+test('touch input rejects clear and keys before sending any keyboard or clipboard event',async()=>{
+ for(const extra of [{clear:true},{keys:'Enter'},{keys:[]}]) {
+  const c=core('');
+  await assert.rejects(c.dispatch('type_text',{udid,text:'test',method:'touch',...extra}),e=>e.code==='INVALID_ARGUMENT'&&e.execution==='not_executed');
+  assert.equal(c.mutations(),0);
+ }
+});
+
 test('boot and heal complete command budgets fit the Host bridge ceiling',async()=>{
  const boot=core('');await boot.dispatch('boot',{udid});
  // Booted fixture skips the optional 15-second cold boot command.

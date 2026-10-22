@@ -95,6 +95,9 @@ test('the embedded frame authorizes by capability in its own URL and Referer, ne
   const body=await framed.text();
   assert.ok(body.includes(`<script src="/viewer-auth.js?cindyViewer=${token}"></script>`),'the frame gets the socket capability helper');
   assert.ok(body.indexOf('<script src="/viewer-stage.js"></script>')>=0&&body.indexOf('<script src="/viewer-stage.js"></script>')<body.indexOf('</head>'),'the stage helper runs before the page scripts');
+  const full=await fetch(page+'&cindyFull=1'),fullBody=await full.text();
+  assert.equal(full.status,200);assert.ok(fullBody.includes(`/viewer-auth.js?cindyViewer=${token}`));
+  assert.ok(!fullBody.includes('/viewer-stage.js')&&!fullBody.includes('cindy-stage-style'),'advanced tools retain authentication without replacing upstream chrome');
   // Subresources of that page carry the capability in Referer.
   assert.equal((await fetch(bridge.base+'/assets/app.js',{headers:{Referer:page}})).status,200);
   assert.equal((await fetch(bridge.base+'/viewer-auth.js?cindyViewer='+token)).status,200);

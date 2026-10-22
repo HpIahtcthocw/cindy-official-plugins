@@ -164,8 +164,8 @@
   }
   /** Frame size factor relative to the fitted size for a zoom state. */
   function zoomFactor(zoom, fitPct) {
-    if (!zoom || zoom.mode !== 'pct' || !(fitPct > 0)) return 1;
-    return Math.min(6, Math.max(0.2, zoom.pct / fitPct));
+    if (!zoom || zoom.mode !== 'pct') return 1;
+    return Math.min(6, Math.max(0.2, zoom.pct / (fitPct > 0 ? fitPct : 100)));
   }
   /** The percentage the zoom state shows, given the fitted percentage. */
   const zoomPct = (zoom, fitPct) => Math.round(zoom?.mode === 'pct' ? zoom.pct : (fitPct > 0 ? fitPct : 100));

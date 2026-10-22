@@ -48,11 +48,11 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     try { return (await sim(['get_app_container', device.udid, bundleId, 'app'], {timeout: 10000})).stdout || null; }
     catch { return null; }
   }
-  /** Files that differ between two bundles, by size and modification time. */
+  /** Compare bytes, including resources whose size and timestamp were preserved. */
   async function differences(from, to) {
-    const {stdout} = await run(rsync, ['-a', '--delete', '--dry-run', '--itemize-changes', from + '/', to + '/'], {timeout: 120000, maxBuffer: 32 * 1024 * 1024});
+    const {stdout} = await run(rsync, ['-ac', '--delete', '--dry-run', '--itemize-changes', from + '/', to + '/'], {timeout: 120000, maxBuffer: 32 * 1024 * 1024});
     // A line starting with "." changes attributes only (installd resets dylib permissions); count content changes.
-    return stdout.split('\n').filter(line => line && !line.startsWith('.')).length;
+    return stdout.split('\n').filter(line => line && !line.startsWith('.'));
   }
 
   async function info(device, p) {
@@ -67,7 +67,7 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
       executableSha256: installed.executableSha256.slice(0, 16), executableModified: installed.executableModified};
     if (local) {
       const sameExecutable = local.executableSha256 === installed.executableSha256;
-      const changedFiles = sameExecutable ? await differences(await appPath(p.appPath), container).catch(() => null) : null;
+      const changedFiles = sameExecutable ? await differences(await appPath(p.appPath), container).then(lines => lines.length).catch(() => null) : null;
       result.local = {version: local.version, build: local.build, executableSha256: local.executableSha256.slice(0, 16), executableModified: local.executableModified};
       result.matchesLocal = sameExecutable && local.version === installed.version && local.build === installed.build && changedFiles === 0;
       if (changedFiles) result.changedFiles = changedFiles;
@@ -85,14 +85,16 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     let mode = 'full';
     if (container) {
       const installed = await identity(container).catch(() => null);
-      const changed = installed ? await differences(source, container).catch(() => Infinity) : Infinity;
+      const changes = installed ? await differences(source, container).catch(() => null) : null;
+      const changed = changes?.length ?? Infinity;
       if (changed === 0 && installed.executableSha256 === local.executableSha256 && installed.version === local.version && installed.build === local.build) {
         return {udid: device.udid, bundleId: local.bundleId, execution: 'not_executed', mode: 'unchanged', version: local.version, build: local.build,
           note: 'The installed app already matches this build; nothing was copied.'};
       }
       // A handful of changed files syncs in seconds; many changed files install
       // faster as a whole bundle (simctl clones files on APFS).
-      if (changed <= SYNC_LIMIT) mode = 'sync';
+      // Registration and signing changes need installd, including nested bundles.
+      if (changed <= SYNC_LIMIT && !changes.some(line => /(?:Info\.plist|embedded\.mobileprovision|_CodeSignature)(?:\/|$)/.test(line))) mode = 'sync';
     }
     const job = {id: crypto.randomUUID().slice(0, 8), udid: device.udid, bundleId: local.bundleId, appPath: source, mode, state: 'running', startedAt: now()};
     jobs.set(job.id, job);
@@ -100,10 +102,12 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     job.promise = (async () => {
       if (mode === 'sync') {
         // The app must not run while its files are replaced.
-        await terminate(local.bundleId).catch(() => {});
-        await run(rsync, ['-a', '--delete', source + '/', container + '/'], {timeout: 1800000, mutation: true});
+        await terminate(local.bundleId).catch(error => {
+          if (!/not running|found nothing|No matching processes/i.test(error.message)) throw error;
+        });
+        await run(rsync, ['-ac', '--delete', source + '/', container + '/'], {timeout: 1800000, mutation: true});
         const after = await identity(container);
-        if (after.executableSha256 !== local.executableSha256) throw failure('INSTALL_UNVERIFIED', 'The synced executable does not match the build', 'unknown');
+        if (after.executableSha256 !== local.executableSha256 || (await differences(source, container)).length) throw failure('INSTALL_UNVERIFIED', 'The synced bundle does not match the build', 'unknown');
         job.changedFiles = null;
       } else {
         await sim(['install', device.udid, source], {timeout: 1800000, mutation: true});
@@ -128,13 +132,17 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     return {...base, execution: 'executed', ...job.result, note: job.mode === 'sync' ? 'Changed files were synced into the installed app; App data was kept.' : 'Installed.'};
   }
   async function status(p) {
-    const job = jobs.get(p.job) || [...jobs.values()].filter(j => j.udid === p.udid).sort((a, b) => b.startedAt - a.startedAt)[0];
-    if (!job) throw failure('JOB_NOT_FOUND', 'No such install job. Installs are forgotten when the plugin worker restarts; check with app action=info.');
+    const job = p.job !== undefined ? jobs.get(p.job) : [...jobs.values()].filter(j => j.udid === p.udid).sort((a, b) => b.startedAt - a.startedAt)[0];
+    if (!job || (p.udid !== undefined && job.udid !== p.udid)) throw failure('JOB_NOT_FOUND', 'No such install job for this device. Installs are forgotten when the plugin worker restarts; check with app action=info.');
     return wait(job, p.wait ?? 85);
   }
 
   const installing = () => [...jobs.values()].some(j => j.state === 'running');
-  return {install, status, info, identity, runningFor, installing};
+  const pending = udid => {
+    const promises = [...jobs.values()].filter(j => j.state === 'running' && (!udid || j.udid.toUpperCase() === udid.toUpperCase())).map(j => j.promise);
+    return promises.length ? Promise.all(promises) : null;
+  };
+  return {install, status, info, identity, runningFor, installing, pending};
 }
 
 module.exports = {createApps};
