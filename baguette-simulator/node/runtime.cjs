@@ -197,7 +197,10 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
         const result = await dispatch(method, params);
         await manager.forget(result.udid || params.udid);
         if (method === 'delete_device' && tasks) await tasks.forgetDevice(params.udid).catch(() => {});
-        return {...result, devices: (await status()).devices};
+        // The management page refreshes independently after the operation.
+        // Do not start another core budget or replace a completed destructive
+        // operation with an error from an optional device-list read.
+        return result;
       }
       const settings = await load();
       if (method === 'settings_save') {

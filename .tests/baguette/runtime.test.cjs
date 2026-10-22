@@ -19,6 +19,33 @@ async function fixture(t){
   }};
   return {runtime:createRuntime(options),restart:()=>createRuntime(options),calls,file:options.settingsFile,advance:ms=>clock+=ms,state:()=>state,fail:()=>failStop=true,timeoutBoot:()=>bootTimeout=true,hold:p=>hold=p};
 }
+test('destructive results never start an optional device-list read or lose completed execution',async t=>{
+  const paths=[['erase_device',{}],['delete_device',{}],['device',{action:'erase'}],['device',{action:'delete'}],['app_uninstall',{bundleId:'test.example.app'}]];
+  for(const [method,extra] of paths)for(const elapsed of [1,109999]){
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'bag-destroy-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+    const tasks=require('../../baguette-simulator/node/tasks.cjs').createTaskBindings(path.join(root,'tasks.json'));
+    const coreResult={ok:true,udid,execution:'executed',evidence:'original operation result'};
+    let clock=0,reads=0,removed=false;
+    const runtime=createRuntime({tasks,now:()=>clock,settingsFile:path.join(root,'settings.json'),dispatch:async(m)=>{
+      if(m==='launch_app')return {ok:true,udid};
+      if(m==='devices'){reads++;clock+=110000;throw Object.assign(Error('optional refresh failed'),{execution:'not_executed'});}
+      removed=true;clock=elapsed;return coreResult;
+    }});
+    await runtime.request('launch_app',{udid,bundleId:'test.example.app',session_context:{session_id:'task-1'}});
+    assert.equal(await runtime.currentApp(udid),'test.example.app');
+    const result=await runtime.request(method,{udid,...extra});
+    assert.equal(removed,true);assert.deepEqual(result,coreResult);assert.equal(clock,elapsed);assert.equal(reads,0);
+    assert.equal(await runtime.currentApp(udid),null,'existing App cleanup remains');
+    assert.equal((await tasks.get('task-1'))===null,method==='delete_device'||extra.action==='delete','only deletion clears task bindings');
+  }
+  for(const method of ['erase_device','delete_device'])for(const execution of ['not_executed','unknown','executed']){
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'bag-destroy-fail-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+    const error=Object.assign(Error('core failure'),{code:'OPERATION_FAILED',execution});let forgets=0;
+    const runtime=createRuntime({settingsFile:path.join(root,'settings.json'),tasks:{forgetDevice:async()=>forgets++},dispatch:async()=>{throw error;}});
+    await assert.rejects(runtime.request(method,{udid}),e=>e===error&&e.execution===execution);assert.equal(forgets,0);
+  }
+});
+
 test('off stops exact devices, persists across restart, and rejects tool boot; enabling never boots',async t=>{
   const f=await fixture(t);
   assert.equal((await f.runtime.request('settings_save',{enabled:false,idleMinutes:15})).ok,true);

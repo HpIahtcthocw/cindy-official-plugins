@@ -885,6 +885,24 @@ test('task RPC results have one owner across polling, binding, boot, creation an
   }
 });
 
+test('management refresh failures cannot replace a successful erase or delete result',async()=>{
+  for(const action of ['erase','delete']){
+    const f=pageFixture('manage'),d={udid:A,name:'Phone',state:'Booted'};
+    f.page.seed({ok:true,settings:{enabled:true},devices:[d]});
+    const operation=f.page.act(action,d,'operation completed');
+    f.requests[0].resolve({ok:true,udid:A,execution:'executed'});
+    await new Promise(r=>setImmediate(r));
+    assert.equal(f.get('message').textContent,'operation completed');
+    assert.equal(f.requests[1].action,'manage_state');
+    f.requests[1].reject(Error('device list unavailable'));await operation;
+    assert.equal(f.get('message').textContent,'operation completed');
+    assert.equal(f.requests.filter(r=>r.action===action).length,1,'a failed refresh never replays the destructive operation');
+    // Rendering the previous list may check its old viewer; that is separate
+    // from the completed mutation and cannot replace its success message.
+    f.requests.find(r=>r.action==='viewer_url')?.resolve({ok:false,errorCode:'DEVICE_NOT_OWNED'});
+  }
+});
+
 test('management actions retire old refreshes and unload the iframe for shutdown, erase and delete',async()=>{
   for(const action of ['shutdown','erase','delete'])for(const fails of [false,true]) {
     const f=pageFixture('manage'),d={udid:A,name:'Phone',state:'Booted'};
