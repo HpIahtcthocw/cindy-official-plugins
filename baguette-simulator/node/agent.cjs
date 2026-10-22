@@ -9,6 +9,7 @@ const {spawn} = require('node:child_process');
 const G = require('./geometry.cjs');
 const input = require('./input.cjs');
 const pixels = require('./pixels.cjs');
+const {commandBudget} = require('./budget.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SCREEN_TTL_MS = 8000;
@@ -29,14 +30,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   const dargs = device => ['--udid', device.udid, '--device-set', deviceSet];
   const bag = (words, device, args = [], options) => run(binary, [...words, ...dargs(device), ...args], options);
   const failure = (code, message, execution = 'not_executed') => new Failure(code, message, execution);
-  // Reuse command timeouts; a wait's observation and optional image share a
-  // deadline rather than each starting a fresh full command budget.
-  const budget = (timeout, deadline) => {
-    if (deadline === undefined) return {timeout};
-    const remaining = Math.floor(deadline - now());
-    if (remaining <= 0) throw failure('WAIT_TIMEOUT', 'Wait image/observation budget exhausted. Request screenshot separately if needed.');
-    return {timeout: Math.min(timeout, remaining)};
-  };
+  const budget = (timeout, deadline) => commandBudget(timeout, deadline, now);
   const number = (value, name, min, max, fallback) => {
     if (value === undefined || value === null) return fallback;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw failure('INVALID_ARGUMENT', `${name} must be ${min}–${max}`);
@@ -124,9 +118,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let radius = 0;
     try {
       const layout = JSON.parse((await bag(['chrome', 'layout'], device, panel !== 'primary' ? ['--panel', panel] : [], budget(10000, deadline))).stdout);
-      if (layout.innerCornerRadius > 0 && layout.screen?.width > 0) radius = layout.innerCornerRadius * screen.width / layout.screen.width;
+      if (Number.isFinite(layout.innerCornerRadius) && layout.innerCornerRadius >= 0 && layout.screen?.width > 0) {
+        radius = layout.innerCornerRadius * screen.width / layout.screen.width;
+        corners.set(key, radius);
+      }
     } catch {}
-    corners.set(key, radius);
     return radius;
   }
 
@@ -134,7 +130,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (p.x !== undefined || p.y !== undefined) {
       // What is under a point: the elements whose frame contains it, innermost first.
       // (Baguette's hit test can answer with a whole container, i.e. the page.)
-      const {screen, tree} = await observe(device, {fresh: true});
+      const {screen, tree} = await observe(device, {fresh: true, deadline: p._deadline});
       look(device, screen);
       const view = G.viewSize(screen);
       const vx = number(p.x, 'x', 0, view.width), vy = number(p.y, 'y', 0, view.height);
@@ -144,7 +140,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       return {udid: device.udid, screen: viewInfo(screen), at: [vx, vy], elements: under.slice(0, 8),
         ...(under.length ? {} : {note: 'No accessibility element contains this point. On a game or custom-drawn screen, use screenshot with region to look closer.'})};
     }
-    const {screen, tree} = await observe(device, {fresh: true});
+    const {screen, tree} = await observe(device, {fresh: true, deadline: p._deadline});
     look(device, screen);
     if (p.mode === 'full') {
       const turned = G.axTurned(tree, screen);
@@ -156,7 +152,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const result = G.compactTree(tree, screen, {query: p.query, role: p.role, limit});
     // No accessibility at all (a game, an engine-drawn UI): read the text off the pixels instead.
     if (!result.total && (p.role === undefined || p.role === 'text') && noAx.has(device.udid)) {
-      const read = await readText(device).catch(() => null);
+      const read = await readText(device, {deadline: p._deadline}).catch(() => null);
       if (read) {
         const q = typeof p.query === 'string' ? p.query.trim().toLowerCase() : '';
         const elements = q ? read.elements.filter(e => e.label.toLowerCase().includes(q)) : read.elements;
@@ -271,20 +267,20 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const target = element => ({x: element.center[0], y: element.center[1]});
       // Recently a screen without accessibility (a game): try the pixels first.
       if (noAx.has(device.udid) && now() - noAx.get(device.udid) < NO_AX_TTL_MS && typeof p.id !== 'string') {
-        const hit = await findByText(device, p, nth);
+        const hit = await findByText(device, p, nth, p._deadline);
         if (hit?.element) return {screen: hit.read.screen, ...target(hit.element), element: {label: hit.element.label, role: 'text', frame: hit.element.frame, source: 'ocr'}, matches: hit.matches};
       }
-      const {screen, tree} = await observe(device, {fresh: true});
+      const {screen, tree} = await observe(device, {fresh: true, deadline: p._deadline});
       const {elements} = G.compactTree(tree, screen, {limit: 1000});
       const {element, matches} = G.findElement(elements, {text: p.text, id: p.id, role: p.role, nth, view: G.viewSize(screen)});
       if (element) return {screen, ...target(element), element: {label: element.label, id: element.id, role: element.role, frame: element.frame}, matches};
-      const hit = noAx.has(device.udid) || !elements.length ? await findByText(device, p, nth) : null;
+      const hit = noAx.has(device.udid) || !elements.length ? await findByText(device, p, nth, p._deadline) : null;
       if (hit?.element) return {screen: hit.read.screen, ...target(hit.element), element: {label: hit.element.label, role: 'text', frame: hit.element.frame, source: 'ocr'}, matches: hit.matches};
       const visible = elements.length ? elements.filter(e => e.label || e.id || e.value).slice(0, 25).map(e => `${e.label || e.value || e.id} (${e.role})`)
         : (hit?.read.elements || []).slice(0, 25).map(e => e.label);
       throw failure('ELEMENT_NOT_FOUND', `No visible ${elements.length ? 'element' : 'text'} matches ${JSON.stringify(p.text ?? p.id)}. ${elements.length ? 'Visible' : 'Text read from the screen'}: ${JSON.stringify(visible)}. ${elements.length ? 'Scroll (gesture kind=scroll_to) or use coordinates.' : 'Icons and art have no text: take a screenshot and tap by coordinates.'}`);
     }
-    const {screen} = await geometry(device);
+    const {screen} = await geometry(device, {deadline: p._deadline});
     sameAsSeen(device, screen);
     const view = G.viewSize(screen);
     return {screen, x: number(p.x, 'x', 0, view.width), y: number(p.y, 'y', 0, view.height)};
@@ -311,7 +307,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let out = {...result};
     if (until) {
       forgetTree(device.udid);
-      const waited = await waitFor(device, {text: until, timeout: 15, _inline: p._inline});
+      const waited = await waitFor(device, {text: until, timeout: 15, _inline: p._inline, _deadline: p._deadline});
       const {_modelImages, ...rest} = waited;
       out.until = rest;
       if (_modelImages) out._modelImages = _modelImages;
@@ -322,11 +318,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (!until) await sleep(number(p.settle, 'settle', 0, 5, 0.6) * 1000);
     forgetTree(device.udid);
     if (observeMode === 'ui' || observeMode === 'both') {
-      try { const ui = await describe(device, {limit: 120}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.source ? {source: ui.source} : {}), ...(ui.note ? {note: ui.note} : {})}; }
+      try { const ui = await describe(device, {limit: 120, _deadline: p._deadline}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.source ? {source: ui.source} : {}), ...(ui.note ? {note: ui.note} : {})}; }
       catch (error) { out.ui = {error: error.message}; }
     }
     if (observeMode === 'screenshot' || observeMode === 'both') {
-      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline}); out.screenshot = shot; if (_modelImages) out._modelImages = _modelImages; }
+      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline, _deadline: p._deadline}); out.screenshot = shot; if (_modelImages) out._modelImages = _modelImages; }
       catch (error) { out.screenshot = {error: error.message}; }
     }
     return out;
@@ -352,7 +348,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   async function gesture(device, p) {
     const kind = p.kind;
     if (kind === 'scroll_to') return scrollTo(device, p);
-    const {screen} = await geometry(device);
+    const {screen} = await geometry(device, {deadline: p._deadline});
     if (p.from || p.to || p.center || kind === 'pan') sameAsSeen(device, screen);
     const view = G.viewSize(screen);
     const g = {kind, duration: number(p.duration, 'duration', 0.05, 10, undefined)};
@@ -383,7 +379,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const max = number(p.max_swipes, 'max_swipes', 1, 30, 10), direction = p.direction || 'up';
     let last = null;
     for (let i = 0; i <= max; i++) {
-      const {screen, tree} = await observe(device, {fresh: true});
+      const {screen, tree} = await observe(device, {fresh: true, deadline: p._deadline}).catch(error => {
+        if (i) error.execution = 'executed';
+        throw error;
+      });
       const view = G.viewSize(screen);
       const {elements} = G.compactTree(tree, screen, {limit: 1000});
       const {element} = G.findElement(elements, {text: p.text, id: p.id, role: p.role});
@@ -431,11 +430,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
    * black launch frame) and has stopped moving; an animated scene (a game menu)
    * is accepted after a few seconds of content.
    */
-  async function settle(device, {timeout = 20000} = {}) {
+  async function settle(device, {timeout = 20000, deadline} = {}) {
     const started = now();
+    deadline = Math.min(deadline ?? Infinity, started + timeout);
     let prev = null, since = now(), content = null;
-    while (now() - started < timeout) {
-      const f = await frame(device);
+    while (now() < deadline) {
+      const f = await frame(device, deadline);
       if (f && !(f.image && pixels.isBlank(f.image))) {
         content ??= now();
         if (!prev || share(prev, f) > 0.02) since = now();
@@ -450,18 +450,19 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   async function waitFor(device, p) {
     const timeout = number(p.timeout, 'timeout', 1, 90, 15) * 1000, started = now();
-    const deadline = started + timeout;
+    const callDeadline = p._deadline ?? started + 100000;
+    const deadline = Math.min(started + timeout, callDeadline);
     const done = extra => ({udid: device.udid, met: true, waitedMs: now() - started, ...extra});
-    // Leave 20s of the Host's 120s ceiling for worker preflight and delivery.
-    // Optional images must not consume the wait result when the simulator is slow.
+    // Core supplies the deadline including preflight; direct callers use a
+    // conservative fallback. Images must not consume an already obtained result.
     const finish = async (result, look = p.screenshot === true) => {
       if (!look) return result;
-      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline, _deadline: started + 100000}); return {...result, screenshot: shot, ...(_modelImages ? {_modelImages} : {})}; }
+      try { const {_modelImages, ...shot} = await screenshot(device, {_inline: p._inline, _deadline: callDeadline}); return {...result, screenshot: shot, ...(_modelImages ? {_modelImages} : {})}; }
       catch (error) { return {...result, screenshot: {error: error.message}}; }
     };
     const unmet = (reason, extra = {}) => finish({udid: device.udid, met: false, waitedMs: now() - started, reason, ...extra}, true);
     if (typeof p.log === 'string') {
-      try { return await finish(await waitForLog(device, p, timeout, started, done)); }
+      try { return await finish(await waitForLog(device, p, Math.max(0, deadline - started), started, done)); }
       catch (error) { if (error.code === 'WAIT_TIMEOUT') return unmet(error.message); throw error; }
     }
     if (p.stable !== undefined) {
@@ -470,7 +471,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const region = screen ? viewRegion(screen, p.region) : null;
       let prev = null, since = now(), rect = null;
       const changes = [];
-      while (now() - started < timeout) {
+      while (now() < deadline) {
         const f = await frame(device, deadline);
         if (f) {
           if (region && f.image && !rect) rect = frameRect(screen, f.image, region);
@@ -490,7 +491,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (typeof p.text !== 'string' && typeof p.id !== 'string') throw failure('INVALID_ARGUMENT', 'wait_for needs text, id, stable or log');
     const gone = p.gone === true;
     let seenText = [], source = 'ui';
-    while (now() - started < timeout) {
+    while (now() < deadline) {
       try {
         const {screen, tree} = await observe(device, {fresh: true, deadline});
         const {elements} = G.compactTree(tree, screen, {limit: 1000});

@@ -5,7 +5,7 @@
   "name": "iOS 模拟器",
   "description": "独立的 iOS 模拟器：每个任务在自己的侧栏页签里看到自己的设备画面，「模拟器」主视图管理所有设备。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。基于开源项目 Baguette（tddworks，Apache-2.0）。",
   "whenToUse": "iOS 模拟器任务默认使用：在独立设备上安装、启动和操作已构建的 App，截图、等待、录下变化、看日志，画面实时显示在任务侧栏。先 devices，复用本任务或空闲设备（新建设备时才需要 environment）。用 tap/gesture 的真实触摸验证，不要另外下载 AXe/idb 或去点 Xcode 窗口。完整流程见手册。heal 须用户同意；不替用户重开运行开关。",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "kind": "chip",
   "entry": "main.js",
   "icon": "assets/icon.png",
@@ -32,7 +32,7 @@
     },
     {
       "name": "device",
-      "description": "管理独立设备。create：按 environment 给出的 runtime 与 deviceType 新建（每台约 7–12 GB），需要干净环境、特定机型或与其他任务隔离时才新建；boot：启动并等初始化完成（约 105 秒内，超时先查状态），screenshot=true 时顺带返回启动后的画面；shutdown：关机，保留数据；rename：改名，保留数据；erase：抹掉全部 App 与数据；delete：删除设备，不可恢复。erase 和 delete 只在用户要求时使用。受插件运行开关限制；默认闲置 15 分钟关机（画面开着或有工具在操作时不关）。",
+      "description": "管理独立设备。create：按 environment 给出的 runtime 与 deviceType 新建（每台约 7–12 GB），需要干净环境、特定机型或与其他任务隔离时才新建；boot：启动并等初始化完成（约 105 秒内，超时先查状态），screenshot=true 时顺带返回启动后的画面；shutdown：关机，保留数据；rename：改名，保留数据；erase：抹掉全部 App 与数据；delete：删除设备，不可恢复。erase 和 delete 只在用户要求时使用。受插件运行开关限制；默认闲置 15 分钟关机（画面开着或有工具在操作时不关）。 附图受本次调用剩余时间限制，失败或时间不足返回 screenshot.error，已完成的操作结果保留。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -76,7 +76,7 @@
     },
     {
       "name": "app",
-      "description": "App 生命周期。install：安装本机已构建的模拟器 .app（appPath 绝对路径，App 由项目自己的 Xcode 流程构建）；与已装内容完全相同时跳过，只改了少量文件时增量同步，耗时长时返回 job，用 install_status 等它完成。info：已装的版本、构建号与可执行文件指纹，传 appPath 时给出 matchesLocal，确认装的就是这次构建。launch：启动（默认先结束旧进程；可传 arguments、env；screenshot=true 时等画面稳定后顺带返回截图），并在当前任务侧栏打开实时画面，检查 viewer.previewOpened（画面能力与副作用见 viewer）。terminate 结束进程；uninstall 删除 App 及其数据；open_url 打开深链，系统若弹出“是否打开”确认，截图后点击处理。 按内容校验和比较；安装登记或签名信息改变时整包安装。",
+      "description": "App 生命周期。install：安装本机已构建的模拟器 .app（appPath 绝对路径，App 由项目自己的 Xcode 流程构建）；与已装内容完全相同时跳过，只改了少量文件时增量同步，耗时长时返回 job，用 install_status 等它完成。info：已装的版本、构建号与可执行文件指纹，传 appPath 时给出 matchesLocal，确认装的就是这次构建。launch：启动（默认先结束旧进程；可传 arguments、env；screenshot=true 时等画面稳定后顺带返回截图），并在当前任务侧栏打开实时画面，检查 viewer.previewOpened（画面能力与副作用见 viewer）。terminate 结束进程；uninstall 删除 App 及其数据；open_url 打开深链，系统若弹出“是否打开”确认，截图后点击处理。 按内容校验和比较；安装登记或签名信息改变时整包安装。 附图受本次调用剩余时间限制，失败或时间不足返回 screenshot.error，已完成的操作结果保留。 安装 job 从构建比较阶段开始；mode=checking 表示仍在比较，用同一 job 继续轮询。",
       "parameters": {
         "type": "object",
         "properties": {

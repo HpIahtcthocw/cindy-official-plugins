@@ -51,6 +51,62 @@ test('bundle comparison detects equal-size equal-time resource changes; registra
   assert.equal((await apps.status({udid:A,wait:0})).job,job.job);
 });
 
+test('installation comparison is already a pollable locked job, then settles as unchanged, sync or full',async t=>{
+  for(const mode of ['unchanged','sync','full']){
+    const root=await temporary(t),source=path.join(root,'Build.app'),installed=path.join(root,'Installed.app');
+    const plist={CFBundleIdentifier:'test.example.game',CFBundleExecutable:'Game',CFBundleVersion:'1'};
+    for(const folder of [source,installed]){
+      await fs.mkdir(folder);await fs.writeFile(path.join(folder,'Info.plist'),JSON.stringify(plist));await fs.writeFile(path.join(folder,'Game'),'same');
+    }
+    const comparing=deferred(),comparison=deferred(),writing=deferred(),write=deferred();let diffs=0;
+    const apps=require(path.join(dir,'apps.cjs')).createApps({Failure,
+      run:async(file,args)=>{
+        if(file.endsWith('plutil'))return {stdout:JSON.stringify(plist)};
+        if(args.includes('--dry-run')){
+          if(diffs++===0){comparing.resolve();await comparison.promise;return {stdout:mode==='unchanged'?'':mode==='full'?'>f.. Info.plist\n':'>f.. asset\n'};}
+          return {stdout:''};
+        }
+        writing.resolve();await write.promise;return {stdout:''};
+      },sim:async args=>{
+        if(args[0]==='get_app_container')return {stdout:installed};
+        writing.resolve();await write.promise;return {stdout:''};
+      }});
+    const runtime=require(path.join(dir,'runtime.cjs')).createRuntime({settingsFile:path.join(root,'runtime.json'),pendingOperation:udid=>apps.pending(udid),
+      dispatch:async(method,p)=>method==='app_install'?apps.install({udid:A},p,{terminate:async()=>{}}):{ok:true}});
+    const result=await runtime.request('app',{action:'install',udid:A,appPath:source,wait:0});
+    assert.ok(result.job);assert.equal(result.state,'running');
+    await comparing.promise;
+    assert.equal((await apps.status({udid:A,job:result.job,wait:0})).mode,'checking');
+    await assert.rejects(runtime.request('shutdown',{udid:A}),e=>e.code==='BUSY');
+    assert.ok(apps.pending(A));
+    comparison.resolve();
+    if(mode!=='unchanged'){
+      await writing.promise;
+      await assert.rejects(runtime.request('shutdown',{udid:A}),e=>e.code==='BUSY');
+      write.resolve();
+    }
+    await apps.pending(A);
+    const done=await apps.status({udid:A,job:result.job,wait:0});
+    assert.equal(done.job,result.job);assert.equal(done.mode,mode);assert.equal(done.state,'done');
+    assert.equal(done.execution,mode==='unchanged'?'not_executed':'executed');
+    assert.equal(apps.pending(A),null);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal((await runtime.request('shutdown',{udid:A})).ok,true);
+  }
+});
+
+test('preparation failure settles the original install job without reporting a mutation',async t=>{
+  const source=path.join(await temporary(t),'Game.app');await fs.mkdir(source);
+  const preparation=deferred();
+  const apps=require(path.join(dir,'apps.cjs')).createApps({Failure,sim:async()=>{throw Error('must not mutate');},run:()=>preparation.promise});
+  const result=await apps.install({udid:A},{appPath:source,wait:0},{terminate:async()=>{throw Error('must not terminate');}});
+  assert.equal(result.mode,'checking');assert.equal(apps.runningFor(A).id,result.job);
+  preparation.reject(Error('unreadable build'));
+  await apps.pending(A);
+  await assert.rejects(apps.status({udid:A,job:result.job,wait:0}),e=>e.execution==='not_executed');
+  assert.equal(apps.pending(A),null);
+});
+
 test('background install retains the device lock through success and failure, while reads and other devices proceed', async t => {
   const {createRuntime}=require(path.join(dir,'runtime.cjs'));
   for(const fail of [false,true]) {
@@ -86,6 +142,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
     if(args[0]==='input'){if(state.failConfirm||!require('node:util').isDeepStrictEqual(JSON.parse(args[args.indexOf('--expected-screen')+1]),screen()))throw Error('changed');return {stdout:''};}
     if(args[0]==='describe-ui'){if(state.failTree)throw Error('tree unavailable');return {stdout:JSON.stringify({screen:screen(),children:state.treeChildren})};}
     if(args[0]==='screenshot') {state.files.set(args[args.indexOf('--output')+1],Buffer.from('raw'));if(state.turnOnShot)state.orientation='landscape-left';return {stdout:''};}
+    if(args[0]==='chrome')return {stdout:JSON.stringify(state.layout||{})};
     if(args[0]===state.failWord)throw new Failure('COMMAND_FAILED','failed','not_executed');
     if(file.endsWith('plutil'))return {stdout:'测试 Game'};
     if(file.endsWith('osascript')) {
@@ -302,6 +359,46 @@ test('supplemental capture retries and inline renders never renew a wait deadlin
     const direct=agentFixture({clockStep:0});
     assert.ok((await direct.agent.screenshot(direct.device,{corners:false})).path);
   }
+});
+
+test('after/until/both and settling inherit the original request deadline',async()=>{
+  for(const mode of ['until','both','settle']) {
+    const f=agentFixture({clockStep:0,onDelay:(ms,s)=>s.advance(ms),onCommand:(_file,_args,options,s)=>{
+      s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow observation');
+    }});
+    f.state.advance(99000);
+    if(mode==='settle'){
+      await f.agent.settle(f.device,{timeout:20000,deadline:100000});
+    }else{
+      const result=await f.agent.after(f.device,{...(mode==='until'?{until:'ready'}:{observe:'both',settle:0}),_deadline:100000},{execution:'executed'});
+      assert.equal(result.execution,'executed');
+      if(mode==='until'){assert.equal(result.until.met,false);assert.ok(result.until.screenshot.error);}
+      else {assert.ok(result.ui.error);assert.ok(result.screenshot.error);}
+    }
+    assert.ok(f.state.time()<=100400);
+    assert.ok(f.state.calls.every(([, ,options])=>options.timeout<=1000));
+  }
+});
+
+test('an exhausted corner lookup never poisons later independent screenshot geometry',async()=>{
+  let reads=0;
+  const f=agentFixture({clockStep:0,onCommand:(_file,args,options,s)=>{
+    if(args[0]==='chrome'&&++reads===1){s.advance(options.timeout);throw Error('deadline');}
+  }});
+  f.state.layout={innerCornerRadius:40,screen:{width:402}};
+  await assert.rejects(f.agent.screenshot(f.device,{_deadline:1000}));
+  await f.agent.screenshot(f.device,{});
+  await f.agent.screenshot(f.device,{});
+  assert.equal(reads,2,'successful geometry is cached, an unavailable layout is not');
+  const renders=f.state.calls.filter(([,a])=>a[2]?.endsWith?.('image.jxa.js'));
+  assert.ok(renders.length&&renders.every(([,a])=>JSON.parse(a[5]).radius===40));
+});
+
+test('a scroll observation failure after a swipe preserves the completed input',async()=>{
+  const f=agentFixture({onDelay:(ms,s)=>{if(ms===450)s.failTree=true;}});
+  f.state.treeChildren=[{role:'AXButton',label:'Other',frame:{x:0,y:0,width:50,height:50}}];
+  await assert.rejects(f.agent.gesture(f.device,{kind:'scroll_to',text:'Target',_deadline:100000}),e=>e.execution==='executed');
+  assert.ok(f.state.inputs.length);
 });
 
 test('live log waits and history use the same message field with eventMessage taking precedence',async()=>{

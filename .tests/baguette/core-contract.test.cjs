@@ -75,6 +75,39 @@ test('boot and heal complete command budgets fit the Host bridge ceiling',async(
  assert.ok(heal.budgets.slice(0,-1).reduce((a,b)=>a+b,0)+30500<120000);
 });
 
+test('boot and launch retain completed results when settling and screenshots consume the request deadline',async()=>{
+ for(const method of ['boot','launch_app'])for(const slow of [false,true]){
+  let clock=0;const observations=[];
+  const {commandBudget}=require(path.join(dir,'budget.cjs'));
+  const context={module:{exports:{}},__dirname:dir,Date:{now:()=>clock},process:{platform:'darwin',arch:'arm64',env:{}},
+   require(name){
+    if(name==='./budget.cjs')return {commandBudget:(timeout,deadline)=>commandBudget(timeout,deadline,()=>clock)};
+    if(name==='./viewer.cjs')return {openViewer:async()=>{if(slow)clock+=15000;return {ready:true};}};
+    if(name==='./apps.cjs')return {createApps:()=>({runningFor:()=>null})};
+    if(name==='./agent.cjs')return {createAgent:()=>({forget(){},
+     settle:async(_d,p)=>{observations.push(['settle',p.deadline]);if(slow)clock+=p.timeout;return {settled:true};},
+     screenshot:async(_d,p)=>{observations.push(['shot',p._deadline]);if(slow){clock+=commandBudget(120000,p._deadline,()=>clock).timeout;}commandBudget(20000,p._deadline,()=>clock);return {path:'/shot.jpg'};}})};
+    if(name==='node:child_process')return {execFile(file,args,opts,cb){
+     let data='',cost=0;
+     if(file==='/usr/bin/sw_vers'){data='27.0';cost=3000;}
+     else if(args.includes('--json')){data=JSON.stringify({devices:{r:[{udid,state:method==='boot'?'Shutdown':'Booted'}]}});cost=5000;}
+     else if(args[0]==='boot')cost=14999;
+     else if(args.includes('bootstatus')||args.includes('launch'))cost=85000;
+     else if(args.includes('defaults'))cost=10000;
+     if(slow)clock+=Math.min(cost,opts.timeout);
+     queueMicrotask(()=>cb(null,data,''));return {stdin:{on(){},end(){}}};
+    }};
+    return require(name.startsWith('./')?path.join(dir,name):name);
+   }};
+  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const result=await context.module.exports.dispatch(method,{udid,bundleId:'test.example.app',screenshot:true,_deadline:Infinity});
+  assert.equal(result.execution,'executed');
+  assert.ok(slow?result.screenshot.error:result.screenshot.path);
+  assert.ok(clock<=110000);
+  assert.ok(observations.length>0&&observations.every(([,deadline])=>deadline===110000),'caller input cannot renew the core deadline');
+ }
+});
+
 test('rename only accepts an owned device and a bounded non-option name',async()=>{
  for(const name of ['', '  ', '-option', 'name\nline', 'a'.repeat(81)]){
   const c=core('');await assert.rejects(c.dispatch('rename_device',{udid,name}),e=>e.code==='INVALID_ARGUMENT');assert.equal(c.mutations(),0);

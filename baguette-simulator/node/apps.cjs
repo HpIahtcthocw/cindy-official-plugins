@@ -80,28 +80,32 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
   async function install(device, p, {terminate}) {
     const source = await appPath(p.appPath);
     if (runningFor(device.udid)) throw failure('INSTALL_RUNNING', `An install is still running on this device (job ${runningFor(device.udid).id}). Poll it with app action=install_status.`);
-    const local = await identity(source);
-    const container = p.mode === 'full' ? null : await installedAt(device, local.bundleId);
-    let mode = 'full';
-    if (container) {
-      const installed = await identity(container).catch(() => null);
-      const changes = installed ? await differences(source, container).catch(() => null) : null;
-      const changed = changes?.length ?? Infinity;
-      if (changed === 0 && installed.executableSha256 === local.executableSha256 && installed.version === local.version && installed.build === local.build) {
-        return {udid: device.udid, bundleId: local.bundleId, execution: 'not_executed', mode: 'unchanged', version: local.version, build: local.build,
-          note: 'The installed app already matches this build; nothing was copied.'};
-      }
-      // A handful of changed files syncs in seconds; many changed files install
-      // faster as a whole bundle (simctl clones files on APFS).
-      // Registration and signing changes need installd, including nested bundles.
-      if (changed <= SYNC_LIMIT && !changes.some(line => /(?:Info\.plist|embedded\.mobileprovision|_CodeSignature)(?:\/|$)/.test(line))) mode = 'sync';
-    }
-    const job = {id: crypto.randomUUID().slice(0, 8), udid: device.udid, bundleId: local.bundleId, appPath: source, mode, state: 'running', startedAt: now()};
+    // Hashing and the multi-GB checksum comparison belong to the same existing
+    // job as copying. The caller can poll it while preparation is still busy.
+    const job = {id: crypto.randomUUID().slice(0, 8), udid: device.udid, bundleId: null, appPath: source, mode: 'checking', state: 'running', startedAt: now()};
     jobs.set(job.id, job);
     for (const [id, old] of jobs) if (old.state !== 'running' && now() - (old.finishedAt || 0) > 3600000) jobs.delete(id);
+    let execution = 'not_executed';
     job.promise = (async () => {
+      const local = await identity(source);
+      job.bundleId = local.bundleId;
+      const container = p.mode === 'full' ? null : await installedAt(device, local.bundleId);
+      let mode = 'full';
+      if (container) {
+        const installed = await identity(container).catch(() => null);
+        const changes = installed ? await differences(source, container).catch(() => null) : null;
+        const changed = changes?.length ?? Infinity;
+        if (changed === 0 && installed.executableSha256 === local.executableSha256 && installed.version === local.version && installed.build === local.build) {
+          job.mode = 'unchanged';
+          return {version: local.version, build: local.build};
+        }
+        // Registration and signing changes need installd, including nested bundles.
+        if (changed <= SYNC_LIMIT && !changes.some(line => /(?:Info\.plist|embedded\.mobileprovision|_CodeSignature)(?:\/|$)/.test(line))) mode = 'sync';
+      }
+      job.mode = mode;
       if (mode === 'sync') {
         // The app must not run while its files are replaced.
+        execution = 'unknown';
         await terminate(local.bundleId).catch(error => {
           if (!/not running|found nothing|No matching processes/i.test(error.message)) throw error;
         });
@@ -110,12 +114,14 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
         if (after.executableSha256 !== local.executableSha256 || (await differences(source, container)).length) throw failure('INSTALL_UNVERIFIED', 'The synced bundle does not match the build', 'unknown');
         job.changedFiles = null;
       } else {
+        execution = 'unknown';
         await sim(['install', device.udid, source], {timeout: 1800000, mutation: true});
       }
       return {version: local.version, build: local.build};
     })().then(result => { Object.assign(job, {state: 'done', finishedAt: now(), result}); },
-      error => { Object.assign(job, {state: 'failed', finishedAt: now(), error: {code: error.code || 'INSTALL_FAILED', message: error.message, execution: error.execution || 'unknown'}}); });
-    return wait(job, p.wait ?? 80);
+      error => { Object.assign(job, {state: 'failed', finishedAt: now(), error: {code: error.code || 'INSTALL_FAILED', message: error.message, execution: error.execution || execution}}); });
+    const remaining = p._deadline === undefined ? Infinity : Math.max(0, p._deadline - now() - 1000) / 1000;
+    return wait(job, Math.min(p.wait ?? 80, remaining));
   }
 
   async function wait(job, seconds) {
@@ -127,8 +133,9 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
   }
   function describeJob(job) {
     const base = {udid: job.udid, bundleId: job.bundleId, job: job.id, mode: job.mode, state: job.state, elapsedSeconds: Math.round(((job.finishedAt || now()) - job.startedAt) / 1000)};
-    if (job.state === 'running') return {...base, execution: 'unknown', note: `Still ${job.mode === 'sync' ? 'syncing changed files' : 'installing'}. Call app action=install_status job=${job.id} to wait for it; do not start another install.`};
+    if (job.state === 'running') return {...base, execution: 'unknown', note: `Still ${job.mode === 'checking' ? 'checking the build' : job.mode === 'sync' ? 'syncing changed files' : 'installing'}. Call app action=install_status job=${job.id} to wait for it; do not start another install.`};
     if (job.state === 'failed') { const error = new Failure(job.error.code, job.error.message, job.error.execution); throw error; }
+    if (job.mode === 'unchanged') return {...base, execution: 'not_executed', ...job.result, note: 'The installed app already matches this build; nothing was copied.'};
     return {...base, execution: 'executed', ...job.result, note: job.mode === 'sync' ? 'Changed files were synced into the installed app; App data was kept.' : 'Installed.'};
   }
   async function status(p) {

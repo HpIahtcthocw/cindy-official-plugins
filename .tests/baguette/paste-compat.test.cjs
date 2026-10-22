@@ -25,7 +25,7 @@ function harness({simctlFails=false,readFails=false,stale=false,owned=true}={}) 
    });
    return {stdin:{on(){},end(input){call.input=input;}}};
   }};
-  return require(name);
+  return require(name.startsWith('./')?path.resolve('baguette-simulator/node',name):name);
  }};
  vm.runInNewContext(fs.readFileSync(path.resolve('baguette-simulator/node/core.cjs'),'utf8'),context);
  return {calls,dispatch:context.module.exports.dispatch};

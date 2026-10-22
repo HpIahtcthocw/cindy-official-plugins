@@ -22,7 +22,7 @@ xcodebuild -scheme <Scheme> -sdk iphonesimulator \
 
 CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟器 `.app`。
 
-- `app action=install appPath=<绝对路径>`：与已装内容完全相同时直接跳过（`mode: unchanged`）；只改了少量文件时增量同步（`mode: sync`，保留 App 数据）；否则整包安装（`mode: full`）。超过约 80 秒会返回 `state: running` 与 `job`，用 `app action=install_status job=<job>` 继续等，不要重复发起安装。
+- `app action=install appPath=<绝对路径>`：与已装内容完全相同时直接跳过（`mode: unchanged`）；只改了少量文件时增量同步（`mode: sync`，保留 App 数据）；否则整包安装（`mode: full`）。哈希、构建比较和写入属于同一个 job；`mode: checking` 表示还在比较。整个流程默认等待约 80 秒，未完成会返回 `state: running` 与 `job`，用 `app action=install_status job=<job>` 继续等，不要重复发起安装。
 - `app action=info appPath=<同一路径>`：`matchesLocal: true` 才说明设备上装的就是这次构建。版本号相同不代表是同一次构建，以可执行文件指纹为准。测试前、向用户报告“已修复”前都应确认。
 - `app action=launch`：默认先结束旧进程再启动；需要启动参数或环境变量时传 `arguments`、`env`。
 
@@ -55,7 +55,7 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 - 游戏背景常有持续动画（水面、粒子、待机动作），画面永远不会完全静止：没等到时会返回 `met: false`、每帧典型变化比例、建议的 `tolerance` 和当时截图（受剩余时间预算限制）；按建议加大 `tolerance`，或用 `region` 只看 UI 所在的区域。
 - 等 App 打出某条日志：`wait_for log=<正则> bundleId=…`。
 - 没等到时返回 `met: false`（不是报错），附原因、当时屏幕上的文字，并在剩余时间预算内尝试截图；截图失败或预算用尽会返回 `screenshot.error`，需要画面时另调 `screenshot`，等待结果仍保留。据此判断是没加载完、走错页面还是出错了，不要盲目加长时间重试。
-- `device action=boot`、`app action=launch` 的 `screenshot: true` 会先等过黑屏启动帧和加载动画再截图；画面仍是黑屏时截图说明里会提示。
+- `device action=boot`、`app action=launch` 的 `screenshot: true` 会先等过黑屏启动帧和加载动画再截图；画面仍是黑屏时截图说明里会提示。启动、操作后的观察和附图共用本次调用截止时间，截图失败或时间不足时保留已完成的操作结果并返回 `screenshot.error`，需要画面可另调截图。
 
 ## 6. 抓一闪而过的画面
 

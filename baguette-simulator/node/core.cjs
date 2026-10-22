@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
+const {commandBudget} = require('./budget.cjs');
 const {openViewer,stopViewer,configureControls}=require('./viewer.cjs');
 const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
@@ -86,14 +87,14 @@ const BUNDLE_ID=/^[A-Za-z0-9][A-Za-z0-9.-]+$/;
 function bundleId(value){const id=string(value,'bundleId');if(!BUNDLE_ID.test(id))throw new Failure('INVALID_ARGUMENT','Invalid bundle identifier');return id;}
 // `screenshot: true` on boot / launch: wait until the screen settles, then look,
 // in the same call (one model round trip fewer). The image is hoisted for main.js.
-async function settledShot(device,p,result,startedAt=Date.now()){
+async function settledShot(device,p,result){
   if(p.screenshot!==true)return result;
   // Stay inside the host's 120 s per call: the boot itself may have used most of it.
   // Past the black launch frame, until the screen stops moving (an animated menu after a few seconds).
-  const left=100000-(Date.now()-startedAt);
+  const deadline=p._deadline, left=deadline-Date.now();
   let settled=null;
-  if(left>=2000){try{settled=await agent().settle(device,{timeout:Math.min(20000,left)});}catch{}}
-  try{const {_modelImages,...shot}=await agent().screenshot(device,{_inline:p._inline});
+  if(left>=2000){try{settled=await agent().settle(device,{timeout:Math.min(20000,left),deadline});}catch{}}
+  try{const {_modelImages,...shot}=await agent().screenshot(device,{_inline:p._inline,_deadline:deadline});
     if(settled&&!settled.settled)shot.note=`${settled.blank?'The screen was still blank (loading) when this was taken; wait_for stable=1 and look again. ':settled.animated?'The screen keeps animating; this is its state after a few seconds. ':'The screen was still changing when this was taken. '}${shot.note}`;
     return {...result,screenshot:shot,...(_modelImages?{_modelImages}:{})};}
   catch(error){return {...result,screenshot:{error:error.message}};}
@@ -145,6 +146,9 @@ async function clipboardAction(p) {
  }finally{keyboardBusy=false;}
 }
 async function dispatch(method,p={}) {
+  // Core owns the request deadline, including preflight. Nested observation
+  // never starts another full budget after a slow boot, launch or input.
+  p={...p,_deadline:Date.now()+110000};
   if(!methods.has(method)) throw new Failure('UNKNOWN_TOOL','Unknown Baguette operation');
   if(process.platform!=='darwin'||process.arch!=='arm64') throw new Failure('UNSUPPORTED_PLATFORM','This package requires an Apple Silicon Mac');
   const macOS=(await run('/usr/bin/sw_vers',['-productVersion'],{timeout:3000})).stdout;
@@ -201,16 +205,15 @@ async function dispatch(method,p={}) {
   }
   if(method==='open_viewer') return {udid:device.udid,...await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale),execution:'executed'};
   if(method==='boot') {
-    const bootStarted=Date.now();
     // Upstream 0.1.98's automatic heal omits --set in its internal simctl calls.
     // Wait for this exact custom-set device ourselves; do not silently restart apps.
-    const started=device.state==='Booted'?null:await baguette('boot',device,['--no-heal'],{timeout:15000,mutation:true});
-    const ready=await sim(['bootstatus',device.udid,'-b'],{timeout:90000,mutation:true});
+    const started=device.state==='Booted'?null:await baguette('boot',device,['--no-heal'],{...commandBudget(15000,p._deadline),mutation:true});
+    const ready=await sim(['bootstatus',device.udid,'-b'],{...commandBudget(90000,p._deadline),mutation:true});
     // Baguette always warns about Simulator.app's lifetime setting; it does not apply to these headless devices.
     const warnings=(started?.warnings||ready.warnings||'').split('\n').filter(l=>l.trim()&&!/lifetime|^\[baguette\] Booted /.test(l)).join('\n');
     // A fresh device shows the slide-to-type introduction over the keyboard the first time it appears; it is not part of any App.
-    if(started)await sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','DidShowContinuousPathIntroduction','-bool','true'],{timeout:10000,mutation:true}).catch(()=>{});
-    return settledShot(device,p,{udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'},bootStarted);
+    if(started){try{await sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','DidShowContinuousPathIntroduction','-bool','true'],{...commandBudget(10000,p._deadline),mutation:true});}catch{}}
+    return settledShot(device,p,{udid:device.udid,state:'Booted',execution:started?'executed':'not_executed',...(warnings?{warnings}:{}),note:'Boot completed. If Device Hub has shadowed input, explicitly use heal (terminates running apps).'});
   }
   if(method==='shutdown') {
     if(device.state==='Shutdown') return {udid:device.udid,state:'Shutdown',execution:'not_executed'};
@@ -265,7 +268,7 @@ async function dispatch(method,p={}) {
     if(keyEvents)notes.push('Key events act like a hardware keyboard and hide the on-screen keyboard during input. About 3 seconds after the last input, the plugin attempts to clear that hardware-keyboard record; tap outside and refocus the field to check whether the keyboard returns. To check keyboard overlap without sending keys, use method=touch. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
     const typedResult={udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
     // Like tap: optionally wait for text and/or look at the result in the same call.
-    return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline},typedResult);
+    return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline,_deadline:p._deadline},typedResult);
   }
   if(method==='press'&&p.button==='release-input') {
     await clipboardAction({udid:device.udid,action:'release'});
