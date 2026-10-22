@@ -12,6 +12,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {commandBudget} = require('./budget.cjs');
+const {deviceId} = require('./device-id.cjs');
 
 const BUNDLE = /^[A-Za-z0-9][A-Za-z0-9.-]+$/;
 const SYNC_LIMIT = 300;
@@ -80,14 +81,14 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     return result;
   }
 
-  function runningFor(udid) { return [...jobs.values()].find(j => j.udid === udid && j.state === 'running') || null; }
+  function runningFor(udid) { return [...jobs.values()].find(j => j.udid === deviceId(udid) && j.state === 'running') || null; }
 
   async function install(device, p, {terminate}) {
     const source = await appPath(p.appPath);
     if (runningFor(device.udid)) throw failure('INSTALL_RUNNING', `An install is still running on this device (job ${runningFor(device.udid).id}). Poll it with app action=install_status.`);
     // Hashing and the multi-GB checksum comparison belong to the same existing
     // job as copying. The caller can poll it while preparation is still busy.
-    const job = {id: crypto.randomUUID().slice(0, 8), udid: device.udid, bundleId: null, appPath: source, mode: 'checking', state: 'running', startedAt: now()};
+    const job = {id: crypto.randomUUID().slice(0, 8), udid: deviceId(device.udid), bundleId: null, appPath: source, mode: 'checking', state: 'running', startedAt: now()};
     jobs.set(job.id, job);
     for (const [id, old] of jobs) if (old.state !== 'running' && now() - (old.finishedAt || 0) > 3600000) jobs.delete(id);
     let execution = 'not_executed';
@@ -144,14 +145,14 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     return {...base, execution: 'executed', ...job.result, note: job.mode === 'sync' ? 'Changed files were synced into the installed app; App data was kept.' : 'Installed.'};
   }
   async function status(p) {
-    const job = p.job !== undefined ? jobs.get(p.job) : [...jobs.values()].filter(j => j.udid === p.udid).sort((a, b) => b.startedAt - a.startedAt)[0];
-    if (!job || (p.udid !== undefined && job.udid !== p.udid)) throw failure('JOB_NOT_FOUND', 'No such install job for this device. Installs are forgotten when the plugin worker restarts; check with app action=info.');
+    const job = p.job !== undefined ? jobs.get(p.job) : [...jobs.values()].filter(j => j.udid === deviceId(p.udid)).sort((a, b) => b.startedAt - a.startedAt)[0];
+    if (!job || (p.udid !== undefined && job.udid !== deviceId(p.udid))) throw failure('JOB_NOT_FOUND', 'No such install job for this device. Installs are forgotten when the plugin worker restarts; check with app action=info.');
     return wait(job, p.wait ?? 85);
   }
 
   const installing = () => [...jobs.values()].some(j => j.state === 'running');
   const pending = udid => {
-    const promises = [...jobs.values()].filter(j => j.state === 'running' && (!udid || j.udid.toUpperCase() === udid.toUpperCase())).map(j => j.promise);
+    const promises = [...jobs.values()].filter(j => j.state === 'running' && (!udid || j.udid === deviceId(udid))).map(j => j.promise);
     return promises.length ? Promise.all(promises) : null;
   };
   return {install, status, info, identity, runningFor, installing, pending};

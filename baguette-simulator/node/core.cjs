@@ -6,6 +6,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const readline = require('node:readline');
 const {commandBudget} = require('./budget.cjs');
+const {deviceId} = require('./device-id.cjs');
 const {openViewer,stopViewer,configureControls}=require('./viewer.cjs');
 const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
@@ -53,7 +54,7 @@ async function listDevices(deadline) {
 async function target(p, booted=true) {
   const udid=string(p.udid,'udid',36);
   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(udid)) throw new Failure('INVALID_DEVICE','Use an exact UDID returned by this plugin');
-  const device=(await listDevices(p._deadline)).find(d=>d.udid.toLowerCase()===udid.toLowerCase());
+  const device=(await listDevices(p._deadline)).find(d=>deviceId(d.udid)===deviceId(udid));
   if(!device) throw new Failure('DEVICE_NOT_OWNED','Device is not in the Baguette plugin device set. Create a dedicated device first.');
   if(booted&&device.state!=='Booted') throw new Failure('DEVICE_NOT_BOOTED','Boot this device first');
   return device;

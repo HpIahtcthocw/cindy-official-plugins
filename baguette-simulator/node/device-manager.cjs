@@ -2,6 +2,7 @@
 const {randomUUID}=require('node:crypto');
 const fs=require('node:fs/promises');
 const path=require('node:path');
+const {deviceId}=require('./device-id.cjs');
 // Device changes run through the same runtime lock as Agent tools and shutdown.
 function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile,onSettled=async()=>{}}) {
  let job=null,apps=null;
@@ -29,7 +30,7 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
  }
  async function selection(p){
   const devices=(await dispatch('devices')).devices;
-  const source=devices.find(d=>d.udid===p.udid),target=devices.find(d=>d.udid===p.targetUdid);
+  const source=devices.find(d=>deviceId(d.udid)===deviceId(p.udid)),target=devices.find(d=>deviceId(d.udid)===deviceId(p.targetUdid));
   if(!source||!target)throw fail('DEVICE_NOT_OWNED','Select a device from this plugin.');
   if(!target.isAvailable)throw fail('DEVICE_UNAVAILABLE','The selected runtime is unavailable.');
   if(devices.some(d=>d.udid!==source.udid&&d.udid!==target.udid&&d.state!=='Shutdown'))throw fail('OTHER_DEVICE_RUNNING','Shut down other Baguette devices before switching.');

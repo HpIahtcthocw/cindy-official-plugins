@@ -49,6 +49,15 @@ test('switch preserves app context across runtime restart, shuts down before boo
  assert.deepEqual(mutations.find(c=>c.method==='install_app'),{method:'install_app',udid:b,appPath:'/private-fixture/Test.app'});
  assert.equal(await f.restart().currentApp(b),'test.example.app');assert.equal(f.devices[0].state,'Shutdown');
 });
+test('switch source and target use the same identity as task binding and recent apps',async t=>{
+ const f=await fixture(t);
+ await f.runtime.request('launch_app',{udid:a.toLowerCase(),bundleId:'test.example.app',session_context:{session_id:'case-task'}});
+ await f.runtime.request('viewer_switch',{udid:a.toLowerCase(),targetUdid:b.toLowerCase(),task:'case-task'});
+ const job=await finish(f);assert.equal(job.state,'done');assert.equal(job.activeUdid,b);
+ assert.equal(f.bindings.get('case-task'),b);assert.equal(await f.restart().currentApp(b.toLowerCase()),'test.example.app');
+ assert.ok(f.calls.filter(c=>c.udid).every(c=>[a,b].includes(c.udid)));
+});
+
 test('foreign/unavailable targets and paused runtime never start a switch',async t=>{
  const f=await fixture(t);await assert.rejects(f.runtime.request('viewer_switch',{udid:a,targetUdid:'foreign'}),e=>e.code==='DEVICE_NOT_OWNED');
  f.devices[1].isAvailable=false;await assert.rejects(f.runtime.request('viewer_switch',{udid:a,targetUdid:b}),e=>e.code==='DEVICE_UNAVAILABLE');

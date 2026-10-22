@@ -5,6 +5,7 @@
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {randomUUID}=require('node:crypto');
+const {deviceId}=require('./device-id.cjs');
 const SESSION=/^[A-Za-z0-9-]{1,64}$/;
 const UDID=/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 const MAX_BINDINGS=500;
@@ -26,12 +27,13 @@ function createTaskBindings(file){
  // Serialize writes so concurrent binds never drop one another.
  const serial=fn=>{const run=queue.then(fn,fn);queue=run.catch(()=>{});return run;};
  return {
-  async get(session){if(!validSession(session))return null;const b=(await read())[session];return b&&UDID.test(b.udid)?b:null;},
+  async get(session){if(!validSession(session))return null;const b=(await read())[session];return b&&UDID.test(b.udid)?{...b,udid:deviceId(b.udid)}:null;},
   bind(session,udid,now=Date.now()){
    if(!validSession(session)||typeof udid!=='string'||!UDID.test(udid))return Promise.resolve(false);
+   udid=deviceId(udid);
    return serial(async()=>{
     const current=await read();
-    if(current[session]?.udid===udid)return true;
+    if(deviceId(current[session]?.udid)===udid)return true;
     const next={...current,[session]:{udid,at:now}};
     // Keep the most recent bindings only; old tasks fall back to "no device yet".
     const keys=Object.keys(next);
@@ -43,11 +45,11 @@ function createTaskBindings(file){
   forgetDevice(udid){
    return serial(async()=>{
     const current=await read(),next={...current};let changed=false;
-    for(const [session,b] of Object.entries(current))if(b?.udid?.toLowerCase()===String(udid).toLowerCase()){delete next[session];changed=true;}
+    for(const [session,b] of Object.entries(current))if(typeof b?.udid==='string'&&deviceId(b.udid)===deviceId(udid)){delete next[session];changed=true;}
     if(changed)await write(next);return changed;
    });
   },
-  async counts(){const out={};for(const b of Object.values(await read()))if(b&&UDID.test(b.udid))out[b.udid]=(out[b.udid]||0)+1;return out;},
+  async counts(){const out={};for(const b of Object.values(await read()))if(b&&UDID.test(b.udid)){const id=deviceId(b.udid);out[id]=(out[id]||0)+1;}return out;},
  };
 }
 module.exports={createTaskBindings,validSession};

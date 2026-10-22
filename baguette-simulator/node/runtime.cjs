@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs/promises');
 const {validSession} = require('./tasks.cjs');
+const {deviceId} = require('./device-id.cjs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
@@ -76,7 +77,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   async function stopOne(udid) {
     await dispatch('shutdown', {udid});
     const result = await status();
-    const device = result.devices.find(d => d.udid === udid);
+    const device = result.devices.find(d => deviceId(d.udid) === deviceId(udid));
     if (!device || device.state !== 'Shutdown') throw failure('STOP_UNCONFIRMED', 'Device shutdown is not confirmed. Refresh the device list.', 'unknown');
     return {...result, ok:true, execution:'executed'};
   }
@@ -101,14 +102,14 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     if (!tasks) return devices;
     const counts = await tasks.counts().catch(() => ({}));
     const mine = session ? (await tasks.get(session).catch(() => null))?.udid : null;
-    return devices.map(d => ({...d, tasks: counts[d.udid] || 0, ...(session ? {thisTask: d.udid === mine} : {})}));
+    return devices.map(d => ({...d, tasks: counts[deviceId(d.udid)] || 0, ...(session ? {thisTask: deviceId(d.udid) === deviceId(mine)} : {})}));
   }
   const withTask = (url, session) => url.replace('#', `&task=${encodeURIComponent(session)}#`);
   async function taskState(session, locale) {
     if (!tasks || !validSession(session)) throw failure('INVALID_ARGUMENT', 'Unknown task.');
     const devices = await annotate((await dispatch('devices')).devices, session);
     const binding = await tasks.get(session);
-    const device = binding ? devices.find(d => d.udid === binding.udid) || null : null;
+    const device = binding ? devices.find(d => deviceId(d.udid) === deviceId(binding.udid)) || null : null;
     let settings;
     try { settings = await load(); } catch { settings = {enabled:false, idleMinutes:null}; }
     let viewer = null, waiting = false;
@@ -133,6 +134,10 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   // Reading a device never changes it, so it does not wait for (or block) input.
   const READ_ONLY = new Set(['describe_ui', 'wait_for', 'logs', 'app_info', 'app_install_status']);
   async function request(method, params = {}) {
+    // Normalize before routing, locks, lookups and binding writes. Do not mutate
+    // the caller's object or bypass the existing device validation/ownership checks.
+    params = {...params, ...(typeof params?.udid === 'string' ? {udid:deviceId(params.udid)} : {}),
+      ...(typeof params?.targetUdid === 'string' ? {targetUdid:deviceId(params.targetUdid)} : {})};
     if (Object.hasOwn(ROUTES, method)) {
       const actual = ROUTES[method][params?.action];
       if (!actual) throw failure('INVALID_ARGUMENT', `action must be one of ${Object.keys(ROUTES[method]).join(', ')}`);
@@ -153,7 +158,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     if (method === 'task_bind') {
       if (!tasks || !validSession(params._task)) throw failure('INVALID_ARGUMENT', 'Unknown task.');
       const listed = (await dispatch('devices')).devices;
-      if (!listed.some(d => d.udid === params.udid)) throw failure('INVALID_ARGUMENT', 'Unknown device. Refresh the list.');
+      if (!listed.some(d => deviceId(d.udid) === params.udid)) throw failure('INVALID_ARGUMENT', 'Unknown device. Refresh the list.');
       await tasks.bind(params._task, params.udid);
       viewerClosed = false;
       return taskState(params._task, params._locale);
@@ -175,7 +180,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     if (method === 'environment') return dispatch(method, params);
     // App creation and removal update the shared app-context file. Reuse the existing global
     // lock for that entire operation instead of adding another writer queue.
-    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save', 'launch_app', 'app_uninstall', 'erase_device', 'delete_device'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
+    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save', 'launch_app', 'app_uninstall', 'erase_device', 'delete_device'].includes(method) ? `device:${params.udid}` : '*';
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
