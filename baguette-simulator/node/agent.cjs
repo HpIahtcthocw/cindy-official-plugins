@@ -18,6 +18,7 @@ const NO_AX_TTL_MS = 60000;
 const INLINE_BYTES = 130000;
 const inlineImage = (bytes, enabled) => enabled && bytes?.length > 0 && bytes.length <= INLINE_BYTES
   ? [{data: bytes.toString('base64')}] : null;
+const sameScreen = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = spawn, now = Date.now}) {
   const screens = new Map(); // udid → {screen, at (screen confirmed), tree, treeAt}
@@ -206,7 +207,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})
       .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], {timeout: 20000})));
     const afterFrame = await geometry(device, {maxAge: 0});
-    if (afterFrame.stale || JSON.stringify(afterFrame.screen) !== JSON.stringify(screen)) {
+    if (afterFrame.stale || !sameScreen(afterFrame.screen, screen)) {
       await fs.rm(raw, {force: true});
       throw failure('SCREEN_CHANGED', 'The screen turned or folded while capturing. Take a new screenshot.');
     }
@@ -639,7 +640,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     child.stdin.on('error', () => {});
     let streamFailure = null;
     child.once('error', error => { streamFailure = error; });
-    let actionResult = null, actionError = null;
+    let actionResult = null, actionError = null, screenError = null;
+    const checkScreen = async () => {
+      const current = await geometry(device, {maxAge: 0});
+      if (current.stale) throw failure('SCREEN_UNAVAILABLE', 'Capture screen geometry could not be confirmed; no contact sheet was generated.');
+      if (!sameScreen(current.screen, screen)) throw failure('SCREEN_CHANGED', 'Capture requires a fixed orientation and panel. The screen changed; no contact sheet was generated. The action may already have run; check execution before continuing.');
+    };
     try {
       await sleep(400); // first frame = the "before" state
       if (p.action) {
@@ -648,9 +654,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       // Times are measured from the moment the action finished (the touch landed);
       // keep recording for `seconds` after it so the whole transition is in.
       t0 = now();
+      await checkScreen();
       await sleep(seconds * 1000);
-    } finally { child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 2000).unref?.(); }
+      await checkScreen();
+    } catch (error) { screenError = error; }
+    finally { child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 2000).unref?.(); }
     const execution = actionError ? (actionError.execution || 'unknown') : actionResult ? (actionResult.execution || 'executed') : 'not_executed';
+    if (screenError) { screenError.execution = execution; throw screenError; }
     if (!frames.length) throw failure('CAPTURE_EMPTY', `No frames arrived. ${streamFailure ? streamFailure.message : 'The screen may not have changed, or streaming failed.'}`, execution);
     try {
       // Keep frames that differ from the last kept one; then thin evenly in time.
@@ -819,7 +829,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const dir = path.join(require('node:os').homedir(), 'Library/Logs/DiagnosticReports');
     const cutoff = now() - withinSeconds * 1000, reports = [];
     for (const name of await fs.readdir(dir)) {
-      if (!name.endsWith('.ips') || (processName && !name.startsWith(processName))) continue;
+      if (!name.endsWith('.ips')) continue;
       const file = path.join(dir, name), stat = await fs.stat(file).catch(() => null);
       if (!stat || stat.mtimeMs < cutoff || stat.size > 8 * 1024 * 1024) continue;
       const text = await fs.readFile(file, 'utf8').catch(() => '');
@@ -827,9 +837,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const newline = text.indexOf('\n');
       let header = {}, body = {};
       try { header = JSON.parse(text.slice(0, newline)); body = JSON.parse(text.slice(newline + 1)); } catch { continue; }
+      if ([header, body].some(part => !part || typeof part !== 'object' || Array.isArray(part))) continue;
+      const process = body.procName || header.app_name;
+      if (processName && process !== processName) continue;
       const thread = (body.threads || [])[body.faultingThread ?? -1] || (body.threads || []).find(t => t.triggered);
       const images = body.usedImages || [];
-      reports.push({file, time: header.timestamp || new Date(stat.mtimeMs).toISOString(), process: header.app_name || body.procName,
+      reports.push({file, time: header.timestamp || new Date(stat.mtimeMs).toISOString(), process,
         exception: body.exception ? [body.exception.type, body.exception.signal, body.exception.subtype].filter(Boolean).join(' ') : undefined,
         reason: body.termination?.indicator || body.termination?.reasons?.join('; ') || undefined,
         frames: (thread?.frames || []).slice(0, 14).map(f => `${images[f.imageIndex]?.name || '?'} ${f.symbol || ''}${f.symbolLocation !== undefined ? `+${f.symbolLocation}` : ''}`.trim())});

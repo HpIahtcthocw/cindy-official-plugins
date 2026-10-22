@@ -149,7 +149,10 @@ function clearScreen() {
   $('screen').src = 'about:blank';
 }
 async function showScreen(d) {
-  if (shown.udid === d.udid && shown.url) { $('screen').hidden = false; $('hero').hidden = true; return; }
+  if (shown.udid === d.udid) {
+    if (shown.url) { $('screen').hidden = false; $('hero').hidden = true; }
+    return; // the same device's pending request already owns this view
+  }
   clearScreen();
   const request = shown = { udid: d.udid, url: null };
   try {

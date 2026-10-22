@@ -73,12 +73,13 @@ test('background install retains the device lock through success and failure, wh
 
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
-function agentFixture({frames=[],streamError=false,streamEvents=[]}={}) {
+function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay}={}) {
   const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
-  const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}}});
+  state.target={litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}};
+  const screen=()=>({width:state.width||402,height:874,orientation:state.orientation,target:state.target});
   const run=async(file,args)=>{
     state.calls.push([file,args]);
-    if(args[0]==='input'){if(JSON.parse(args[args.indexOf('--expected-screen')+1]).orientation!==state.orientation)throw Error('changed');return {stdout:''};}
+    if(args[0]==='input'){if(state.failConfirm||!require('node:util').isDeepStrictEqual(JSON.parse(args[args.indexOf('--expected-screen')+1]),screen()))throw Error('changed');return {stdout:''};}
     if(args[0]==='describe-ui'){if(state.failTree)throw Error('tree unavailable');return {stdout:JSON.stringify({screen:screen(),children:state.treeChildren})};}
     if(args[0]==='screenshot') {state.files.set(args[args.indexOf('--output')+1],Buffer.from('raw'));if(state.turnOnShot)state.orientation='landscape-left';return {stdout:''};}
     if(args[0]===state.failWord)throw new Failure('COMMAND_FAILED','failed','not_executed');
@@ -108,7 +109,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[]}={}) {
     });return c;
   };
   const context={module:{exports:{}},__dirname:dir,Buffer,Date,
-    setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms===2000?2000:0);if(ms===2000)timer.unref();return timer;},clearTimeout,
+    setTimeout:(fn,ms)=>{const timer=setTimeout(()=>{onDelay?.(ms,state);fn();},ms===2000?2000:0);if(ms===2000)timer.unref();return timer;},clearTimeout,
     require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async p=>p.endsWith('DiagnosticReports')?[...state.diagnostics.keys()]:[],stat:async p=>state.diagnostics.get(path.basename(p)),rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{const report=state.diagnostics.get(path.basename(p));if(report)return report.text;if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
       return require(name.startsWith('./')?path.join(dir,name):name);}};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'agent.cjs'),'utf8'),context);
@@ -202,10 +203,18 @@ test('crash summaries take the latest five from all matching reports regardless 
   for(const minute of [2,1,4,3,0,9,8,7,6,5])f.state.diagnostics.set(`Game-${minute}.ips`,report(minute));
   f.state.diagnostics.set('Game-foreign.ips',report(59,B));
   f.state.diagnostics.set('Game-bad.ips',{mtimeMs:1000,size:100,text:'invalid '+A});
+  f.state.diagnostics.set('Other-null.ips',{mtimeMs:1000,size:100,text:'null\n'+JSON.stringify({device:A,procName:'Game'})});
   f.state.diagnostics.set('Game-old.ips',{...report(58),mtimeMs:-10000000});
   f.state.diagnostics.set('Game-not-report.txt',report(57));
+  for(const minute of [56,55,54,53,52,51]) {
+    const helper=report(minute);helper.text=helper.text.replace('"procName":"Game"','"procName":"GameHelper"');
+    f.state.diagnostics.set(`GameHelper-${minute}.ips`,helper);
+  }
+  f.state.diagnostics.set('unrelated-filename.ips',report(10));
+  const headerOnly=report(11);headerOnly.text=headerOnly.text.replace(',"procName":"Game"','');
+  f.state.diagnostics.set('another-filename.ips',headerOnly);
   const result=await f.agent.logs(f.device,{process:'Game'});
-  assert.deepEqual(Array.from(result.crashes,r=>path.basename(r.file)),[9,8,7,6,5].map(n=>`Game-${n}.ips`));
+  assert.deepEqual(Array.from(result.crashes,r=>path.basename(r.file)),['another-filename.ips','unrelated-filename.ips',... [9,8,7].map(n=>`Game-${n}.ips`)]);
 });
 
 test('explicit log scope is shared by history and waits and never widens after lookup or validation failure', async()=>{
@@ -306,6 +315,22 @@ test('capture keeps same-length different frames and carries action execution th
   await assert.rejects(broken.agent.capture(broken.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'})),e=>e.code==='CAPTURE_EMPTY'&&e.execution==='executed');
 });
 
+test('capture refuses changed or unconfirmed geometry at action/end boundaries while preserving action execution',async()=>{
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+  const changes=[s=>{s.orientation='landscape-left';},s=>{s.width=800;},s=>{s.target.litPanel='secondary';},s=>{s.target.screenId=2;},s=>{s.target.pixelSize={width:2400,height:2622};},s=>{s.failTree=true;s.failConfirm=true;}];
+  for(const change of changes)for(const when of ['action','end'])for(const execution of ['executed','unknown','not_executed']) {
+    const f=agentFixture({frames:[jpeg],onDelay:(ms,state)=>{if(ms===500&&when==='end')change(state);}});
+    await assert.rejects(f.agent.capture(f.device,{seconds:0.5,action:{tool:'tap'}},async()=>{
+      if(when==='action')change(f.state);
+      if(execution!=='executed')throw new Failure('ACTION_FAILED','ack lost',execution);
+      return {execution};
+    }),e=>['SCREEN_CHANGED','SCREEN_UNAVAILABLE'].includes(e.code)&&e.execution===execution);
+    assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('sheet.jxa.js')),'uncertain geometry never produces a misleading sheet');
+  }
+  const f=agentFixture({frames:[jpeg],onDelay:(ms,state)=>{if(ms===500)state.orientation='landscape-left';}});
+  await assert.rejects(f.agent.capture(f.device,{seconds:0.5},()=>{}),e=>e.code==='SCREEN_CHANGED'&&e.execution==='not_executed');
+});
+
 test('hidden subtrees and unreachable centres never become text tap targets; 3D zoom stays relative to fit',()=>{
   const G=require(path.join(dir,'geometry.cjs')),M=require(path.join(dir,'control-model.js'));
   const frame={x:0,y:0,width:50,height:40},child={role:'AXButton',label:'Wrong',frame};
@@ -340,6 +365,8 @@ test('management view ignores late viewer successes and failures, including retu
       CindySimPages:{locale:()=>new Promise(()=>{}),rpc:()=>{const d=deferred();requests.push(d);return d.promise;},h:()=>({}),GLYPH:{}},CindySimModel:{}};
     vm.runInNewContext(syncFs.readFileSync(path.resolve('baguette-simulator/manage.js'),'utf8')+'\nglobalThis.page={showScreen,hero};',context);
     const old=context.page.showScreen({udid:A});
+    await context.page.showScreen({udid:A});await context.page.showScreen({udid:A});
+    assert.equal(requests.length,1,'same-device pending render reuses its owner instead of causing BUSY');
     const current=context.page.showScreen({udid:B});requests[1].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=B'});await current;
     if(lateFails)requests[0].reject(Error('late error'));else requests[0].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=A'});
     await old;assert.match(get('screen').src,/udid=B/);assert.equal(get('screen').hidden,false);
