@@ -179,7 +179,11 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       if (!listed.some(d => deviceId(d.udid) === params.udid)) throw failure('INVALID_ARGUMENT', 'Unknown device. Refresh the list.');
       await tasks.bind(params._task, params.udid);
       viewerClosed = false;
-      return taskState(params._task, params._locale);
+      const result = {ok:true, execution:'executed', sessionId:params._task, boundUdid:params.udid};
+      // Binding is already durable. Status/viewer failure cannot undo it or
+      // make the caller believe that its previous device is still assigned.
+      return recordUpdate(result, 'taskStateError', async () => Object.assign(result, await taskState(params._task, params._locale)),
+        'Task binding was saved, but its status or screen could not be read. Refresh the task; do not repeat the binding.');
     }
     if (method === 'manage_state') {
       // The management view passes the task in front (if any) so rows can say

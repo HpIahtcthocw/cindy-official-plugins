@@ -89,6 +89,20 @@ async function worker(method, params) {
   return response.ok ? {...response.result, ok:response.result?.ok !== false} : {ok:false, errorCode:'NODE_UNAVAILABLE', execution:'unknown'};
 }
 const SESSION = /^[A-Za-z0-9-]{1,64}$/;
+// Sequential page actions retain the completed first step if the next worker
+// request rejects, times out, or returns an error. Never replay that first step.
+async function afterTaskOperation(completed, method, params, field = 'taskStateError') {
+  try {
+    const next = await worker(method, params);
+    if (!next.ok) throw next;
+    return {...completed, ...next, execution:completed.execution || 'executed'};
+  } catch (error) {
+    return {...completed, execution:completed.execution || 'executed', [field]:{
+      code:error.errorCode || error.code || 'TASK_FOLLOWUP_FAILED',
+      message:'The first operation completed, but task setup or status failed. Refresh the task and inspect its binding; do not repeat the completed operation.',
+    }};
+  }
+}
 const str = (value, max = 256) => typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
 
 // Open a device in the focused task's page (management view / settings page),
@@ -99,6 +113,7 @@ async function openInTask(udid, locale) {
     if (!opened?.ok) return {ok:false, errorCode:opened?.errorCode === 'HOST_NOT_READY' ? 'PREVIEW_NEEDS_SESSION' : 'PREVIEW_FAILED', execution:'not_executed'};
     const state = await worker('task_bind', {_task:opened.sessionId, udid, _locale:locale});
     if (state.ok && state.viewer) pages?.postMessage({type:'viewer', sessionId:opened.sessionId, udid, url:state.viewer.url});
+    else if (state.ok && state.taskStateError) pages?.postMessage({type:'viewer', sessionId:opened.sessionId, udid, url:'', taskStateError:state.taskStateError});
     return {...state, previewOpened:true};
   }
   const result = await worker('settings_viewer', {udid, _locale:locale});
@@ -116,12 +131,12 @@ const PAGE_ACTIONS = {
   task_boot: async (m, l) => {
     if (!SESSION.test(m.sessionId) || !str(m.udid)) return false;
     const booted = await worker('boot', {udid:m.udid, _task:m.sessionId, _locale:l});
-    return booted.ok && !booted.taskBindingError ? worker('task_state', {_task:m.sessionId, _locale:l}) : booted;
+    return booted.ok && !booted.taskBindingError ? afterTaskOperation(booted, 'task_state', {_task:m.sessionId, _locale:l}) : booted;
   },
   task_create: async (m, l) => {
     if (!SESSION.test(m.sessionId)) return false;
     const created = await worker('create_device', {name:str(m.name, 64), deviceType:str(m.deviceType), runtime:str(m.runtime)});
-    return created.ok && created.udid ? worker('task_bind', {_task:m.sessionId, udid:created.udid, _locale:l}) : created;
+    return created.ok && created.udid ? afterTaskOperation(created, 'task_bind', {_task:m.sessionId, udid:created.udid, _locale:l}, 'taskBindingError') : created;
   },
   manage_state: async () => {
     // Only offer "open in the current task" when a task is actually in front:

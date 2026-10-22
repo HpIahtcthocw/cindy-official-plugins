@@ -38,6 +38,8 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 
 ## 4. 观察与操作循环
 
+`describe_ui` 自动 OCR 失败会报错；只有识别成功才能把空文字列表作为没有读到文字的证据。任务绑定保存后如状态或画面读取失败，会保留 `boundUdid`、`execution: executed` 并附 `taskStateError`；启动或新建后的后续步骤失败同样保留已完成结果。刷新任务状态，不要重复已完成操作。任务页会卸载状态不可读的新绑定之前的旧设备画面。
+
 1. 有无障碍树的界面（原生 App、多数 SwiftUI/UIKit/RN 页面）：先 `describe_ui`（可加 `query`），再 `tap text=…` 或 `tap id=…`。同名元素多时加 `role`（如 `field`、`button`）或 `nth`。按文字点击会自动避开屏幕外的同名元素。
 2. 没有无障碍树的界面（游戏、引擎自绘、部分 WebGL）：`describe_ui` 自动改为识别画面上的文字（`source: "ocr"`），每行文字带 `frame` 与 `center`；`tap text=…`、`wait_for text=…` 同样按识别出的文字工作，一行里的某个词也能单独定位。没有文字的图标、角色和道具用 `screenshot grid=true` 读坐标后 `tap x=… y=…`；小按钮先用 `region` 放大核对；按坐标点到识别出的文字上时，结果里的 `hint` 会提醒（图标可能被旁边的文字盖住，点中的是文字所属的控件）。识别在本机完成，不上传画面。
 3. 操作会带来新页面或弹窗时，用 `until=<新页面上的文字>`（`tap`、`gesture`、`type_text` 都支持）：文字一出现就返回，最长 15 秒，没出现会尝试附上当时截图。比猜 `settle` 更快更准，也省一次截图。

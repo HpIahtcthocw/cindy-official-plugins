@@ -101,7 +101,33 @@ test('the task page state reuses a running viewer without the runtime lock and n
  await assert.rejects(f.runtime.request('task_state',{_task:'../x'}),e=>e.code==='INVALID_ARGUMENT');
 });
 
-function logicPage({taskView,preview=async()=>({ok:true})}={}){
+test('task binding preserves durable identity through every post-save status and viewer failure',async t=>{
+ for(const phase of ['devices','counts','get','viewer','success','bind']){
+  const dir=await tmp(t),file=path.join(dir,'bindings.json'),store=createTaskBindings(file),calls=[];
+  await store.bind('task-1',A);let saved=false;
+  const error=Object.assign(Error('fixture failure'),{code:'FIXTURE_FAILED',execution:'not_executed'});
+  const tasks={bind:async(...args)=>{if(phase==='bind')throw error;await store.bind(...args);saved=true;},
+   counts:async()=>{if(saved&&phase==='counts')throw error;return store.counts();},
+   get:async(...args)=>{if(saved&&phase==='get')throw error;return store.get(...args);}};
+  const runtime=createRuntime({tasks,settingsFile:path.join(dir,'settings.json'),dispatch:async method=>{
+   calls.push(method);
+   if((saved&&phase==='devices'&&method==='devices')||(phase==='viewer'&&method==='open_viewer'))throw error;
+   return method==='devices'?{devices:[{udid:A,state:'Booted'},{udid:B,state:'Booted'}]}:{ok:true,url:'http://127.0.0.1:1/control?udid=B#token'};
+  }});
+  if(phase==='bind'){
+   await assert.rejects(runtime.request('task_bind',{_task:'task-1',udid:B}),e=>e===error);
+   assert.equal((await createTaskBindings(file).get('task-1')).udid,A);continue;
+  }
+  const result=await runtime.request('task_bind',{_task:'task-1',udid:B.toLowerCase()});
+  assert.equal(result.ok,true);assert.equal(result.execution,'executed');assert.equal(result.boundUdid,B);assert.equal(result.sessionId,'task-1');
+  assert.equal((await createTaskBindings(file).get('task-1')).udid,B,'fresh store proves the binding was persisted');
+  if(phase==='success'){assert.equal(result.taskStateError,undefined);assert.ok(result.viewer);}
+  else {assert.equal(result.taskStateError.code,'FIXTURE_FAILED');assert.match(result.taskStateError.message,/do not repeat/);assert.equal(result.viewer,undefined);}
+  assert.equal(calls.filter(m=>m==='open_viewer').length,phase==='viewer'||phase==='success'?1:0);
+ }
+});
+
+function logicPage({taskView,preview=async()=>({ok:true}),bindingResult}={}){
  const code=require('node:fs').readFileSync('baguette-simulator/main.js','utf8');
  const buses=new Map();
  class BroadcastChannel{constructor(n){this.name=n;this.onmessage=null;(buses.get(n)||buses.set(n,new Set()).get(n)).add(this);}postMessage(data){for(const p of buses.get(this.name))if(p!==this)queueMicrotask(()=>p.onmessage?.({data}));}}
@@ -110,6 +136,7 @@ function logicPage({taskView,preview=async()=>({ok:true})}={}){
   preview:async p=>{previews.push(p);return preview(p);},
   node:{request:async r=>{calls.push(r);if(r.method==='device_hold')return {ok:true,result:{running:false}};
    if(r.method==='task_state')return {ok:true,result:{ok:true,sessionId:r.params._task,device:null,devices:[],viewer:null}};
+   if(r.method==='task_bind'&&bindingResult)return {ok:true,result:bindingResult};
    return {ok:true,result:{ok:true,ready:true,url:'http://127.0.0.1:9/control?udid=A&lang=en#cindyClipboard=9.t'}};}}};
  if(taskView)cindy.taskView=async r=>{views.push(r);return taskView(r);};
  vm.runInNewContext(code,{cindy,BroadcastChannel,Object,String,Promise,Set,RegExp,queueMicrotask,setTimeout});
@@ -118,6 +145,15 @@ function logicPage({taskView,preview=async()=>({ok:true})}={}){
  return {call:args=>handler({type:'tool-call',tool:'open_viewer',callId:'c',args}),sent,previews,views,calls,page,pushed,replies};
 }
 const settle=()=>new Promise(r=>setTimeout(r,10));
+
+test('management binding with failed state notifies the focused task to unload its previous device screen',async()=>{
+ const result={ok:true,execution:'executed',sessionId:'task-1',boundUdid:B,taskStateError:{code:'VIEWER_FAILED'}};
+ const f=logicPage({taskView:async()=>({ok:true,sessionId:'task-1'}),bindingResult:result});
+ f.page.postMessage({type:'request',id:'bind-1',action:'open_in_task',udid:B});await settle();
+ assert.equal(f.replies[0].result.boundUdid,B);assert.equal(f.replies[0].result.execution,'executed');
+ assert.deepEqual(JSON.parse(JSON.stringify(f.pushed)),[{type:'viewer',sessionId:'task-1',udid:B,url:'',taskStateError:{code:'VIEWER_FAILED'}}]);
+ assert.deepEqual(f.calls.filter(c=>c.method==='task_bind').map(c=>c.params.udid),[B]);
+});
 
 test('completed device operations retain results and expose task record read and write failures',async t=>{
  for(const mode of ['unreadable','write-failed'])for(const method of ['boot','open_viewer','launch_app','delete_device']){

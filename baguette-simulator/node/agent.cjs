@@ -157,13 +157,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const result = G.compactTree(tree, screen, {query: p.query, role: p.role, limit});
     // No accessibility at all (a game, an engine-drawn UI): read the text off the pixels instead.
     if (!result.total && (p.role === undefined || p.role === 'text') && noAx.has(device.udid)) {
-      const read = await readText(device, {deadline: p._deadline}).catch(() => null);
-      if (read) {
-        const q = typeof p.query === 'string' ? p.query.trim().toLowerCase() : '';
-        const elements = q ? read.elements.filter(e => e.label.toLowerCase().includes(q)) : read.elements;
-        return {udid: device.udid, screen: viewInfo(read.screen), source: 'ocr', elements: elements.slice(0, limit), total: elements.length, truncated: elements.length > limit,
-          note: 'No accessibility elements (a game or custom-drawn UI). These are text lines read from the screen image (OCR); tap text=… and wait_for text=… work on them. Icons and art without text are not listed: use screenshot for those.'};
-      }
+      const read = await readText(device, {deadline: p._deadline});
+      const q = typeof p.query === 'string' ? p.query.trim().toLowerCase() : '';
+      const elements = q ? read.elements.filter(e => e.label.toLowerCase().includes(q)) : read.elements;
+      return {udid: device.udid, screen: viewInfo(read.screen), source: 'ocr', elements: elements.slice(0, limit), total: elements.length, truncated: elements.length > limit,
+        note: 'No accessibility elements (a game or custom-drawn UI). These are text lines read from the screen image (OCR); tap text=… and wait_for text=… work on them. Icons and art without text are not listed: use screenshot for those.'};
     }
     return {udid: device.udid, screen: viewInfo(screen), ...result,
       ...(!result.total && !p.query && !p.role ? {note: 'No accessibility elements: a game or custom-drawn UI. Use screenshot (grid on) and tap by coordinates.'} : {})};

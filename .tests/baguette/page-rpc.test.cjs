@@ -6,7 +6,7 @@ const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 function fixture(page,{steps=1}={}){
   const buses=new Map(),intervals=new Map(),timers=new Map(),messages=[],calls=[];
   let serial=0,now=0;
-  const results=Array.from({length:steps},()=>{let finish;const result=new Promise(resolve=>{finish=resolve;});return {result,finish};});
+  const results=Array.from({length:steps},()=>{let finish,fail;const result=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});return {result,finish,fail};});
   class BroadcastChannel{
     constructor(name){this.name=name;if(!buses.has(name))buses.set(name,[]);buses.get(name).push(this);}
     postMessage(data){messages.push(data);for(const p of buses.get(this.name))if(p!==this)queueMicrotask(()=>p.onmessage?.({data}));}
@@ -19,7 +19,7 @@ function fixture(page,{steps=1}={}){
     CindySimModel:{},fetch:async url=>url==='/app-context'?new Promise(()=>{}):{ok:true,json:async()=>({state:'on'})}};
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(`baguette-simulator/${page}.js`,'utf8'),context);
-  return {messages,calls,finish:(value,index=0)=>results[index].finish(value),intervals,timers,
+  return {messages,calls,finish:(value,index=0)=>results[index].finish(value),fail:(error,index)=>results[index].fail(error),intervals,timers,
     advance:async ms=>{now+=ms;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.fn();}await flush();},
     rpc:action=>page==='pages'?context.CindySimPages.rpc(action,{sessionId:'task-1',udid:'device-1'}):vm.runInContext(`rpc(${JSON.stringify(action)})`,context),
     tick:()=>{for(const {fn,ms} of [...intervals.values()])if(ms===500)fn();},
@@ -87,4 +87,20 @@ test('task boot keeps completed device evidence when its binding cannot be saved
   const result={ok:true,execution:'executed',udid:'device-1',taskBindingError:{code:'TASK_BINDINGS_UNREADABLE',message:'check storage'}};
   f.finish(result);
   assert.deepEqual(JSON.parse(JSON.stringify(await pending)),result);assert.equal(f.calls.length,1,'no state query can discard the completed boot or its binding error');
+});
+
+test('compound task actions retain completed evidence across rejected, timed out, and error follow-ups',async()=>{
+ for(const action of ['task_boot','task_create'])for(const outcome of ['reject','timeout','error','partial','success']){
+  const f=fixture('pages',{steps:2});f.start();const pending=f.rpc(action);await flush();
+  f.finish({ok:true,execution:'executed',udid:'device-1',marker:'completed'});await flush();assert.equal(f.calls.length,2);
+  if(outcome==='reject'||outcome==='timeout')f.fail(Object.assign(Error(outcome),{code:outcome==='timeout'?'TIMEOUT':'NODE_FAILED'}),1);
+  else f.finish(outcome==='error'?{ok:false,errorCode:'STATE_FAILED',execution:'not_executed'}:
+   {ok:true,boundUdid:'device-1',...(outcome==='partial'?{taskStateError:{code:'VIEWER_FAILED'}}:{viewer:{url:'screen'}})},1);
+  const result=await pending;
+  assert.equal(result.ok,true);assert.equal(result.execution,'executed');assert.equal(result.marker,'completed');assert.equal(result.udid,'device-1');
+  if(outcome==='partial')assert.equal(result.taskStateError.code,'VIEWER_FAILED');
+  else if(outcome==='success')assert.equal(result.viewer.url,'screen');
+  else assert.ok(result[action==='task_create'?'taskBindingError':'taskStateError']);
+  assert.deepEqual(f.calls.map(c=>c.method),action==='task_boot'?['boot','task_state']:['create_device','task_bind']);
+ }
 });

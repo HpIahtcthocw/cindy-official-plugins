@@ -20,7 +20,7 @@ const TEXT = {
     deleteTitle: (n) => `Delete ${n}?`, deleteBody: 'All apps and data on this device are deleted. This cannot be undone.', deleteTasks: (k) => k === 1 ? ' One task uses it; it will pick another device next time.' : ` ${k} tasks use it; they will pick another device next time.`, deleteOk: 'Delete', cancel: 'Cancel',
     opened: 'Opened in the current task.', created: (n) => `Created ${n}.`, erased: 'Erased.', deleted: 'Deleted.', save: 'Save',
     failed: 'Not completed. Refresh to see the actual state.', busy: 'Another simulator operation is running. Try again in a moment.', timeout: 'No response from the simulator service. Reopen this page.', pluginOff: 'The iOS Simulator plugin is turned off.',
-    readFailed: 'Could not read the devices.', recordFailed: 'Device operation completed, but its task or App record was not saved. Check storage before assigning or switching devices; do not repeat the operation.',
+    readFailed: 'Could not read the devices.', stateFailed: 'Task binding was saved, but its status or screen could not be read. Refresh the task; do not repeat the binding.', recordFailed: 'Device operation completed, but its task or App record was not saved. Check storage before assigning or switching devices; do not repeat the operation.',
   },
   'zh-CN': {
     title: '模拟器', search: '搜索', add: '新建设备', newIphone: 'iPhone…', newIpad: 'iPad…',
@@ -38,7 +38,7 @@ const TEXT = {
     deleteTitle: (n) => `删除「${n}」？`, deleteBody: '设备上的所有 App 和数据都会删除，且无法恢复。', deleteTasks: (k) => ` 有 ${k} 个任务在用它，之后会改用别的设备。`, deleteOk: '删除', cancel: '取消',
     opened: '已在当前任务中打开。', created: (n) => `已创建「${n}」。`, erased: '已抹掉。', deleted: '已删除。', save: '保存',
     failed: '操作没有完成，请刷新查看实际状态。', busy: '有其他模拟器操作正在进行，稍后再试。', timeout: '模拟器服务没有响应，请重新打开本页。', pluginOff: '「iOS 模拟器」插件已停用。',
-    readFailed: '没能读取设备。', recordFailed: '设备操作已完成，但任务绑定或 App 记录未保存。请先检查存储，再分配或切换设备；不要重复设备操作。',
+    readFailed: '没能读取设备。', stateFailed: '任务绑定已保存，但状态或画面未能读取。请刷新任务，不要重复绑定。', recordFailed: '设备操作已完成，但任务绑定或 App 记录未保存。请先检查存储，再分配或切换设备；不要重复设备操作。',
   },
 };
 const { rpc, h, locale, GLYPH, createDevice, catalog } = globalThis.CindySimPages;
@@ -218,6 +218,7 @@ async function act(action, d, done, extra = {}) {
     const r = await rpc(action, { udid: d.udid, ...extra }, T.timeout);
     if (r?.ok === false) throw r;
     if (r.taskBindingError || r.appContextError) message(T.recordFailed, true);
+    else if (r.taskStateError) message(T.stateFailed, true);
     else if (done) message(done);
     if (action === 'delete' && selected === d.udid) selected = null;
   } catch (error) { message(errorText(error), true); }

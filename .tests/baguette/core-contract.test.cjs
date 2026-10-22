@@ -20,13 +20,14 @@ function core(output,failAt=Infinity,macOS="15.0",catalog=[]){
  vm.runInNewContext(fs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
  return {dispatch:context.module.exports.dispatch,mutations:()=>mutations,commands,budgets};
 }
-test('describe_ui needs the screen geometry, returns a compact view-space list, and says when there is nothing to read',async()=>{
+test('describe_ui needs screen geometry and a successful AX or OCR read before returning elements',async()=>{
  for(const value of ['invalid','null','{}','{"children":[]}']) {
   await assert.rejects(core(value).dispatch('describe_ui',{udid}),e=>e.code==='SCREEN_UNAVAILABLE');
  }
  const screen={width:402,height:874,orientation:'portrait'};
- const empty=await core(JSON.stringify({role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen,children:[]})).dispatch('describe_ui',{udid});
- assert.deepEqual(empty.elements,[]);assert.match(empty.note,/game or custom-drawn/);
+ // This command fixture has no screenshot renderer or Vision response. Its
+ // empty AX tree must expose that failure rather than claim no visible text.
+ await assert.rejects(core(JSON.stringify({role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen,children:[]})).dispatch('describe_ui',{udid}));
  const tree={role:'AXApplication',frame:{x:0,y:0,width:402,height:874},screen,children:[{role:'AXButton',label:'Google',frame:{x:100,y:200,width:80,height:40},children:[]}]};
  const ui=await core(JSON.stringify(tree)).dispatch('describe_ui',{udid});
  assert.deepEqual(ui.elements,[{i:0,role:'button',label:'Google',frame:[100,200,80,40],center:[140,220]}]);

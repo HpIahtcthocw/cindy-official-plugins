@@ -4,6 +4,8 @@
 
 Screenshots fall back to a file path on older hosts or when JPEG compression still exceeds the 130 KB inline budget. Open that path with an image tool before choosing coordinates; the full-resolution file is preserved.
 
+Failed automatic OCR in `describe_ui` returns an error; only successful recognition can report an empty text list. Task binding returns its saved `boundUdid` and `execution: executed` even if subsequent status or viewer reads fail (`taskStateError`). Task boot/create pages also preserve the completed step on a failed follow-up. Refresh task state; do not repeat the completed operation. A task page unloads its old screen when the new binding's status is unavailable.
+
 Capture waits for a complete first frame and confirms the screen before starting the action. If the stream fails or the deadline expires first, it returns `captureError` with `execution: not_executed`. An interrupted recording or output that cannot drain within the cleanup deadline also returns `captureError`, retaining the action outcome without generating a contact sheet. Diagnostic read failures return `crashesError` alongside the logs; an empty `crashes` list means the scan completed without matching reports. `crashes=false` skips that scan.
 
 Installation compares bundle content checksums, including resources whose timestamps were preserved. Registration or signing changes use a full install. Container lookup failures are errors, not evidence that the App is absent; automatic installation stops before writing, and log queries retain their scope. A background install keeps the device busy until its writes settle. `method=touch` rejects `clear=true` and `keys` to preserve the on-screen keyboard; capture results retain the action's execution state.

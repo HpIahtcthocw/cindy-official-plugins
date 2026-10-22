@@ -12,7 +12,7 @@ const TEXT = {
     pausedTitle: 'Simulators are turned off', pausedBody: 'Turn them on in Plugins → iOS Simulator to use them here.',
     pluginOff: 'The iOS Simulator plugin is turned off.', needXcode: 'Needs full Xcode with an iOS runtime installed.',
     failed: 'Not completed. Check the device and try again.', busy: 'Another simulator operation is running. Trying again shortly…', timeout: 'No response from the simulator service. Reopen this tab.',
-    devices: 'Devices', back: 'Back', recordFailed: 'Device operation completed, but its task or App record was not saved. Check storage before assigning or switching devices; do not repeat the operation.',
+    devices: 'Devices', back: 'Back', stateFailed: 'The operation completed, but task status or the screen could not be read. Refresh this task; do not repeat the operation.', recordFailed: 'Device operation completed, but its task or App record was not saved. Check storage before assigning or switching devices; do not repeat the operation.',
   },
   'zh-CN': {
     loading: '正在读取…', connecting: '正在连接画面…',
@@ -23,7 +23,7 @@ const TEXT = {
     pausedTitle: '模拟器运行已关闭', pausedBody: '在「插件 → iOS 模拟器」里打开开关后即可在这里使用。',
     pluginOff: '「iOS 模拟器」插件已停用。', needXcode: '需要先安装完整的 Xcode 和一个 iOS 运行时。',
     failed: '操作没有完成，请核对设备后重试。', busy: '有其他模拟器操作正在进行，稍后自动重试…', timeout: '模拟器服务没有响应，请重新打开这个页签。',
-    devices: '设备', back: '返回', recordFailed: '设备操作已完成，但任务绑定或 App 记录未保存。请先检查存储，再分配或切换设备；不要重复设备操作。',
+    devices: '设备', back: '返回', stateFailed: '操作已完成，但任务状态或画面未能读取。请刷新此任务，不要重复操作。', recordFailed: '设备操作已完成，但任务绑定或 App 记录未保存。请先检查存储，再分配或切换设备；不要重复设备操作。',
   },
 };
 const { rpc, h, locale, GLYPH, onPush, createDevice: newDevice } = globalThis.CindySimPages;
@@ -109,6 +109,7 @@ async function act(action, params, marker) {
     if (pending !== request) return;
     if (!r.ok) throw r;
     if (r.taskBindingError || r.appContextError) { note = { text: T.recordFailed, error: true, sticky: true }; return; }
+    if (r.taskStateError) { state = null; choosing = false; show(null); note = { text: T.stateFailed, error: true, sticky: true }; return; }
     choosing = false; accept(r);
   } catch (error) { if (pending === request) note = { text: errorText(error), error: true, sticky: true }; }
   finally { busy = null; render(); if (pending === request) { pending = null; if (!viewerUrl) refresh(); } }
@@ -122,7 +123,12 @@ async function createDevice() {
   return act('task_bind', { udid: made.udid }, 'create');
 }
 // The logic page pushes a fresh viewer when Cindy opens the simulator for this task.
-onPush((m) => { if (m?.type === 'viewer' && m.sessionId === session && typeof m.url === 'string') { pending = null; choosing = false; show(m.url); } });
+onPush((m) => {
+  if (m?.type !== 'viewer' || m.sessionId !== session || typeof m.url !== 'string') return;
+  pending = null; choosing = false;
+  if (m.taskStateError) { state = null; note = { text:T.stateFailed, error:true, sticky:true }; }
+  show(m.url); render();
+});
 (async () => {
   lang = await locale(); T = TEXT[lang] || TEXT.en; document.documentElement.lang = lang;
   $('screen').title = lang === 'zh-CN' ? 'iOS 模拟器' : 'iOS Simulator';

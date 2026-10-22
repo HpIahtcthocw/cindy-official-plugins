@@ -404,7 +404,7 @@ test('state readback never renews the budget or loses a completed mutation',asyn
 });
 
 test('screenshots reject a rotation during capture and refresh a rotation inside the former cache window', async()=>{
-  const {agent,state,device}=agentFixture();await agent.describe(device,{});
+  const {agent,state,device}=agentFixture();state.ocr=[];await agent.describe(device,{});
   state.orientation='landscape-left';
   const shot=await agent.screenshot(device,{corners:false});assert.equal(shot.screen.width,874);assert.equal(shot.screen.orientation,'landscape-left');
   state.orientation='portrait';state.turnOnShot=true;
@@ -869,6 +869,19 @@ test('fresh tree and OCR failures never prove that a button is present or text h
   assert.equal((await game.agent.waitFor(game.device,{text:'Loading',gone:true,timeout:1})).met,true,'a successful empty read does prove absence');
 });
 
+test('describe distinguishes successful empty OCR from screenshot, Vision and budget failures',async()=>{
+  for(const params of [{},{query:'Continue'},{role:'text'}])for(const mode of ['empty','text','vision','screenshot','budget']){
+    const f=agentFixture({onCommand:(file,args,_options,state)=>{
+      if(mode==='budget'&&args[0]==='describe-ui')state.advance(2000);
+      if(mode==='screenshot'&&args[0]==='screenshot')throw new Failure('SCREENSHOT_FAILED','capture failed');
+    }});
+    f.state.ocr=mode==='vision'?null:mode==='text'?[{text:'Continue',box:[0.1,0.1,0.2,0.1]}]:[];
+    const reading=f.agent.describe(f.device,{...params,...(mode==='budget'?{_deadline:1000}:{})});
+    if(['vision','screenshot','budget'].includes(mode))await assert.rejects(reading);
+    else {const result=await reading;assert.equal(result.source,'ocr');assert.equal(result.total,mode==='text'?1:0);}
+  }
+});
+
 test('explicit viewer close survives task polling and worker restart; an unexpected exit can reconnect',async t=>{
   const {createRuntime}=require(path.join(dir,'runtime.cjs'));let wanted=true,live=false,opens=0;
   const bindings=new Map([['task-1',{udid:A}]]),settingsFile=path.join(await temporary(t),'settings.json');
@@ -916,6 +929,29 @@ function pageFixture(kind) {
   return {page:context.page,get,requests,push:m=>push(m)};
 }
 const taskState=udid=>({ok:true,settings:{enabled:true},devices:[],device:{udid,state:'Booted'},viewer:{url:`http://127.0.0.1:1/control?udid=${udid}`}});
+
+test('task and management pages report saved bindings with failed status without showing old task screens or claiming opened',async()=>{
+  const result={ok:true,execution:'executed',sessionId:'task-1',boundUdid:B,taskStateError:{code:'STATUS_FAILED'}};
+  const f=pageFixture('task');f.page.seed(taskState(A));
+  const operation=f.page.act('task_bind',{udid:B},B);f.requests[0].resolve(result);await operation;
+  assert.equal(f.get('screen').src,'about:blank');assert.equal(f.page.state(),null);
+  assert.match(f.page.note().text,/operation completed/);
+  assert.equal(f.requests[1].action,'task_state','refresh reads state rather than replaying binding');
+  f.requests[1].resolve(taskState(B));await new Promise(r=>setImmediate(r));
+  assert.match(f.get('screen').src,new RegExp(B));assert.ok(!new RegExp(A).test(f.get('screen').src));
+  const hub=pageFixture('manage');hub.page.seed({ok:true,settings:{enabled:true},devices:[]});
+  const opened=hub.page.act('open_in_task',{udid:B},'opened');hub.requests[0].resolve(result);
+  await new Promise(r=>setImmediate(r));
+  assert.match(hub.get('message').textContent,/binding was saved/);assert.notEqual(hub.get('message').textContent,'opened');
+  hub.requests[1].reject(Error('refresh unavailable'));await opened;
+  assert.match(hub.get('message').textContent,/binding was saved/);
+  // A management-originated binding must also retire an old task read/screen.
+  const pushed=pageFixture('task');pushed.page.seed(taskState(A));const old=pushed.page.refresh();
+  pushed.push({type:'viewer',sessionId:'task-1',udid:B,url:'',taskStateError:result.taskStateError});
+  assert.equal(pushed.get('screen').src,'about:blank');assert.equal(pushed.page.state(),null);
+  pushed.requests[0].resolve(taskState(A));await old;
+  assert.equal(pushed.get('screen').src,'about:blank','late old state cannot undo the saved binding notification');
+});
 
 test('task RPC results have one owner across polling, binding, boot, creation and viewer pushes',async()=>{
   for(const lateFails of [false,true])for(const action of ['task_bind','task_boot','create']) {
