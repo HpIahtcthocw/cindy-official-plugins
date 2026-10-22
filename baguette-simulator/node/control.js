@@ -19,7 +19,7 @@
   const hub = params.get('embed') === 'hub';
   const store = { get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
     set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} } };
-  const orientKey = () => `cindy.orientation.${udid}`, zoomKey = () => `cindy.zoom.${udid}`;
+  const zoomKey = () => `cindy.zoom.${udid}`;
   state.zoom = store.get(zoomKey())?.mode === 'pct' ? store.get(zoomKey()) : { mode: 'fit' };
 
   const ICON = {
@@ -80,9 +80,8 @@
     state.generation = state.status?.generation ?? state.generation;
     // The capability travels in the frame URL: Cindy's panel is not an HTTP
     // origin, so this frame can hold no cookie.
-    // The device with its bezel, like Simulator; the orientation it last showed survives reloads.
-    const orientation = store.get(orientKey());
-    screen.src = `/simulators/${encodeURIComponent(udid)}?handheld=0${state.fullToolbar ? '&cindyFull=1' : ''}${orientation ? `&cindyOrientation=${encodeURIComponent(orientation)}` : ''}${token ? `&cindyViewer=${encodeURIComponent(token)}` : ''}${location.hash}`;
+    // The device with its bezel, like Simulator; the guest owns its orientation.
+    screen.src = `/simulators/${encodeURIComponent(udid)}?handheld=0${state.fullToolbar ? '&cindyFull=1' : ''}${token ? `&cindyViewer=${encodeURIComponent(token)}` : ''}${location.hash}`;
     state.viewport = null; state.fitPct = 0; state.pose = null;
   }
   function blank() { state.generation = null; screen.src = 'about:blank'; }
@@ -334,8 +333,7 @@
     const fn = screen.contentWindow?.__nativeRotateBy ? '__nativeRotateBy' : '__nativeRotate';
     if (!native(fn, step)) return;
     activity({ isTrusted: true });
-    // Remember what the device shows so a reload keeps it.
-    setTimeout(() => { try { const o = screen.contentWindow.__nativeOrientation?.(); if (o) store.set(orientKey(), o); } catch {} measure(); }, 450);
+    setTimeout(measure, 450);
   }
   $('btn-home').addEventListener('click', home);
   $('btn-rotl').addEventListener('click', () => rotate(-1));

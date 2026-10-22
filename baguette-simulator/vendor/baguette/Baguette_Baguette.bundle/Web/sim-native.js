@@ -489,26 +489,8 @@
           window.SimFileDrop.attach(document.getElementById('nativeDeviceFrame'), { udid });
     }
 
-    // Reset iOS to portrait on page boot. Without this, a page
-    // reload would leave our JS state at `currentOrientation =
-    // 'portrait'` (rotation degrees 0) while iOS still holds
-    // whatever orientation it was set to in a previous session
-    // — the bezel renders un-rotated but the iOS framebuffer
-    // shows UI from the stale orientation, which looks upside
-    // down to the user.
-    //
-    // Only meaningful once the guest is up: an unbooted device has no
-    // PurpleWorkspacePort to send the GSEvent to. `resetToPortrait`
-    // runs again after a boot completes.
-    //
-    // Not on an open foldable, though. iPhone Duo's unfolded panel is
-    // landscape by the guest's own choice — SpringBoard turns it back
-    // the moment the home screen shows — so forcing portrait would
-    // leave the page fighting the device. The hinge poll says which
-    // way the lit panel faces, and the page takes that instead.
-    if (!foldable && isBooted(meta.state)) {
-      resetToPortrait();
-    }
+    // Cindy: observe the guest orientation when the stream opens. Opening a
+    // viewer must never rotate the device or restore a browser's stale value.
 
     // Start watching for network conditioning immediately, before the card
     // has ever been opened. A throttle armed from the CLI in another
@@ -878,23 +860,6 @@
     if (render3DPanel) render3DPanel.setInterfaceOrientation(currentOrientation);
   }
 
-  function resetToPortrait() {
-    if (deviceMode) return; // a physical phone rotates itself
-    // Cindy: the controller passes the orientation this device last showed,
-    // so a reload (or coming back to the task) keeps it instead of forcing portrait.
-    const asked = new URLSearchParams(location.search).get('cindyOrientation');
-    const wanted = ORIENTATION_CYCLE.includes(asked) ? asked : 'portrait';
-    fetch('/simulators/' + encodeURIComponent(udid) + '/orientation?value=' + wanted,
-        { method: 'POST' }).catch(() => { /* best-effort */ });
-    if (wanted === 'portrait') return;
-    let tries = 0;
-    const settle = () => {
-      if (document.querySelector('#nativeDeviceFrame > div')) snapOrientation(wanted);
-      else if (++tries < 100) setTimeout(settle, 100);
-    };
-    settle();
-  }
-
   // Theme toggle. Three logical states — "auto" (no manual pin,
   // follow OS via prefers-color-scheme), "light", "dark". The pill
   // in the bottom-right corner cycles light ↔ dark; we don't
@@ -967,8 +932,13 @@
   }
 
   function sessionCallbacks(onFirstPaint) {
-    let painted = false;
+    let painted = false, orientationRead = null;
     return {
+      onOpen: () => {
+        if (deviceMode || foldable) return;
+        orientationRead = { session, orientation: currentOrientation };
+        session.send({ type: 'describe_ui', x: 1, y: 1 });
+      },
       onSize: (w, h) => {
         lastPaintedSize = { w, h };
         // First frame after a boot — the guest is genuinely up, so
@@ -981,7 +951,16 @@
         if (el) el.textContent = fps + ' fps';
       },
       onLog: (msg) => console.log('[native]', msg),
-      onText: routeStreamText,
+      onText: (env) => {
+        if (orientationRead && env?.type === 'describe_ui_result') {
+          const read = orientationRead; orientationRead = null;
+          const orientation = env.ok && env.tree?.screen?.orientation;
+          // A retired stream or a manual rotation owns the newer view.
+          if (read.session === session && read.orientation === currentOrientation && ORIENTATION_CYCLE.includes(orientation)) snapOrientation(orientation);
+          return true;
+        }
+        return routeStreamText(env);
+      },
     };
   }
 
@@ -1532,7 +1511,6 @@
   function onBooted() {
     renderPowerCard('starting');
     startMainView();
-    if (!foldable) resetToPortrait();
     firstFrameTimer = setTimeout(hidePowerCard, FIRST_FRAME_TIMEOUT_MS);
   }
 
@@ -2389,7 +2367,7 @@
     // server delegates to `simulator.orientation().set(...)`, which
     // dispatches a device orientation change through the appropriate backend.
     // Cindy: rotate either way (Simulator's Rotate Left / Right) and let the
-    // controller read the orientation it shows, to restore it after a reload.
+    // controller read the orientation it shows. Reloads observe the guest.
     window.__nativeOrientation = () => currentOrientation;
     window.__nativeRotate = () => window.__nativeRotateBy(1);
     window.__nativeRotateBy = (step) => {
