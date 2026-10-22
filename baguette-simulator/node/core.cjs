@@ -374,6 +374,7 @@ function startWorker() {
   };
   const runtime=require('./runtime.cjs').createRuntime({dispatch,settingsFile:path.join(ROOT,'runtime-settings.json'),inUse,viewing:()=>require('./viewer.cjs').viewing(),forgetViewer:()=>require('./viewer.cjs').forgetSession(DEVICE_SET),
     pendingOperation:udid=>appsImpl?.pending(udid),
+    viewerWanted:()=>require('./viewer.cjs').hasSession(DEVICE_SET),
     tasks:require('./tasks.cjs').createTaskBindings(path.join(ROOT,'task-bindings.json')),
     existingViewerUrl:(udid,locale)=>require('./viewer.cjs').existingViewerUrl(udid,locale)});
   configureControls(runtime);

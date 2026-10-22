@@ -48,9 +48,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     let tree;
     try { tree = await readTree(device); }
     catch (error) {
-      // No accessibility (a game in a transition, SpringBoard idle): keep the last
-      // known geometry rather than guessing a portrait phone.
-      if (cached) return {...cached, stale: true};
+      // An old tree cannot prove what is currently visible or safe to tap.
+      // Geometry has its own separately confirmed cache for coordinate input.
       throw failure('SCREEN_UNAVAILABLE', `Could not read the screen geometry: ${error.message}. Take a screenshot and retry.`);
     }
     const screen = tree?.screen;
@@ -248,8 +247,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // Text on screen that has an element with no accessibility behind it: read it off the pixels.
   async function findByText(device, p, nth) {
     if (typeof p.text !== 'string' || (p.role !== undefined && p.role !== 'text')) return null;
-    const read = await readText(device, {find: p.text}).catch(() => null);
-    if (!read) return null;
+    const read = await readText(device, {find: p.text});
     const {element, matches} = G.findElement(read.elements, {text: p.text, nth, view: G.viewSize(read.screen)});
     return {read, element, matches};
   }
@@ -482,6 +480,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         // No accessibility (a game): look for the text in the pixels.
         if (!element && !elements.length && typeof p.text === 'string') {
           const hit = await findByText(device, p, 0);
+          if (!hit) throw failure('SCREEN_UNAVAILABLE', 'The requested text could not be read from this screen.');
           if (hit) { source = 'ocr'; element = hit.element; seenText = hit.read.elements.slice(0, 20).map(e => e.label); }
         }
         if (gone ? !element : element) return finish(done(element ? {element: {label: element.label, id: element.id, role: element.role, frame: element.frame, center: element.center}, ...(source === 'ocr' ? {source} : {})} : {}));
@@ -549,8 +548,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const session = input.openSession(binary, dargs(device), {spawnImpl});
     let switched = false, typed = 0;
     const send = async envelope => {
-      const ack = await session.send(envelope);
-      if (!ack.ok) throw failure('INPUT_FAILED', `Typing stopped: ${ack.error || 'rejected'}`, typed ? 'unknown' : 'not_executed');
+      try { await input.perform(session, [{envelope, waitMs: 0}]); }
+      catch (error) { if (typed || switched) error.execution = 'unknown'; throw error; }
     };
     try {
       let source = await inputSource(device);

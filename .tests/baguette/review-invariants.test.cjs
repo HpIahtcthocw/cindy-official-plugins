@@ -73,16 +73,17 @@ test('background install retains the device lock through success and failure, wh
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
 function agentFixture({frames=[],streamError=false}={}) {
-  const state={orientation:'portrait',calls:[],files:new Map(),failWord:null,missingApp:false,turnOnShot:false,failRender:false};
+  const state={orientation:'portrait',calls:[],files:new Map(),failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null};
   const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}}});
   const run=async(file,args)=>{
     state.calls.push([file,args]);
     if(args[0]==='input'){if(JSON.parse(args[args.indexOf('--expected-screen')+1]).orientation!==state.orientation)throw Error('changed');return {stdout:''};}
-    if(args[0]==='describe-ui')return {stdout:JSON.stringify({screen:screen(),children:[]})};
+    if(args[0]==='describe-ui'){if(state.failTree)throw Error('tree unavailable');return {stdout:JSON.stringify({screen:screen(),children:state.treeChildren})};}
     if(args[0]==='screenshot') {state.files.set(args[args.indexOf('--output')+1],Buffer.from('raw'));if(state.turnOnShot)state.orientation='landscape-left';return {stdout:''};}
     if(args[0]===state.failWord)throw new Failure('COMMAND_FAILED','failed','not_executed');
     if(file.endsWith('plutil'))return {stdout:'测试 Game'};
     if(file.endsWith('osascript')) {
+      if(args[2].endsWith('ocr.jxa.js')) {if(state.ocr===null)throw Error('OCR unavailable');return {stdout:JSON.stringify(state.ocr)};}
       if(state.failRender)throw new Failure('RENDER_FAILED','image conversion failed');
       const script=args[2];state.files.set(args[script.endsWith('image.jxa.js')?4:3],Buffer.from('jpeg'));
       return {stdout:JSON.stringify({width:402,height:874})};
@@ -99,7 +100,8 @@ function agentFixture({frames=[],streamError=false}={}) {
     require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async()=>[],rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
       return require(name.startsWith('./')?path.join(dir,name):name);}};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'agent.cjs'),'utf8'),context);
-  const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl});
+  let clock=0;
+  const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl,now:()=>++clock*100});
   return {agent,state,device:{udid:A}};
 }
 
@@ -199,4 +201,66 @@ test('management view ignores late viewer successes and failures, including retu
     requests[5].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=B'});await pending;
     assert.equal(get('screen').hidden,true,'off/empty selection retires pending requests too');
   }
+});
+
+test('input acknowledgement loss is unknown, while a proven display bind rejection is not executed',async()=>{
+  for(const mode of ['exit','error','stdin','timeout','malformed','null','bind']) {
+    let child;
+    const context={module:{exports:{}},setTimeout:(fn)=>setImmediate(fn),clearTimeout:clearImmediate,
+      require:n=>require(n.startsWith('./')?path.join(dir,n):n)};
+    vm.runInNewContext(syncFs.readFileSync(path.join(dir,'input.cjs'),'utf8'),context);
+    const input=context.module.exports;
+    const session=input.openSession('/bag',[],{spawnImpl:()=>{
+      child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();child.kill=()=>{};
+      child.stdin.write=()=>queueMicrotask(()=>{
+        if(mode==='bind'){child.stderr.emit('data','display bind failed: changed');child.emit('exit',1);}
+        if(mode==='exit')child.emit('exit',1);
+        if(mode==='error')child.emit('error',Error('transport failed'));
+        if(mode==='stdin')child.stdin.emit('error',Error('EPIPE'));
+        if(mode==='malformed')child.stdout.emit('data','invalid json\n');
+        if(mode==='null')child.stdout.emit('data','null\n');
+      });return child;
+    }});
+    await assert.rejects(input.perform(session,[{envelope:{type:'tap'},waitMs:0}]),e=>e.execution===(mode==='bind'?'not_executed':'unknown'));
+  }
+});
+
+test('fresh tree and OCR failures never prove that a button is present or text has disappeared',async()=>{
+  const f=agentFixture();f.state.treeChildren=[{role:'AXButton',label:'OK',frame:{x:0,y:0,width:50,height:50}}];
+  await f.agent.describe(f.device,{});f.state.failTree=true;
+  await assert.rejects(f.agent.describe(f.device,{}),e=>e.code==='SCREEN_UNAVAILABLE');
+  await assert.rejects(f.agent.tap(f.device,{text:'OK',observe:'none'}),e=>e.code==='SCREEN_UNAVAILABLE');
+  assert.equal((await f.agent.waitFor(f.device,{text:'OK',gone:true,timeout:1})).met,false);
+  const game=agentFixture();
+  assert.equal((await game.agent.waitFor(game.device,{text:'Loading',gone:true,timeout:1})).met,false,'failed OCR is not evidence of absence');
+  game.state.ocr=[];
+  assert.equal((await game.agent.waitFor(game.device,{text:'Loading',gone:true,timeout:1})).met,true,'a successful empty read does prove absence');
+});
+
+test('explicit viewer close survives task polling and worker restart; an unexpected exit can reconnect',async t=>{
+  const {createRuntime}=require(path.join(dir,'runtime.cjs'));let wanted=true,live=false,opens=0;
+  const bindings=new Map([['task-1',{udid:A}]]),settingsFile=path.join(await temporary(t),'settings.json');
+  const make=()=>createRuntime({settingsFile,viewerWanted:()=>wanted,forgetViewer:()=>{wanted=false;},
+    existingViewerUrl:()=>live?'http://127.0.0.1:1/control?udid=A#token':null,
+    tasks:{get:async s=>bindings.get(s),counts:async()=>({}),bind:async(s,udid)=>bindings.set(s,{udid})},
+    dispatch:async(method)=>{if(method==='devices')return {devices:[{udid:A,state:'Booted'}]};if(method==='close_viewer')live=false;if(method==='open_viewer'){opens++;live=true;wanted=true;return {url:'http://127.0.0.1:1/control?udid=A#token'};}return {ok:true};}});
+  let runtime=make();await runtime.request('task_state',{_task:'task-1'});assert.equal(opens,1);
+  await runtime.request('viewer',{action:'close'});
+  for(let i=0;i<2;i++)assert.equal((await runtime.request('task_state',{_task:'task-1'})).viewer,null);
+  runtime=make();assert.equal((await runtime.request('task_state',{_task:'task-1'})).viewer,null);assert.equal(opens,1);
+  await runtime.request('viewer',{action:'open',udid:A});assert.equal(opens,2);
+  live=false;runtime=make();assert.ok((await runtime.request('task_state',{_task:'task-1'})).viewer);assert.equal(opens,3);
+});
+
+test('launches reuse the shared lock for app records without serializing unrelated device reads',async t=>{
+  const {createRuntime}=require(path.join(dir,'runtime.cjs'));const root=await temporary(t),hold=deferred(),started=deferred();
+  const settingsFile=path.join(root,'settings.json');
+  const dispatch=async(method,p={})=>{if(method==='launch_app'&&p.udid===A){started.resolve();await hold.promise;}return {ok:true};};
+  const runtime=createRuntime({settingsFile,dispatch});
+  const first=runtime.request('launch_app',{udid:A,bundleId:'test.example.a'});await started.promise;
+  await assert.rejects(runtime.request('launch_app',{udid:B,bundleId:'test.example.b'}),e=>e.code==='BUSY');
+  assert.deepEqual(await runtime.request('logs',{udid:B}),{ok:true});
+  hold.resolve();await first;await runtime.request('launch_app',{udid:B,bundleId:'test.example.b'});
+  const reloaded=createRuntime({settingsFile,dispatch});
+  assert.equal(await reloaded.currentApp(A),'test.example.a');assert.equal(await reloaded.currentApp(B),'test.example.b');
 });

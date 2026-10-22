@@ -12,27 +12,33 @@ function openSession(binary, args, {spawnImpl = spawn} = {}) {
   const child = spawnImpl(binary, ['input', ...args], {stdio: ['pipe', 'pipe', 'pipe']});
   const waiting = [];
   let buffer = '', stderr = '', closed = false;
+  const end = (error, execution = 'unknown') => {
+    closed = true;
+    while (waiting.length) waiting.shift()({ok: false, error, execution});
+  };
   child.stdout.on('data', chunk => {
     buffer += chunk;
     let i;
     while ((i = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, i).trim(); buffer = buffer.slice(i + 1);
       if (!line) continue;
-      let ack; try { ack = JSON.parse(line); } catch { ack = {ok: false, error: 'invalid ack'}; }
+      let ack; try { ack = JSON.parse(line); } catch { ack = {ok: false, error: 'invalid ack', execution: 'unknown'}; }
+      if (!ack || typeof ack.ok !== 'boolean') ack = {ok: false, error: 'invalid ack', execution: 'unknown'};
       waiting.shift()?.(ack);
     }
   });
   child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-2000); });
-  child.on('exit', () => { closed = true; while (waiting.length) waiting.shift()({ok: false, error: stderr.trim().split('\n').pop() || 'input session ended'}); });
-  child.on('error', () => { closed = true; });
-  child.stdin.on('error', () => {});
+  child.on('exit', () => end(stderr.trim().split('\n').pop() || 'input session ended', /display bind failed/i.test(stderr) ? 'not_executed' : 'unknown'));
+  child.on('error', error => end(error.message));
+  child.stdin.on('error', error => end(error.message));
   return {
     send(envelope) {
-      if (closed) return Promise.resolve({ok: false, error: 'input session ended'});
+      if (closed) return Promise.resolve({ok: false, error: 'input session ended', execution: 'not_executed'});
       return new Promise(resolve => {
-        const timer = setTimeout(() => resolve({ok: false, error: 'no acknowledgement within 10 s'}), 10000);
+        const timer = setTimeout(() => { end('no acknowledgement within 10 s'); child.kill('SIGKILL'); }, 10000);
         waiting.push(ack => { clearTimeout(timer); resolve(ack); });
-        child.stdin.write(JSON.stringify(envelope) + '\n');
+        try { child.stdin.write(JSON.stringify(envelope) + '\n'); }
+        catch (error) { end(error.message); }
       });
     },
     close() { if (!closed) { child.stdin.end(); setTimeout(() => { if (!closed) child.kill('SIGKILL'); }, 3000).unref?.(); } },
@@ -127,11 +133,11 @@ function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 async function perform(session, steps) {
   let sent = 0;
   for (const {envelope, waitMs} of steps) {
-    const ack = await session.send(envelope);
+    const ack = await session.send(envelope).catch(error => ({ok: false, error: error.message, execution: 'unknown'}));
     if (!ack.ok) {
       // Never leave a finger down.
       if (/touch[12]-(down|move)/.test(envelope.type)) await session.send({...envelope, type: envelope.type.replace(/down|move/, 'up')}).catch(() => {});
-      throw Object.assign(new Error(`Touch not delivered: ${ack.error || 'rejected'}`), {code: 'INPUT_FAILED', execution: sent ? 'unknown' : 'not_executed'});
+      throw Object.assign(new Error(`Touch not confirmed: ${ack.error || 'rejected'}`), {code: 'INPUT_FAILED', execution: sent || ack.execution !== 'not_executed' ? 'unknown' : 'not_executed'});
     }
     sent++;
     if (waitMs > 0) await sleep(waitMs);

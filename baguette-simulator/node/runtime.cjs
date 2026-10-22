@@ -11,9 +11,12 @@ const {randomUUID} = require('node:crypto');
 // recycling of on-demand workers.
 const HOLD_MS = 100000, HOLD_POLL_MS = 10000;
 function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async () => false, viewing = () => false, forgetViewer = () => {},
-  tasks = null, existingViewerUrl = () => null, pendingOperation = () => null,
+  tasks = null, existingViewerUrl = () => null, pendingOperation = () => null, viewerWanted = () => true,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), holdMs = HOLD_MS, holdPollMs = HOLD_POLL_MS}) {
   let config, lastActivity = now(), lastStop = null, closing = false;
+  // The existing saved viewer session carries reopen intent across workers;
+  // explicit close retires it, while unexpected worker exit preserves it.
+  let viewerClosed = !viewerWanted();
   // One operation at a time per device; '*' (settings, stop-all, idle) excludes everything.
   const busyKeys = new Set();
   let idleHandled = false;
@@ -109,7 +112,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
     let settings;
     try { settings = await load(); } catch { settings = {enabled:false, idleMinutes:null}; }
     let viewer = null, waiting = false;
-    if (device && device.state === 'Booted' && settings.enabled) {
+    if (device && device.state === 'Booted' && settings.enabled && !viewerClosed) {
       // Reuse a running viewer without taking the runtime lock, so a page refresh
       // never makes an Agent tool call fail with BUSY.
       let url = existingViewerUrl(device.udid, locale);
@@ -152,6 +155,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       const listed = (await dispatch('devices')).devices;
       if (!listed.some(d => d.udid === params.udid)) throw failure('INVALID_ARGUMENT', 'Unknown device. Refresh the list.');
       await tasks.bind(params._task, params.udid);
+      viewerClosed = false;
       return taskState(params._task, params._locale);
     }
     if (method === 'manage_state') {
@@ -169,11 +173,17 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       return {...result, devices: await annotate(result.devices, sessionOf(params))};
     }
     if (method === 'environment') return dispatch(method, params);
-    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
+    // Launch updates the shared app-context file. Reuse the existing global
+    // lock for that entire operation instead of adding another writer queue.
+    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save', 'launch_app'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
-      if (method === 'close_viewer') return dispatch(method, params);
+      if (method === 'close_viewer') {
+        viewerClosed = true;
+        forgetViewer();
+        return dispatch(method, params);
+      }
       if (method === 'settings_shutdown') return stopOne(params.udid);
       if (method === 'settings_stop_all') return stopAll('manual');
       // Managing devices never starts one, so it works while simulators are paused.
@@ -200,6 +210,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       // Re-arm cleanup before dispatch, even when no success result follows.
       touch();
       const result = await dispatch(actual, params);
+      if (actual === 'boot' || actual === 'open_viewer' || (actual === 'launch_app' && result?.viewer?.ready)) viewerClosed = false;
       if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
       // Starting, opening or launching on a device from a task gives that task the device.
       if (tasks && ['boot','open_viewer','launch_app'].includes(actual) && result?.ok !== false) {

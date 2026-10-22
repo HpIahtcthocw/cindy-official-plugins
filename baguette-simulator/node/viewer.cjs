@@ -14,6 +14,7 @@ function writeSession(deviceSet,session){
  try{fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});fs.writeFileSync(temporary,JSON.stringify(session),{mode:0o600});fs.renameSync(temporary,file);}catch{try{fs.rmSync(temporary,{force:true});}catch{}}
 }
 function forgetSession(deviceSet){try{fs.rmSync(sessionFile(deviceSet),{force:true});}catch{}}
+function hasSession(deviceSet){const value=readSession(deviceSet);return typeof value.token==='string'&&/^[0-9a-f]{64}$/.test(value.token)&&Number.isInteger(value.port)&&value.port>1023&&value.port<=65535;}
 let active=null;
 let controls=null;
 // A window counts as open while its live stream is connected, plus a short
@@ -173,4 +174,4 @@ function existingViewerUrl(udid,locale){
  active.clipboard.devices.add(udid);
  return active.clipboard.base+'/control?udid='+encodeURIComponent(udid)+'&lang='+(locale==='zh-CN'?'zh-CN':'en')+'#'+active.clipboard.fragment;
 }
-module.exports={openViewer,stopViewer,abandonViewer,reapOrphans,recycleIfBloated,configureControls,viewing,VIEWER_GRACE_MS,forgetSession,existingViewerUrl};
+module.exports={openViewer,stopViewer,abandonViewer,reapOrphans,recycleIfBloated,configureControls,viewing,VIEWER_GRACE_MS,forgetSession,hasSession,existingViewerUrl};

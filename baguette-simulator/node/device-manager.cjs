@@ -8,8 +8,8 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
  const fail=(code,message,execution='not_executed')=>Object.assign(Error(message),{code,execution});
  async function contexts(){
   if(apps)return apps;
-  try{const value=JSON.parse(await fs.readFile(contextFile,'utf8'));apps=Object.fromEntries(Object.entries(value).filter(([id,bundle])=>/^[0-9a-f-]{36}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)));}
-  catch{apps={};}return apps;
+  try{const value=JSON.parse(await fs.readFile(contextFile,'utf8'));apps ||= Object.fromEntries(Object.entries(value).filter(([id,bundle])=>/^[0-9a-f-]{36}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)));}
+  catch{apps ||= {};}return apps;
  }
  async function remember(udid,bundleId){
   const values=await contexts();values[udid]=bundleId;

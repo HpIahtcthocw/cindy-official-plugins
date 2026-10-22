@@ -100,7 +100,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 ## 11. 异常恢复
 
-- `BUSY`：同一台设备上的上一个操作还没结束（安装、录制等），等它完成。不同设备之间互不阻塞。
+- `BUSY`：同一台设备上的上一个操作还没结束（安装、录制等），等它完成。不同设备的普通输入可并行；启动 App 要保存共享记录，全局操作要协调全部设备，这些操作仍会互相等待。
 - 键盘连发或卡键：`press button=release-input`。
 - iOS 27 上所有触摸都“成功”却没反应：多半是 Xcode Device Hub 抢占了输入，先告知用户，经同意后 `heal`（会重启 SpringBoard、结束运行中的 App）。
 - `SCREEN_UNAVAILABLE`：App 正在启动或切换，稍等后 `wait_for stable=1` 再试。
