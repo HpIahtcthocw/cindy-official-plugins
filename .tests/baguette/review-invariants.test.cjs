@@ -147,7 +147,7 @@ test('background install retains the device lock through success and failure, wh
 
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
-function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCommand,onFile,clockStep=10}={}) {
+function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCommand,onFile,onInput,clockStep=10}={}) {
   const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   state.target={litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}};
   const screen=()=>({width:state.width||402,height:874,orientation:state.orientation,target:state.target});
@@ -175,7 +175,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
   const spawnImpl=(_file,args)=>{
     const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
     if(args[0]==='input') {
-      c.stdin.write=line=>{state.inputs.push(JSON.parse(line));queueMicrotask(()=>c.stdout.emit('data','{"ok":true}\n'));};
+      c.stdin.write=line=>{state.inputs.push(JSON.parse(line));const ack=onInput?.(state)||{ok:true};queueMicrotask(()=>c.stdout.emit('data',JSON.stringify(ack)+'\n'));};
       c.stdin.end=()=>c.emit('exit',0);return c;
     }
     const streaming=args.includes('stream');
@@ -477,6 +477,26 @@ test('a scroll observation failure after a swipe preserves the completed input',
   f.state.treeChildren=[{role:'AXButton',label:'Other',frame:{x:0,y:0,width:50,height:50}}];
   await assert.rejects(f.agent.gesture(f.device,{kind:'scroll_to',text:'Target',_deadline:100000}),e=>e.execution==='executed');
   assert.ok(f.state.inputs.length);
+});
+
+test('scroll execution distinguishes first rejection, prior swipes, uncertain ACK and failed settling',async()=>{
+  for(const prior of [false,true])for(const execution of ['not_executed','unknown']){
+    let swipes=0;
+    const f=agentFixture({onInput:s=>{
+      swipes++;
+      if(prior&&swipes===1)return {ok:true};
+      return {ok:false,error:'input refused',execution};
+    },onDelay:(ms,s)=>{if(ms===450)s.treeChildren[0].frame.y+=10;}});
+    f.state.treeChildren=[{role:'AXButton',label:'Other',frame:{x:0,y:50,width:50,height:50}}];
+    await assert.rejects(f.agent.gesture(f.device,{kind:'scroll_to',text:'Target',_deadline:100000}),e=>e.execution===(prior?'unknown':execution));
+    assert.equal(swipes,prior?2:1);
+  }
+  for(const phase of ['before','after']){
+    const f=agentFixture({clockStep:0,onCommand:(_file,args,_opts,s)=>{if(phase==='before'&&args[0]==='describe-ui')s.advance(1000);},onInput:s=>{if(phase==='after')s.advance(900);}});
+    f.state.treeChildren=[{role:'AXButton',label:'Other',frame:{x:0,y:50,width:50,height:50}}];
+    await assert.rejects(f.agent.gesture(f.device,{kind:'scroll_to',text:'Target',_deadline:1000}),e=>e.execution===(phase==='before'?'not_executed':'executed'));
+    assert.equal(f.state.inputs.length,phase==='before'?0:1);
+  }
 });
 
 test('live log waits and history use the same message field with eventMessage taking precedence',async()=>{

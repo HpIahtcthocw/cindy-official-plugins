@@ -61,7 +61,9 @@
     let r;
     try {
       r = await fetch('/control-api', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cindy-Clipboard': token },
-        body: JSON.stringify({ ...extra, action, udid, locale: lang }), signal: AbortSignal.timeout(['shutdown', 'create', 'boot'].includes(action) ? 120000 : 20000) });
+        // Every control action uses the worker's existing request budget (115s).
+        // Keep the HTTP response alive through it, including screenshots and recovery.
+        body: JSON.stringify({ ...extra, action, udid, locale: lang }), signal: AbortSignal.timeout(120000) });
     } catch (error) {
       // Nothing answers on this address: the plugin's service is gone.
       throw Object.assign(Error('SERVICE_STOPPED'), { code: error?.name === 'TimeoutError' ? 'TIMEOUT' : 'SERVICE_STOPPED' });

@@ -6,6 +6,11 @@
   const pending = new Map(), listeners = new Set();
   const READS = new Set(['task_state', 'manage_state', 'catalog']);
   channel.onmessage = ({ data: m }) => {
+    if (m?.type === 'ready') {
+      const p = pending.get(m.id); if (!p?.send) return;
+      clearInterval(p.retry); const send = p.send; p.send = null; send();
+      return;
+    }
     if (m?.type === 'response') {
       const p = pending.get(m.id); if (!p) return;
       pending.delete(m.id); clearTimeout(p.timer); clearInterval(p.retry); p.resolve(m.result);
@@ -13,8 +18,8 @@
     }
     for (const fn of listeners) fn(m);
   };
-  // The logic page starts on demand: wake it, then ask. Reads may be re-sent while
-  // it comes up; device changes are sent once and never replayed.
+  // Probe until the on-demand logic page is listening, then send the operation
+  // exactly once. A slow read must not start duplicate worker commands.
   async function rpc(action, params = {}, timeoutText = 'No response') {
     let wake;
     try { wake = await fetch('/wake', { signal: AbortSignal.timeout(15000) }); } catch { throw Object.assign(Error(timeoutText), { code: 'TIMEOUT' }); }
@@ -25,9 +30,10 @@
     return new Promise((resolve, reject) => {
       const send = () => channel.postMessage({ type: 'request', id, action, ...params });
       const read = READS.has(action);
-      const retry = read ? setInterval(send, 500) : null;
+      const probe = () => channel.postMessage({ type: 'ping', id });
+      const retry = setInterval(probe, 500);
       const timer = setTimeout(() => { clearInterval(retry); pending.delete(id); reject(Object.assign(Error(timeoutText), { code: 'TIMEOUT' })); }, read ? 20000 : 125000);
-      pending.set(id, { resolve, timer, retry }); send();
+      pending.set(id, { resolve, timer, retry, send }); probe();
     });
   }
   function h(tag, attrs = {}, children = []) {

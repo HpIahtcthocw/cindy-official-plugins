@@ -32,14 +32,14 @@ function fakeDocument(){
  return {document,byId,body,text:n=>[n.textContent,...all(n).map(c=>c.textContent)].join(' ')};
 }
 
-async function boot({respond}){
+async function boot({respond,abortSignal=AbortSignal}){
  const dom=fakeDocument();const calls=[];let intervals=[];
  const context={
-  document:dom.document,URLSearchParams,URL,AbortSignal,Error,Object,JSON,Math,Date,String,Array,Number,Promise,console,parseFloat,clearTimeout,setTimeout,
+  document:dom.document,URLSearchParams,URL,AbortSignal:abortSignal,Error,Object,JSON,Math,Date,String,Array,Number,Promise,console,parseFloat,clearTimeout,setTimeout,
   location:{search:'?udid='+udid,hash:'#cindyClipboard=123.token',href:'http://127.0.0.1:1/control?udid='+udid+'&lang=zh-CN#cindyClipboard=123.token',origin:'http://127.0.0.1:1'},
   history:{replaceState(_s,_t,url){context.location.href=String(url);}},
   ResizeObserver:class{observe(){}},setInterval:fn=>{intervals.push(fn);return intervals.length;},
-  fetch:async(_url,opts)=>{const body=JSON.parse(opts.body);calls.push(body);const r=await respond(body);if(r instanceof Error)throw r;if(r?.httpStatus)return {ok:false,status:r.httpStatus,json:async()=>({error:'denied'})};return {ok:true,status:200,json:async()=>r};},
+  fetch:async(_url,opts)=>{const body=JSON.parse(opts.body);calls.push(body);const r=await respond(body,opts);if(r instanceof Error)throw r;if(r?.httpStatus)return {ok:false,status:r.httpStatus,json:async()=>({error:'denied'})};return {ok:true,status:200,json:async()=>r};},
  };
  context.globalThis=context;context.window=context;
  vm.createContext(context);
@@ -49,6 +49,22 @@ async function boot({respond}){
  return {dom,calls,context,poll:()=>intervals[0](),tick:()=>intervals[1](),sim:context.cindySim};
 }
 const status=(over={})=>({ready:true,parked:false,generation:1,device:{udid,name:'iPhone 17 Pro',state:'Booted',runtime:'com.apple.CoreSimulator.SimRuntime.iOS-27-1',deviceType:'x.iPhone-17-Pro'},devices:[{udid,name:'iPhone 17 Pro',state:'Booted',runtime:'iOS 27.1',deviceType:'x.iPhone-17-Pro'},{udid:other,name:'iPad',state:'Shutdown',runtime:'iOS 27.0',deviceType:'x.iPad'}],settings:{enabled:true,idleMinutes:15},idleDeadline:Date.now()+15*60000,...over});
+
+test('slow desktop and clipboard screenshots finish before the viewer HTTP budget expires',async()=>{
+ for(const to of ['desktop','clipboard']){
+  let shots=0;
+  const {dom,context}=await boot({abortSignal:{timeout:ms=>({budget:ms})},respond:({action},opts)=>{
+   if(action!=='screenshot')return status();
+   // A 30s screenshot plus clipboard conversion must not be cut off at 20s.
+   assert.ok(opts.signal.budget>=(to==='clipboard'?45000:30000));shots++;
+   return {ok:true,path:'/fixture/shot.png',copied:to==='clipboard'};
+  }});
+  context.localStorage={getItem:key=>key==='cindy.shotTo'?JSON.stringify(to):null};
+  await dom.byId['btn-shot'].listeners.click[0]();
+  assert.equal(shots,1);assert.equal(dom.byId['btn-shot'].dataset.busy,undefined);
+  assert.doesNotMatch(dom.text(dom.byId.dock),/截图失败/);
+ }
+});
 
 test('live device loads the handheld screen once; a service generation change alone does not reload it',async()=>{
  let generation=1;

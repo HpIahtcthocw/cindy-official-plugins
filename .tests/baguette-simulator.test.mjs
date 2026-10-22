@@ -22,3 +22,4 @@ import './baguette/idle-in-use.test.cjs';
 import './baguette/task-view.test.cjs';
 import './baguette/viewer-session.test.cjs';
 import './baguette/review-invariants.test.cjs';
+import './baguette/page-rpc.test.cjs';

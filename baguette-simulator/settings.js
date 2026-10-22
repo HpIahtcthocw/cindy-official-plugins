@@ -27,14 +27,18 @@ async function rpc(action,params={}){
   const id=crypto.randomUUID();
   return new Promise((resolve,reject)=>{
     const send=()=>channel.postMessage({type:'request',id,action,...params});
-    // Only read-only status may retry while the listener becomes ready.
-    // Never replay a device mutation after an uncertain response.
-    const retry=['status','catalog'].includes(action)?setInterval(send,500):null;
+    // Only repeat the readiness probe; dispatch every operation once.
+    const probe=()=>channel.postMessage({type:'ping',id});
+    const retry=setInterval(probe,500);
     const timer=setTimeout(()=>{clearInterval(retry);pending.delete(id);reject(Error(T.timeout));},['status','catalog'].includes(action)?20000:125000);
-    pending.set(id,{resolve,timer,retry});send();
+    pending.set(id,{resolve,timer,retry,send});probe();
   });
 }
-channel.onmessage=({data:m})=>{if(m?.type!=='response')return;const p=pending.get(m.id);if(!p)return;pending.delete(m.id);clearTimeout(p.timer);clearInterval(p.retry);p.resolve(m.result);};
+channel.onmessage=({data:m})=>{
+  const p=pending.get(m?.id);if(!p)return;
+  if(m.type==='ready'){if(!p.send)return;clearInterval(p.retry);const send=p.send;p.send=null;send();return;}
+  if(m.type!=='response')return;pending.delete(m.id);clearTimeout(p.timer);clearInterval(p.retry);p.resolve(m.result);
+};
 function errorText(r){return ({BUSY:T.busy,RUNTIME_DISABLED:T.disabled,STOP_INCOMPLETE:T.partial,PREVIEW_FAILED:T.previewFailed,PREVIEW_NEEDS_SESSION:T.previewNeedsSession})[r?.errorCode]||T.failed;}
 function h(tag,attrs={},children=[]){const n=document.createElement(tag);for(const [k,v] of Object.entries(attrs)){if(v==null||v===false)continue;if(k==='class')n.className=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else if(k.startsWith('on'))n.addEventListener(k.slice(2),v);else n.setAttribute(k,v===true?'':v);}for(const c of [].concat(children))if(c)n.append(c);return n;}
 function render(){

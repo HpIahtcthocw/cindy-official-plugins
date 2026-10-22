@@ -142,6 +142,7 @@ const PAGE_ACTIONS = {
 };
 const KEEPS_RUNNING = new Set(['task_state', 'task_bind', 'task_boot', 'task_create', 'boot', 'open_in_task', 'viewer_url']);
 if (pages) pages.onmessage = async ({data: msg}) => {
+  if (msg?.type === 'ping' && typeof msg.id === 'string') { pages.postMessage({type:'ready', id:msg.id}); return; }
   if (msg?.type !== 'request' || typeof msg.id !== 'string' || !Object.hasOwn(PAGE_ACTIONS, msg.action)) return;
   let result;
   try {
@@ -157,6 +158,7 @@ if (pages) pages.onmessage = async ({data: msg}) => {
 if (typeof BroadcastChannel !== 'undefined') {
   const settings = new BroadcastChannel('baguette-settings');
   settings.onmessage = async ({data: msg}) => {
+    if (msg?.type === 'ping' && typeof msg.id === 'string') { settings.postMessage({type:'ready', id:msg.id}); return; }
     const methods = {status:'settings_status',save:'settings_save',shutdown:'settings_shutdown',stopAll:'settings_stop_all',boot:'settings_boot',catalog:'viewer_catalog',create:'create_device'};
     if (msg?.type !== 'request' || typeof msg.id !== 'string' || !(Object.hasOwn(methods, msg.action) || msg.action === 'viewer')) return;
     let result;

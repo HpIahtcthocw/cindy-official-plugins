@@ -406,8 +406,9 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const d = directionVector(direction, view, view.height * 0.45);
       try {
         await act(device, screen, {kind: 'swipe', from: [area[0] - d.dx / 2, area[1] - d.dy / 2], to: [area[0] + d.dx / 2, area[1] + d.dy / 2], duration: 0.35}, p._deadline);
-        await pause(450, p._deadline);
-      } catch (error) { if (i || error.execution === 'not_executed') error.execution = 'unknown'; throw error; }
+      } catch (error) { if (i && error.execution === 'not_executed') error.execution = 'unknown'; throw error; }
+      // The swipe is acknowledged; a failed settling wait cannot undo it.
+      await pause(450, p._deadline).catch(error => { error.execution = 'executed'; throw error; });
     }
     throw failure('ELEMENT_NOT_FOUND', `Not found after ${max} swipes: ${JSON.stringify(p.text ?? p.id)}.`, 'executed');
   }
