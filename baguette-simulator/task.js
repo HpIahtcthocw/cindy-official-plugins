@@ -12,7 +12,7 @@ const TEXT = {
     pausedTitle: 'Simulators are turned off', pausedBody: 'Turn them on in Plugins → iOS Simulator to use them here.',
     pluginOff: 'The iOS Simulator plugin is turned off.', needXcode: 'Needs full Xcode with an iOS runtime installed.',
     failed: 'Not completed. Check the device and try again.', busy: 'Another simulator operation is running. Trying again shortly…', timeout: 'No response from the simulator service. Reopen this tab.',
-    devices: 'Devices', back: 'Back',
+    devices: 'Devices', back: 'Back', recordFailed: 'Device operation completed, but its task or App record was not saved. Check storage before assigning or switching devices; do not repeat the operation.',
   },
   'zh-CN': {
     loading: '正在读取…', connecting: '正在连接画面…',
@@ -23,7 +23,7 @@ const TEXT = {
     pausedTitle: '模拟器运行已关闭', pausedBody: '在「插件 → iOS 模拟器」里打开开关后即可在这里使用。',
     pluginOff: '「iOS 模拟器」插件已停用。', needXcode: '需要先安装完整的 Xcode 和一个 iOS 运行时。',
     failed: '操作没有完成，请核对设备后重试。', busy: '有其他模拟器操作正在进行，稍后自动重试…', timeout: '模拟器服务没有响应，请重新打开这个页签。',
-    devices: '设备', back: '返回',
+    devices: '设备', back: '返回', recordFailed: '设备操作已完成，但任务绑定或 App 记录未保存。请先检查存储，再分配或切换设备；不要重复设备操作。',
   },
 };
 const { rpc, h, locale, GLYPH, onPush, createDevice: newDevice } = globalThis.CindySimPages;
@@ -89,14 +89,15 @@ function render() {
   inner.append(h('p', { class: 'status' + (note?.error ? ' error' : ''), text: note?.text || '' }));
 }
 async function refresh() {
-  if (busy) return;
+  if (busy || pending) return;
   const request = pending = {};
   try {
     const r = await rpc('task_state', { sessionId: session }, T.timeout);
     if (pending !== request) return;
     if (!r.ok) throw r;
     accept(r); if (note && !note.sticky) note = null;
-  } catch (error) { if (pending !== request) return; if (!viewerUrl) note = { text: errorText(error), error: true }; }
+  } catch (error) { if (pending !== request) return; if (!viewerUrl && !note?.sticky) note = { text: errorText(error), error: true }; }
+  finally { if (pending === request) pending = null; }
   render();
 }
 async function act(action, params, marker) {
@@ -107,9 +108,10 @@ async function act(action, params, marker) {
     const r = await rpc(action, { sessionId: session, ...params }, T.timeout);
     if (pending !== request) return;
     if (!r.ok) throw r;
+    if (r.taskBindingError || r.appContextError) { note = { text: T.recordFailed, error: true, sticky: true }; return; }
     choosing = false; accept(r);
   } catch (error) { if (pending === request) note = { text: errorText(error), error: true, sticky: true }; }
-  finally { busy = null; render(); if (pending === request && !viewerUrl) refresh(); }
+  finally { busy = null; render(); if (pending === request) { pending = null; if (!viewerUrl) refresh(); } }
 }
 // Same sheet as the management view (name, OS version, model); the new device
 // then becomes this task's.

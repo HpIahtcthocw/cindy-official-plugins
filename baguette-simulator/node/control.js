@@ -256,6 +256,7 @@
       state.handledJob = job.id; state.switching = false; state.phase = null;
       if (job.activeUdid && job.activeUdid !== udid) adopt(job.activeUdid);
       if (job.state === 'done') toast(t.switching.done, 'ok'); else toast(`${t.switching.failed} (${job.errorCode || 'SWITCH_FAILED'})`, 'error');
+      if (job.taskBindingError || job.appContextError) toast(t.switching.recordFailed, 'error');
       return;
     }
     if (!relevant) state.switching = false;

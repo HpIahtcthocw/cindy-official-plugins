@@ -119,6 +119,51 @@ function logicPage({taskView,preview=async()=>({ok:true})}={}){
 }
 const settle=()=>new Promise(r=>setTimeout(r,10));
 
+test('completed device operations retain results and expose task record read and write failures',async t=>{
+ for(const mode of ['unreadable','write-failed'])for(const method of ['boot','open_viewer','launch_app','delete_device']){
+  const dir=await tmp(t),file=path.join(dir,'bindings.json'),tasks=createTaskBindings(file),calls=[];
+  if(mode==='unreadable')await fs.writeFile(file,'{');
+  else {await tasks.bind('existing-task',B);await tasks.bind('to-delete',A);await fs.rename(file,file+'.saved');await fs.mkdir(file);}
+  // Also break recent App storage: one record failure must not skip another.
+  const settingsFile=path.join(dir,'settings.json');await fs.writeFile(settingsFile+'.apps.json','{');
+  const runtime=createRuntime({tasks,settingsFile,dispatch:async m=>{calls.push(m);return {ok:true,execution:'executed',udid:A,marker:'completed',viewer:{ready:true,url:'screen'}};}});
+  const result=await runtime.request(method,{udid:A,bundleId:'test.example.app',session_context:{session_id:'task-1'}});
+  assert.equal(result.ok,true);assert.equal(result.execution,'executed');assert.equal(result.marker,'completed');
+  assert.ok(result.taskBindingError?.code);assert.match(result.taskBindingError.message,/do not repeat/);
+  if(['launch_app','delete_device'].includes(method))assert.ok(result.appContextError?.code);
+  assert.deepEqual(calls,[method],'record failure never replays the device operation');
+  if(mode==='unreadable')assert.equal(await fs.readFile(file,'utf8'),'{');
+  else {await fs.rmdir(file);await fs.rename(file+'.saved',file);}
+  if(mode==='unreadable')await fs.writeFile(file,JSON.stringify({version:1,bindings:{'existing-task':{udid:B,at:1}}}));
+  const restored=await runtime.request('boot',{udid:A,session_context:{session_id:'task-1'}});
+  assert.equal(restored.taskBindingError,undefined);assert.equal((await tasks.get('task-1')).udid,A);
+  assert.equal((await tasks.get('existing-task')).udid,B);
+ }
+ // Without a valid task there is no attempted binding and no invented error.
+ const calls=[],runtime=createRuntime({settingsFile:path.join(await tmp(t),'settings.json'),tasks:{bind:async()=>{throw Error('must not bind');}},dispatch:async m=>{calls.push(m);return {ok:true};}});
+ for(const session of [undefined,'../invalid'])assert.equal((await runtime.request('boot',{udid:A,session_context:{session_id:session}})).taskBindingError,undefined);
+});
+
+test('switch binding errors retain both successful and failed actual device outcomes',async t=>{
+ for(const failAt of [null,'shutdown','open_viewer']){
+  const dir=await tmp(t),file=path.join(dir,'bindings.json');await fs.writeFile(file,'{');
+  const devices=[{udid:A,state:'Booted',isAvailable:true},{udid:B,state:'Shutdown',isAvailable:true}];
+  const runtime=createRuntime({tasks:createTaskBindings(file),settingsFile:path.join(dir,'settings.json'),dispatch:async(m,p={})=>{
+   if(m==='devices')return {devices};
+   if(m===failAt)throw Object.assign(Error('failed'),{code:'DEVICE_FAILED'});
+   if(m==='shutdown')devices[0].state='Shutdown';if(m==='boot')devices[1].state='Booted';
+   return {ok:true,url:'screen'};
+  }});
+  await runtime.request('viewer_switch',{udid:A,targetUdid:B,task:'task-1'});
+  let job;
+  for(let i=0;i<100;i++){job=(await runtime.status()).deviceJob;if(job.state!=='running')break;await new Promise(r=>setTimeout(r,2));}
+  assert.equal(job.state,failAt?'failed':'done');assert.equal(job.activeUdid,failAt==='shutdown'?A:B);
+  assert.equal(job.execution,failAt?'unknown':'executed');assert.equal(job.taskBindingError.code,'TASK_BINDINGS_UNREADABLE');
+  if(failAt)assert.equal(job.errorCode,'DEVICE_FAILED');
+  assert.equal(await fs.readFile(file,'utf8'),'{');
+ }
+});
+
 test('a host with task pages shows the live view in the calling task, not the browser',async()=>{
  const r=logicPage({taskView:async req=>({ok:true,sessionId:req.sessionId})});
  await r.call({udid:'A',session_context:{session_id:'task-1'}});await settle();

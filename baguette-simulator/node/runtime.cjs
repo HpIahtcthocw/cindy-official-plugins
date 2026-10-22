@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const {validSession} = require('./tasks.cjs');
 const {deviceId} = require('./device-id.cjs');
 const {commandBudget} = require('./budget.cjs');
-const {readJsonRecord} = require('./json-record.cjs');
+const {readJsonRecord,recordUpdate} = require('./json-record.cjs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
@@ -25,7 +25,9 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   let idleHandled = false;
   const assertEnabled=async()=>{if(!(await load()).enabled||closing)throw failure('RUNTIME_DISABLED','Baguette is paused. Open plugin settings.');};
   const manager=require('./device-manager.cjs').createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile:settingsFile+'.apps.json',
-    onSettled:async(entry,p)=>{if(tasks&&validSession(p.task)&&entry.activeUdid)await tasks.bind(p.task,entry.activeUdid);}});
+    onSettled:async(entry,p)=>{if(tasks&&validSession(p.task)&&entry.activeUdid)await taskUpdate(entry,()=>tasks.bind(p.task,entry.activeUdid));}});
+  const taskUpdate = (result, update) => recordUpdate(result, 'taskBindingError', update,
+    'Task bindings could not be saved. The device outcome is retained; check the bindings file and storage, and do not repeat the device operation.');
   const failure = (code, message, execution = 'not_executed') => Object.assign(new Error(message), {code, execution});
   async function load() {
     if (config) return config;
@@ -211,8 +213,8 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       if (method === 'reveal_screenshot') return dispatch(method, params);
       if (method === 'delete_device' || method === 'erase_device') {
         const result = await dispatch(method, params);
-        await manager.forget(result.udid || params.udid);
-        if (method === 'delete_device' && tasks) await tasks.forgetDevice(params.udid).catch(() => {});
+        await manager.updateRecord(result, () => manager.forget(result.udid || params.udid));
+        if (method === 'delete_device' && tasks) await taskUpdate(result, () => tasks.forgetDevice(params.udid));
         // The management page refreshes independently after the operation.
         // Do not start another core budget or replace a completed destructive
         // operation with an error from an optional device-list read.
@@ -235,12 +237,12 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       // Re-arm cleanup before dispatch, even when no success result follows.
       touch();
       const result = await dispatch(actual, params);
-      if (actual === 'app_uninstall') await manager.forget(result.udid || params.udid, params.bundleId);
+      if (actual === 'app_uninstall') await manager.updateRecord(result, () => manager.forget(result.udid || params.udid, params.bundleId));
       if (actual === 'boot' || actual === 'open_viewer' || (actual === 'launch_app' && result?.viewer?.ready)) viewerClosed = false;
-      if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
+      if(actual==='launch_app')await manager.updateRecord(result, () => manager.remember(params.udid,params.bundleId));
       // Starting, opening or launching on a device from a task gives that task the device.
-      if (tasks && ['boot','open_viewer','launch_app'].includes(actual) && result?.ok !== false) {
-        await tasks.bind(sessionOf(params), params.udid).catch(() => {});
+      if (tasks && validSession(sessionOf(params)) && ['boot','open_viewer','launch_app'].includes(actual) && result?.ok !== false) {
+        await taskUpdate(result, () => tasks.bind(sessionOf(params), params.udid));
       }
       touch();
       return result;

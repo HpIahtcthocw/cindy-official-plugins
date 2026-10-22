@@ -931,14 +931,31 @@ test('task RPC results have one owner across polling, binding, boot, creation an
   }
   for(const lateFails of [false,true]) {
     const f=pageFixture('task');f.page.seed(taskState(A));
-    const first=f.page.refresh(),second=f.page.refresh();
-    f.requests[1].resolve(taskState(B));await second;
-    if(lateFails)f.requests[0].reject(Error('late poll'));else f.requests[0].resolve(taskState(A));
-    await first;assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
+    const first=f.page.refresh();await f.page.refresh();
+    assert.equal(f.requests.length,1,'a slow read is not superseded by polling');
+    if(lateFails)f.requests[0].reject(Error('slow poll'));else f.requests[0].resolve(taskState(A));
+    await first;
+    const second=f.page.refresh();f.requests[1].resolve(taskState(B));await second;
+    assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
     const action=f.page.act('task_bind',{udid:A},A);
     f.push({type:'viewer',sessionId:'task-1',url:taskState(B).viewer.url});
     if(lateFails)f.requests[2].reject(Error('late bind'));else f.requests[2].resolve(taskState(A));
     await action;assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
+  }
+});
+
+test('task and management polling waits for slow reads and resumes after every settlement',async()=>{
+  for(const kind of ['task','manage'])for(const outcome of ['success','error','timeout','not-ok']){
+    const f=pageFixture(kind),state=kind==='task'?taskState(B):{ok:true,settings:{enabled:true},devices:[]};
+    const reading=f.page.refresh();
+    for(let i=0;i<8;i++)await f.page.refresh();
+    assert.equal(f.requests.length,1,'timer and visibility refreshes reuse the slow read');
+    if(outcome==='success')f.requests[0].resolve(state);
+    else if(outcome==='not-ok')f.requests[0].resolve({ok:false,errorCode:'READ_FAILED'});
+    else f.requests[0].reject(Object.assign(Error(outcome),{code:outcome==='timeout'?'TIMEOUT':'READ_FAILED'}));
+    await reading;
+    const next=f.page.refresh();assert.equal(f.requests.length,2,'settled reads release ownership');
+    f.requests[1].resolve(state);await next;assert.equal(f.page.state().ok,true);
   }
 });
 

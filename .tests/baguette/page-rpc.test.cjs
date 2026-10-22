@@ -81,3 +81,10 @@ test('compound task actions cover both sequential worker requests',async()=>{
     f.finish({ok:true},1);assert.equal((await pending).ok,true);assert.equal(f.timers.size,0);
   }
 });
+
+test('task boot keeps completed device evidence when its binding cannot be saved',async()=>{
+  const f=fixture('pages');f.start();const pending=f.rpc('task_boot');await flush();
+  const result={ok:true,execution:'executed',udid:'device-1',taskBindingError:{code:'TASK_BINDINGS_UNREADABLE',message:'check storage'}};
+  f.finish(result);
+  assert.deepEqual(JSON.parse(JSON.stringify(await pending)),result);assert.equal(f.calls.length,1,'no state query can discard the completed boot or its binding error');
+});

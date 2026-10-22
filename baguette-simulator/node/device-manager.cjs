@@ -3,10 +3,12 @@ const {randomUUID}=require('node:crypto');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {deviceId}=require('./device-id.cjs');
-const {readJsonRecord}=require('./json-record.cjs');
+const {readJsonRecord,recordUpdate}=require('./json-record.cjs');
 // Device changes run through the same runtime lock as Agent tools and shutdown.
 function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile,onSettled=async()=>{}}) {
  let job=null,apps=null;
+ const updateRecord=(result,update)=>recordUpdate(result,'appContextError',update,
+  'The device operation completed, but recent App records could not be saved. Check the records file and storage before switching devices; do not repeat the device operation.');
  const fail=(code,message,execution='not_executed')=>Object.assign(Error(message),{code,execution});
  async function contexts(){
   if(apps)return apps;
@@ -75,7 +77,7 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
     if(bundleId){
      if(appPath&&source.udid!==target.udid){entry.phase='installing';let job=await dispatch('install_app',{udid:target.udid,appPath});while(job?.state==='running')job=await dispatch('app_install_status',{udid:target.udid,job:job.job});}
      entry.phase='launching';await dispatch('launch_app',{udid:target.udid,bundleId,showViewer:false});
-     await remember(target.udid,bundleId).catch(()=>{});
+     await updateRecord(entry,()=>remember(target.udid,bundleId));
     }
     entry.phase='opening';const viewer=await dispatch('open_viewer',{udid:target.udid,_locale:p._locale});
     entry.activeUdid=target.udid;entry.url=viewer.url;
@@ -87,6 +89,6 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
   operation.catch(failed);
   return snapshot();
  }
- return {snapshot,currentApp,remember,forget,start};
+ return {snapshot,currentApp,remember,forget,start,updateRecord};
 }
 module.exports={createDeviceManager};

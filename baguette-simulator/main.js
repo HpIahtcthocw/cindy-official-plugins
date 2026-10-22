@@ -116,7 +116,7 @@ const PAGE_ACTIONS = {
   task_boot: async (m, l) => {
     if (!SESSION.test(m.sessionId) || !str(m.udid)) return false;
     const booted = await worker('boot', {udid:m.udid, _task:m.sessionId, _locale:l});
-    return booted.ok ? worker('task_state', {_task:m.sessionId, _locale:l}) : booted;
+    return booted.ok && !booted.taskBindingError ? worker('task_state', {_task:m.sessionId, _locale:l}) : booted;
   },
   task_create: async (m, l) => {
     if (!SESSION.test(m.sessionId)) return false;

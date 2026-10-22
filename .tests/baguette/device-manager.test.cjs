@@ -27,13 +27,16 @@ test('recent App read failures never become empty records or allow a switch to m
   if(broken==='directory'){await fs.mkdir(f.file);await fs.writeFile(path.join(f.file,'evidence'),original);}
   else await fs.writeFile(f.file,broken);
   // Launch succeeds, but its best-effort record update must preserve damaged storage.
-  await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'});
+  assert.equal((await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'})).appContextError.code,'APP_CONTEXT_UNREADABLE');
   await assert.rejects(f.runtime.currentApp(a),e=>e.code==='APP_CONTEXT_UNREADABLE');
   f.calls.length=0;
   await f.runtime.request('viewer_switch',{udid:a,targetUdid:b});
   const job=await finish(f);assert.equal(job.state,'failed');assert.equal(job.errorCode,'APP_CONTEXT_UNREADABLE');assert.equal(job.execution,'not_executed');
   assert.ok(f.calls.every(c=>c.method==='devices'),'no app lookup, shutdown, boot, install, launch or viewer start');
-  for(const method of ['app_uninstall','erase_device','delete_device'])await assert.rejects(f.runtime.request(method,{udid:a,bundleId:'test.example.original'}),e=>e.code==='APP_CONTEXT_UNSAVED'&&e.execution==='executed','completed removal evidence is retained');
+  for(const method of ['app_uninstall','erase_device','delete_device']){
+   const result=await f.runtime.request(method,{udid:a,bundleId:'test.example.original'});
+   assert.equal(result.ok,true);assert.equal(result.appContextError.code,'APP_CONTEXT_UNSAVED','completed removal evidence is retained');
+  }
   if(broken==='directory'){assert.equal(await fs.readFile(path.join(f.file,'evidence'),'utf8'),original);await fs.rm(f.file,{recursive:true});}
   else assert.equal(await fs.readFile(f.file,'utf8'),broken);
   assert.ok(!(await fs.readdir(path.dirname(f.file))).some(name=>name.endsWith('.tmp')));
