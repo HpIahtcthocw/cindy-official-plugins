@@ -17,9 +17,44 @@ async function fixture(t){
   return {ok:true};
  }};
  const runtime=createRuntime(opts);
- return {runtime,devices,calls,bindings,restart:()=>createRuntime(opts),fail:m=>failAt=m,hold:p=>hold=p,unconfirmed:()=>unconfirmed=true};
+ return {runtime,devices,calls,bindings,file:opts.settingsFile+'.apps.json',restart:()=>createRuntime(opts),fail:m=>failAt=m,hold:p=>hold=p,unconfirmed:()=>unconfirmed=true};
 }
 async function finish(f){for(let i=0;i<100;i++){const job=(await f.runtime.status()).deviceJob;if(job.state!=='running')return job;await new Promise(r=>setTimeout(r,2));}assert.fail('switch did not finish');}
+test('recent App read failures never become empty records or allow a switch to mutate devices',async t=>{
+ const original=JSON.stringify({[a.toLowerCase()]:'test.example.original',[b]:'test.example.other'});
+ for(const broken of ['{','null','[]',JSON.stringify({[a]:null}),'directory']){
+  const f=await fixture(t);
+  if(broken==='directory'){await fs.mkdir(f.file);await fs.writeFile(path.join(f.file,'evidence'),original);}
+  else await fs.writeFile(f.file,broken);
+  // Launch succeeds, but its best-effort record update must preserve damaged storage.
+  await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'});
+  await assert.rejects(f.runtime.currentApp(a),e=>e.code==='APP_CONTEXT_UNREADABLE');
+  f.calls.length=0;
+  await f.runtime.request('viewer_switch',{udid:a,targetUdid:b});
+  const job=await finish(f);assert.equal(job.state,'failed');assert.equal(job.errorCode,'APP_CONTEXT_UNREADABLE');assert.equal(job.execution,'not_executed');
+  assert.ok(f.calls.every(c=>c.method==='devices'),'no app lookup, shutdown, boot, install, launch or viewer start');
+  for(const method of ['app_uninstall','erase_device','delete_device'])await assert.rejects(f.runtime.request(method,{udid:a,bundleId:'test.example.original'}),e=>e.code==='APP_CONTEXT_UNSAVED'&&e.execution==='executed','completed removal evidence is retained');
+  if(broken==='directory'){assert.equal(await fs.readFile(path.join(f.file,'evidence'),'utf8'),original);await fs.rm(f.file,{recursive:true});}
+  else assert.equal(await fs.readFile(f.file,'utf8'),broken);
+  assert.ok(!(await fs.readdir(path.dirname(f.file))).some(name=>name.endsWith('.tmp')));
+  await fs.writeFile(f.file,original);
+  assert.equal(await f.runtime.currentApp(a),'test.example.original','failure was not cached');
+  await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'});
+  assert.equal(await f.restart().currentApp(a),'test.example.new');assert.equal(await f.restart().currentApp(b),'test.example.other');
+ }
+});
+test('a failed recent App write leaves the previous in-memory and disk records intact',async t=>{
+ const f=await fixture(t);await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.original'});
+ const original=await fs.readFile(f.file,'utf8'),backup=f.file+'.backup';
+ await fs.rename(f.file,backup);await fs.mkdir(f.file);
+ await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'});
+ assert.equal(await f.runtime.currentApp(a),'test.example.original','cache commits only after rename succeeds');
+ assert.equal(await fs.readFile(backup,'utf8'),original);
+ assert.ok(!(await fs.readdir(path.dirname(f.file))).some(name=>name.endsWith('.tmp')));
+ await fs.rm(f.file,{recursive:true});await fs.rename(backup,f.file);
+ await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.new'});
+ assert.equal(await f.runtime.currentApp(a),'test.example.new');assert.equal(await f.restart().currentApp(a),'test.example.new');
+});
 test('successful uninstall, erase and delete clear only the affected recent app; failures retain it',async t=>{
  for(const method of ['app_uninstall','erase_device','delete_device']) {
   const f=await fixture(t);

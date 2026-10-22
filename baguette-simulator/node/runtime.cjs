@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const {validSession} = require('./tasks.cjs');
 const {deviceId} = require('./device-id.cjs');
 const {commandBudget} = require('./budget.cjs');
+const {readJsonRecord} = require('./json-record.cjs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 
@@ -28,14 +29,10 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   const failure = (code, message, execution = 'not_executed') => Object.assign(new Error(message), {code, execution});
   async function load() {
     if (config) return config;
-    try {
-      const value = JSON.parse(await fs.readFile(settingsFile, 'utf8'));
-      if (typeof value.enabled !== 'boolean' || ![0,15,30,60].includes(value.idleMinutes)) throw Error('Invalid settings');
-      config = {enabled: value.enabled, idleMinutes: value.idleMinutes};
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw failure('SETTINGS_UNREADABLE', 'Cannot read Baguette settings. Restore the settings file before starting a device.');
-      config = {enabled: true, idleMinutes: 15};
-    }
+    const value = await readJsonRecord(settingsFile, {initial:{enabled:true, idleMinutes:15},
+      validate:value=>typeof value.enabled === 'boolean' && [0,15,30,60].includes(value.idleMinutes),
+      code:'SETTINGS_UNREADABLE', message:'Cannot read Baguette settings. Restore the settings file before starting a device.'});
+    config ||= {enabled: value.enabled, idleMinutes: value.idleMinutes};
     return config;
   }
   async function save(value) {

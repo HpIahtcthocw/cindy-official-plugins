@@ -3,29 +3,34 @@ const {randomUUID}=require('node:crypto');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {deviceId}=require('./device-id.cjs');
+const {readJsonRecord}=require('./json-record.cjs');
 // Device changes run through the same runtime lock as Agent tools and shutdown.
 function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile,onSettled=async()=>{}}) {
  let job=null,apps=null;
  const fail=(code,message,execution='not_executed')=>Object.assign(Error(message),{code,execution});
  async function contexts(){
   if(apps)return apps;
-  try{const value=JSON.parse(await fs.readFile(contextFile,'utf8'));apps ||= Object.fromEntries(Object.entries(value).filter(([id,bundle])=>/^[0-9a-f-]{36}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)).map(([id,bundle])=>[id.toUpperCase(),bundle]));}
-  catch{apps ||= {};}return apps;
+  const value=await readJsonRecord(contextFile,{initial:{},
+   validate:value=>Object.entries(value).every(([id,bundle])=>/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)),
+   code:'APP_CONTEXT_UNREADABLE',message:'Cannot read recent App records. Restore the records file before switching devices.'});
+  apps ||= Object.fromEntries(Object.entries(value).map(([id,bundle])=>[deviceId(id),bundle]));
+  return apps;
  }
  async function remember(udid,bundleId){
-  const values=await contexts(),id=udid.toUpperCase();
+  const values={...await contexts()},id=deviceId(udid);
   if(bundleId)values[id]=bundleId;else delete values[id];
-  if(!contextFile)return;
   const temporary=contextFile+'.'+randomUUID()+'.tmp';
-  try{await fs.mkdir(path.dirname(contextFile),{recursive:true,mode:0o700});await fs.writeFile(temporary,JSON.stringify(values),{mode:0o600});await fs.rename(temporary,contextFile);}
+  try{await fs.mkdir(path.dirname(contextFile),{recursive:true,mode:0o700});await fs.writeFile(temporary,JSON.stringify(values),{mode:0o600});await fs.rename(temporary,contextFile);apps=values;}
   finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
  }
  const snapshot=()=>job?{...job}:null;
  async function currentApp(udid){return (await contexts())[udid.toUpperCase()]||null;}
  async function forget(udid,bundleId){
-  const current=await currentApp(udid);
-  if(!current||(bundleId&&current!==bundleId))return;
-  try{await remember(udid,null);}
+  try{
+   const current=await currentApp(udid);
+   if(!current||(bundleId&&current!==bundleId))return;
+   await remember(udid,null);
+  }
   catch{throw fail('APP_CONTEXT_UNSAVED','The App was removed, but its recent-app record could not be cleared. Check storage before switching devices.','executed');}
  }
  async function selection(p){
