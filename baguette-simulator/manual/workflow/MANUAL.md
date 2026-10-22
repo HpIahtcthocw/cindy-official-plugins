@@ -65,7 +65,7 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 ```
 
-返回一张按时间排列、标注毫秒的联系表（负数是动作之前），以及各帧文件。动作可以是 `tap`、`gesture`、`press`、`type_text`、`open_url`、`app_launch`。录制只在画面变化时出帧，静止画面只有一两帧是正常的。
+返回一张按时间排列、标注毫秒的联系表（负数是动作之前），以及各帧文件。支持内联图片的 Cindy 会附上联系表；旧版 Cindy 或联系表超过 130 KB 时只返回 `sheet` 路径，须用读图工具打开。动作可以是 `tap`、`gesture`、`press`、`type_text`、`open_url`、`app_launch`。录制只在画面变化时出帧，静止画面只有一两帧是正常的。
 
 `execution` 表示动作是 `not_executed`、`executed` 还是 `unknown`；动作失败时 `actionError` 含 `code`、`message`、`execution`。即使没有录到帧，动作也可能已经发生；先核对设备实际状态，不要盲目重发。
 

@@ -37,7 +37,7 @@
       "description": "조건이 충족되면 반환합니다(최대 90초). 고정 sleep과 반복 스크린샷 대신 쓰세요. text나 id가 나타남(gone=true면 사라짐, 게임에서는 화면에서 읽은 글자), stable=초: 화면 변화가 tolerance(픽셀 비율 %, 기본 0.5) 미만인 상태가 그동안 지속(region으로 일부만 볼 수 있음), log=정규식: App 로그에 일치하는 줄(bundleId와 함께). screenshot=true면 화면 첨부. 충족되지 않으면 met=false, 이유와 현재 화면, 게임 애니메이션에는 권장 tolerance를 줍니다."
     },
     "capture": {
-      "description": "변화를 포착: 프레임 기록을 시작하고 action(tool은 tap, gesture, press, type_text, open_url, app_launch, args는 그 인수)을 실행한 뒤 seconds초(15 이하) 동안 이어서, 중복 프레임을 뺀 시간순·밀리초 표기 목록 이미지 한 장과 각 프레임 파일을 반환합니다. 화면 전환, 애니메이션, 잠깐 뜨는 토스트, 로딩과 스켈레톤 화면에. action이 없으면 변화만 기록. 목록 이미지도 결과에 바로 첨부됩니다. execution은 동작 실행 상태를 유지하고 actionError는 code, message, execution을 포함합니다. 불확실한 동작을 무조건 반복하지 마세요."
+      "description": "변화를 포착: 프레임 기록을 시작하고 action(tool은 tap, gesture, press, type_text, open_url, app_launch, args는 그 인수)을 실행한 뒤 seconds초(15 이하) 동안 이어서, 중복 프레임을 뺀 시간순·밀리초 표기 목록 이미지 한 장과 각 프레임 파일을 반환합니다. 화면 전환, 애니메이션, 잠깐 뜨는 토스트, 로딩과 스켈레톤 화면에. action이 없으면 변화만 기록. 지원하는 Cindy는 목록 이미지를 첨부합니다. 이전 버전이거나 130 KB를 넘으면 sheet 경로만 반환하므로 이미지 도구로 여세요. execution은 동작 실행 상태를 유지하고 actionError는 code, message, execution을 포함합니다. 불확실한 동작을 무조건 반복하지 마세요."
     },
     "set_state": {
       "description": "기기 상태 변경(여러 개 동시 가능): orientation, 폴더블 posture(closed/open/flat 또는 각도), appearance light/dark, contrast, text_size(Dynamic Type), network(프로필 이름, offline, clear 또는 {latency, bandwidth, loss}. 이후 실행한 App에 적용), location {lat, lon} 또는 clear, status_bar clean(9:41, 신호와 배터리 가득, 스크린샷용) 또는 clear, privacy {action grant/revoke/reset, service, bundleId}로 권한 창을 미리 처리. 방향이나 자세를 바꾸면 새 화면 크기와 방향을 반환합니다. 권한을 바꾸면 해당 App이 종료되니 실행 전에 설정하세요."

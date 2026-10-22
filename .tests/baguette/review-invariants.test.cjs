@@ -73,7 +73,7 @@ test('background install retains the device lock through success and failure, wh
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
 function agentFixture({frames=[],streamError=false}={}) {
-  const state={orientation:'portrait',calls:[],files:new Map(),failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
+  const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}}});
   const run=async(file,args)=>{
     state.calls.push([file,args]);
@@ -85,25 +85,82 @@ function agentFixture({frames=[],streamError=false}={}) {
     if(file.endsWith('osascript')) {
       if(args[2].endsWith('ocr.jxa.js')) {if(state.ocr===null)throw Error('OCR unavailable');return {stdout:JSON.stringify(state.ocr)};}
       if(state.failRender)throw new Failure('RENDER_FAILED','image conversion failed');
-      const script=args[2];state.files.set(args[script.endsWith('image.jxa.js')?4:3],Buffer.from('jpeg'));
+      const script=args[2];state.files.set(args[script.endsWith('image.jxa.js')?4:3],Buffer.alloc(state.imageBytes,1));
       return {stdout:JSON.stringify({width:402,height:874})};
     }
     return {stdout:''};
   };
   const sim=async args=>{state.calls.push(['sim',args]);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
-  const spawnImpl=()=>{
-    const c=new EventEmitter();c.stdout=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
+  const spawnImpl=(_file,args)=>{
+    const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
+    if(args[0]==='input') {
+      c.stdin.write=line=>{state.inputs.push(JSON.parse(line));queueMicrotask(()=>c.stdout.emit('data','{"ok":true}\n'));};
+      c.stdin.end=()=>c.emit('exit',0);return c;
+    }
     queueMicrotask(()=>{if(streamError)c.emit('error',Error('stream failed'));else for(const f of frames)c.stdout.emit('data',f);});return c;
   };
   const context={module:{exports:{}},__dirname:dir,Buffer,Date,
     setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms===2000?2000:0);if(ms===2000)timer.unref();return timer;},clearTimeout,
-    require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async()=>[],rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
+    require(name){if(name==='node:fs/promises')return {mkdir:async()=>{},readdir:async p=>p.endsWith('DiagnosticReports')?[...state.diagnostics.keys()]:[],stat:async p=>state.diagnostics.get(path.basename(p)),rm:async p=>state.files.delete(p),writeFile:async(p,b)=>state.files.set(p,b),readFile:async p=>{const report=state.diagnostics.get(path.basename(p));if(report)return report.text;if(!state.files.has(p))throw Error('missing');return state.files.get(p);}};
       return require(name.startsWith('./')?path.join(dir,name):name);}};
   vm.runInNewContext(syncFs.readFileSync(path.join(dir,'agent.cjs'),'utf8'),context);
   let clock=0;
   const agent=context.module.exports.createAgent({binary:'/bag',deviceSet:'/set',root:'/fixture',run,sim,Failure,spawnImpl,now:()=>++clock*100});
   return {agent,state,device:{udid:A}};
 }
+
+test('screenshots and captures share one inline budget and preserve files and execution when the image cannot attach',async()=>{
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+  for(const bytes of [0,130000,130001,700000])for(const enabled of [false,true])for(const execution of ['executed','unknown']) {
+    const f=agentFixture({frames:[jpeg]});f.state.imageBytes=bytes;
+    const shot=await f.agent.screenshot(f.device,{_inline:enabled,corners:false});
+    const capture=await f.agent.capture(f.device,{_inline:enabled,seconds:0.5,action:{tool:'tap'}},async()=>{
+      if(execution==='unknown')throw new Failure('ACTION_FAILED','ack lost','unknown');return {execution};
+    });
+    const attached=enabled&&bytes>0&&bytes<=130000;
+    for(const result of [shot,capture]) {
+      assert.equal(!!result._modelImages,attached);
+      if(attached)assert.equal(Buffer.from(result._modelImages[0].data,'base64').length,bytes);
+      assert.ok(f.state.files.has(result.path||result.sheet),'file survives the inline fallback');
+      assert.match(result.note,attached?/attached/:/Open/);
+    }
+    assert.equal(capture.execution,execution);
+    if(execution==='unknown')assert.equal(capture.actionError.execution,'unknown');
+  }
+});
+
+test('tap, scroll and wait distinguish identifiers from same-named labels and never widen an id to OCR',async()=>{
+  const f=agentFixture();
+  f.state.treeChildren=[
+    {role:'AXButton',identifier:'different',label:'checkout',frame:{x:10,y:100,width:80,height:40}},
+    {role:'AXButton',identifier:'checkout',label:'Pay',frame:{x:110,y:200,width:80,height:40}},
+  ];
+  const tapped=await f.agent.tap(f.device,{id:'checkout',observe:'none'});
+  assert.equal(tapped.element.id,'checkout');assert.equal(f.state.inputs[0].x,150);
+  const scrolled=await f.agent.gesture(f.device,{kind:'scroll_to',id:'checkout',observe:'none'});
+  assert.equal(scrolled.element.id,'checkout');assert.equal(scrolled.swipes,0);
+  assert.equal((await f.agent.waitFor(f.device,{id:'checkout',timeout:1})).element.id,'checkout');
+  f.state.treeChildren.pop();
+  await assert.rejects(f.agent.tap(f.device,{id:'checkout',observe:'none'}),e=>e.code==='ELEMENT_NOT_FOUND');
+  assert.equal((await f.agent.waitFor(f.device,{id:'checkout',timeout:1})).met,false);
+  assert.equal((await f.agent.waitFor(f.device,{id:'checkout',gone:true,timeout:1})).met,true);
+  f.state.treeChildren=[];f.state.ocr=[{text:'checkout',box:[0.1,0.1,0.2,0.1]}];
+  await assert.rejects(f.agent.tap(f.device,{id:'checkout',text:'checkout',observe:'none'}),e=>e.code==='ELEMENT_NOT_FOUND');
+  assert.equal((await f.agent.waitFor(f.device,{id:'checkout',text:'checkout',timeout:1})).met,false);
+  assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('ocr.jxa.js')),'explicit id never falls back to text recognition');
+});
+
+test('crash summaries take the latest five from all matching reports regardless of directory order',async()=>{
+  const f=agentFixture();
+  const report=(minute,device=A)=>({mtimeMs:1000,size:200,text:JSON.stringify({timestamp:`2026-10-22T10:${String(minute).padStart(2,'0')}:00Z`,app_name:'Game'})+'\n'+JSON.stringify({device,procName:'Game'})});
+  for(const minute of [2,1,4,3,0,9,8,7,6,5])f.state.diagnostics.set(`Game-${minute}.ips`,report(minute));
+  f.state.diagnostics.set('Game-foreign.ips',report(59,B));
+  f.state.diagnostics.set('Game-bad.ips',{mtimeMs:1000,size:100,text:'invalid '+A});
+  f.state.diagnostics.set('Game-old.ips',{...report(58),mtimeMs:-10000000});
+  f.state.diagnostics.set('Game-not-report.txt',report(57));
+  const result=await f.agent.logs(f.device,{process:'Game'});
+  assert.deepEqual(Array.from(result.crashes,r=>path.basename(r.file)),[9,8,7,6,5].map(n=>`Game-${n}.ips`));
+});
 
 test('explicit log scope is shared by history and waits and never widens after lookup or validation failure', async()=>{
   const {agent,state,device}=agentFixture();state.missingApp=true;

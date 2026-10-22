@@ -117,14 +117,14 @@ function compactTree(tree, screen, {query, role, limit = 250, turned = axTurned(
 }
 
 /**
- * Pick the element a tap or scroll should target. Exact label/id/value matches
- * win over partial ones; ties go to reading order, then `nth`.
+ * Pick the element a tap, scroll or wait should target. An explicit id only
+ * matches the identifier. Text prefers exact label/id/value over partial matches.
  */
 function findElement(elements, {text: wanted, id, role, nth = 0, view}) {
   const w = typeof wanted === 'string' ? wanted.trim().toLowerCase() : null;
-  const want = typeof id === 'string' ? id.trim() : null;
+  const want = typeof id === 'string' ? id : null;
   let pool = elements.filter(e => (!role || e.role === role));
-  if (want) pool = pool.filter(e => e.id === want || e.label === want);
+  if (want !== null) pool = pool.filter(e => e.id === want);
   if (w) {
     const exact = pool.filter(e => [e.label, e.id, e.value].some(s => s && s.toLowerCase() === w));
     pool = exact.length ? exact : pool.filter(e => [e.label, e.id, e.value].some(s => s && s.toLowerCase().includes(w)));

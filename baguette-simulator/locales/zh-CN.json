@@ -37,7 +37,7 @@
       "description": "等条件成立再返回（最长 90 秒），代替固定 sleep 加反复截图。text 或 id 出现（gone=true 时等它消失；游戏里按识别出的文字判断）；stable=秒数：画面变化低于 tolerance（像素百分比，默认 0.5）持续这么久，可用 region 只看局部；log=正则：App 日志出现匹配行（配合 bundleId）。screenshot=true 附上成立时的截图。没等到返回 met=false、原因与当时截图，游戏动画会给出建议的 tolerance。"
     },
     "capture": {
-      "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。联系表图片同样直接附在结果里。 execution 保留动作执行状态；动作失败时 actionError 含 code、message、execution，不据此盲目重试。"
+      "description": "抓取一段画面变化：先开始录帧，再执行 action（tool 为 tap、gesture、press、type_text、open_url 或 app_launch，args 为该工具的参数），持续 seconds 秒（≤15），去掉重复帧后拼成一张按时间排列、标注毫秒的联系表图片，并返回各帧文件。用于转场、动画、一闪而过的提示、加载与骨架屏。不带 action 时只录当前的画面变化。支持内联图片的 Cindy 会附上联系表；旧版 Cindy 或联系表超过 130 KB 时只返回 sheet 路径，须用读图工具打开。 execution 保留动作执行状态；动作失败时 actionError 含 code、message、execution，不据此盲目重试。"
     },
     "set_state": {
       "description": "改变设备状态，可一次改多项：orientation 方向；posture 折叠屏姿态 closed/open/flat 或角度；appearance light/dark；contrast 增强对比度；text_size 动态字体档位；network 网络条件（profile 名、offline、clear 或 {latency, bandwidth, loss}，对之后启动的 App 生效）；location {lat, lon} 或 clear；status_bar clean（9:41、满格满电，适合截图）或 clear；privacy {action: grant/revoke/reset, service, bundleId}，提前授权可避免权限弹窗。改方向或姿态后返回新的屏幕尺寸与方向。改权限会结束该 App，请在启动前设置。"

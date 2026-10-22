@@ -16,6 +16,8 @@ const SCREEN_TTL_MS = 8000;
 const NO_AX_TTL_MS = 60000;
 // Cindy's inline image budget per tool result (ghostModelImages.ts in the host), with headroom.
 const INLINE_BYTES = 130000;
+const inlineImage = (bytes, enabled) => enabled && bytes?.length > 0 && bytes.length <= INLINE_BYTES
+  ? [{data: bytes.toString('base64')}] : null;
 
 function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = spawn, now = Date.now}) {
   const screens = new Map(); // udid → {screen, at (screen confirmed), tree, treeAt}
@@ -233,12 +235,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         try {
           for (const quality of [0.82, 0.62, 0.45]) {
             const bytes = options.format === 'jpeg' && quality === 0.82 ? await fs.readFile(file) : (await render(copy, {format: 'jpeg', quality}), await fs.readFile(copy));
-            if (bytes.length <= INLINE_BYTES) { inline = bytes.toString('base64'); break; }
+            inline = inlineImage(bytes, p._inline);
+            if (inline) break;
           }
         } finally { await fs.rm(copy, {force: true}); }
       }
       return {udid: device.udid, path: file, mimeType: p.format === 'png' ? 'image/png' : 'image/jpeg', pixels: size, scale, screen: viewInfo(screen),
-        ...(inline ? {_modelImages: [{data: inline}]} : {}),
+        ...(inline ? {_modelImages: inline} : {}),
         ...(region ? {region} : {}), note: `${inline ? 'The screenshot is attached to this result and the user sees it in this tool step; do not import or re-embed it (the file at path is the same image).' : 'Open the file at path with your image tool.'} ${scale === 1 ? 'Image pixels are view points' : `Divide pixels by ${scale} for view points`}${region ? ` and add the region origin (${region.x}, ${region.y})` : ''}; pass view points to tap and gesture.`};
     } finally { await fs.rm(raw, {force: true}); }
   }
@@ -246,7 +249,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // ---- acting ----
   // Text on screen that has an element with no accessibility behind it: read it off the pixels.
   async function findByText(device, p, nth) {
-    if (typeof p.text !== 'string' || (p.role !== undefined && p.role !== 'text')) return null;
+    if (p.id !== undefined || typeof p.text !== 'string' || (p.role !== undefined && p.role !== 'text')) return null;
     const read = await readText(device, {find: p.text});
     const {element, matches} = G.findElement(read.elements, {text: p.text, nth, view: G.viewSize(read.screen)});
     return {read, element, matches};
@@ -654,12 +657,13 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const cellWidth = Math.min(view.width, Math.floor(1560 / columns)), cellHeight = Math.round(cellWidth * view.height / view.width);
       const sheet = path.join(dir, 'sheet.jpg');
       await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], {timeout: 30000});
-      // The contact sheet is what the model asked for; the host may scale it to fit (no coordinates on it).
+      // Share screenshots' inline budget; oversized sheets remain available by path.
       const sheetBytes = await fs.readFile(sheet).catch(() => null);
+      const inline = inlineImage(sheetBytes, p._inline);
       return {udid: device.udid, execution, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
-        ...(sheetBytes && sheetBytes.length <= 600 * 1024 ? {_modelImages: [{data: sheetBytes.toString('base64')}]} : {}),
+        ...(inline ? {_modelImages: inline} : {}),
         screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: {code: actionError.code, message: actionError.message, execution}} : {}),
-        note: `${sheetBytes && sheetBytes.length <= 600 * 1024 ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
+        note: `${inline ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
     } catch (error) { error.execution = execution; throw error; }
   }
 
@@ -816,9 +820,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         exception: body.exception ? [body.exception.type, body.exception.signal, body.exception.subtype].filter(Boolean).join(' ') : undefined,
         reason: body.termination?.indicator || body.termination?.reasons?.join('; ') || undefined,
         frames: (thread?.frames || []).slice(0, 14).map(f => `${images[f.imageIndex]?.name || '?'} ${f.symbol || ''}${f.symbolLocation !== undefined ? `+${f.symbolLocation}` : ''}`.trim())});
-      if (reports.length >= 5) break;
     }
-    return reports.sort((a, b) => String(b.time).localeCompare(String(a.time)));
+    return reports.sort((a, b) => String(b.time).localeCompare(String(a.time))).slice(0, 5);
   }
 
   return {observe, geometry, forget, forgetTree, describe, readText, screenshot, tap, gesture, waitFor, settle, capture, setState, logs, executableOf, typeText, pasteByTouch, hasAccessibility, after};

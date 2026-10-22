@@ -37,7 +37,7 @@
       "description": "条件が成立したら戻ります（最長 90 秒）。固定の sleep と繰り返しのスクリーンショットの代わり。text か id の出現（gone=true で消えるまで。ゲームでは画面から読み取った文字）、stable=秒数で画面の変化が tolerance（ピクセルの割合 %、既定 0.5）未満の状態がその間続くこと（region で一部だけ監視可）、log=正規表現で App ログに一致行（bundleId と併用）。screenshot=true で画面を添付。成立しなければ met=false、理由と現在の画面。ゲームのアニメーションには推奨 tolerance を示します。"
     },
     "capture": {
-      "description": "変化を記録：フレーム記録を開始し、action（tool は tap、gesture、press、type_text、open_url、app_launch、args はその引数）を実行して seconds 秒（15 以下）続け、重複を除いたフレームを時系列・ミリ秒付きの一覧画像 1 枚にまとめ、各フレームのファイルも返します。画面遷移、アニメーション、一瞬のトースト、読み込みやスケルトン画面に。action なしなら変化だけを記録。一覧画像も結果に直接添付されます。 execution は操作の実行状態を保持し、actionError は code、message、execution を含みます。不確かな操作を無条件に繰り返さないでください。"
+      "description": "変化を記録：フレーム記録を開始し、action（tool は tap、gesture、press、type_text、open_url、app_launch、args はその引数）を実行して seconds 秒（15 以下）続け、重複を除いたフレームを時系列・ミリ秒付きの一覧画像 1 枚にまとめ、各フレームのファイルも返します。画面遷移、アニメーション、一瞬のトースト、読み込みやスケルトン画面に。action なしなら変化だけを記録。対応する Cindy は一覧画像を添付します。旧版または 130 KB 超の場合は sheet パスのみなので、画像ツールで開いてください。 execution は操作の実行状態を保持し、actionError は code、message、execution を含みます。不確かな操作を無条件に繰り返さないでください。"
     },
     "set_state": {
       "description": "デバイス状態を変更（複数同時可）：orientation、折りたたみの posture（closed/open/flat または角度）、appearance light/dark、contrast、text_size（Dynamic Type）、network（プロファイル名、offline、clear、または {latency, bandwidth, loss}。以後に起動した App に適用）、location {lat, lon} または clear、status_bar clean（9:41・電波と電池満タン、スクリーンショット向け）または clear、privacy {action grant/revoke/reset, service, bundleId} で権限ダイアログを事前に回避。向きや姿勢を変えると新しい画面サイズと向きを返します。 権限を変えるとその App は終了するので、起動前に設定してください。"
