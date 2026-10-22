@@ -76,6 +76,20 @@ test('live device loads the handheld screen once; a service generation change al
  assert.equal(calls.filter(c=>c.action==='status').length,2);
 });
 
+test('unreadable App records keep the live screen and controls while only disabling device switching',async()=>{
+ let damaged=true;
+ const {dom,poll,calls}=await boot({respond:()=>status(damaged?{currentApp:null,currentAppError:{code:'APP_CONTEXT_UNREADABLE',message:'unreadable'}}:{currentApp:'test.example.app'})});
+ assert.equal(dom.byId.overlay.hidden,true);assert.equal(dom.byId.tools.hidden,false);assert.equal(dom.byId['btn-home'].disabled,false);
+ assert.equal(dom.byId.status.textContent,'运行中');assert.equal(dom.byId.screen.loads.length,1);
+ dom.byId['device-chip'].dispatch('click');
+ assert.match(dom.text(dom.body),/无法读取 App 记录/);
+ let rows=dom.body.querySelectorAll('button').filter(b=>b.attrs.role==='menuitemradio');assert.ok(rows.every(b=>b.disabled));
+ damaged=false;await poll();dom.byId['device-chip'].dispatch('click');
+ rows=dom.body.querySelectorAll('button').filter(b=>b.attrs.role==='menuitemradio');assert.equal(rows[1].disabled,false);
+ assert.equal(dom.byId.screen.loads.length,1,'record repair never restarts or reloads the view');
+ assert.ok(calls.every(c=>c.action==='status'));
+});
+
 test('a service that answers but cannot reach the view shows the recovery card; recover restarts once and reloads',async()=>{
  let fail=false,generation=1;
  const {dom,poll,calls}=await boot({respond:({action})=>{if(fail&&action==='status')return {ok:false,errorCode:'CONTROL_FAILED'};if(action==='restart'){generation++;return {ready:true,generation};}return status({generation});}});

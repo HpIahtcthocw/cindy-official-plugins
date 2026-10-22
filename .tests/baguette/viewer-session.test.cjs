@@ -26,6 +26,32 @@ test('a taken port falls back to a new one; a malformed saved capability is neve
  try{assert.notEqual(fresh.session.token,'short');assert.match(fresh.session.token,/^[0-9a-f]{64}$/);assert.notEqual(fresh.session.port,80);}finally{fresh.close();}
 });
 
+test('the viewer status preserves screen health and reports only the unreadable App record separately',async t=>{
+ const vm=require('node:vm'),syncFs=require('node:fs'),{EventEmitter}=require('node:events');
+ for(const broken of ['{','directory']){
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bag-view-record-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const settingsFile=path.join(dir,'settings.json'),record=settingsFile+'.apps.json';
+  if(broken==='directory')await fs.mkdir(record);else await fs.writeFile(record,broken);
+  const runtime=createRuntime({settingsFile,dispatch:async()=>({devices:[{udid,state:'Booted'}]})});
+  let bridge,ready=true;
+  const context={module:{exports:{}},process:{pid:process.pid},require(name){
+   if(name==='./clipboard.cjs')return {createClipboard:async(_origin,_perform,control)=>{bridge=control;return {session:{port:12345,token:'a'.repeat(64)}};}};
+   if(name==='node:http')return {get(_url,_opts,callback){const request=new EventEmitter(),response=new EventEmitter();request.destroy=()=>{};response.statusCode=ready?200:503;response.resume=()=>{};queueMicrotask(()=>{callback(response);response.emit('end');});return request;}};
+   return require(name.startsWith('./')?path.resolve('baguette-simulator/node',name):name);
+  }};
+  vm.runInNewContext(syncFs.readFileSync('baguette-simulator/node/viewer.cjs','utf8')+'\nmodule.exports.testBridge=initializeBridge;',context);
+  context.module.exports.configureControls(runtime);
+  await context.module.exports.testBridge({base:'http://example.test',port:12345,generation:1},path.join(dir,'devices'),async()=>{});
+  const status=await bridge.status({udid});
+  assert.equal(status.ready,true);assert.equal(status.device.state,'Booted');assert.equal(status.currentAppError.code,'APP_CONTEXT_UNREADABLE');
+  await assert.rejects(runtime.currentApp(udid),e=>e.code==='APP_CONTEXT_UNREADABLE','the underlying record access still refuses damaged data');
+  ready=false;assert.equal((await bridge.status({udid})).ready,false,'record errors do not mask an actual service failure');
+  if(broken==='directory')await fs.rmdir(record);else assert.equal(await fs.readFile(record,'utf8'),broken);
+  await fs.writeFile(record,JSON.stringify({[udid]:'test.example.app'}));ready=true;
+  const restored=await bridge.status({udid});assert.equal(restored.ready,true);assert.equal(restored.currentApp,'test.example.app');assert.equal(restored.currentAppError,undefined);
+ }
+});
+
 test('turning simulators off retires the saved viewer address',async t=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'baguette-session-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  let forgotten=0,state='Booted';

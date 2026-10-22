@@ -40,6 +40,24 @@ test('unreadable task bindings block every access and queued write until the fil
  }
 });
 
+test('device assignment queries propagate unreadable bindings instead of claiming devices are free',async t=>{
+ for(const broken of ['{','directory']){
+  const dir=await tmp(t),file=path.join(dir,'bindings.json'),tasks=createTaskBindings(file),calls=[];
+  if(broken==='directory')await fs.mkdir(file);else await fs.writeFile(file,broken);
+  const runtime=createRuntime({tasks,settingsFile:path.join(dir,'settings.json'),dispatch:async method=>{calls.push(method);return {devices:[{udid:A,state:'Booted'},{udid:B,state:'Shutdown'}]};}});
+  for(const [method,params] of [['devices',{}],['devices',{session_context:{session_id:'task-1'}}],['manage_state',{}],['manage_state',{_task:'task-1'}],['task_state',{_task:'task-1'}]])await assert.rejects(runtime.request(method,params),e=>e.code==='TASK_BINDINGS_UNREADABLE');
+  assert.ok(calls.every(m=>m==='devices'),'failed reads do not open viewers or mutate devices');
+  if(broken==='directory')await fs.rmdir(file);else assert.equal(await fs.readFile(file,'utf8'),broken);
+  await fs.writeFile(file,JSON.stringify({version:1,bindings:{'task-1':{udid:A,at:1}}}));
+  const seen=await runtime.request('devices',{session_context:{session_id:'task-1'}});
+  assert.deepEqual(seen.devices.map(d=>[d.tasks,d.thisTask]),[[1,true],[0,false]],'restored bindings are read without restarting');
+ }
+ // A counts success must not mask a later per-task read failure either.
+ const error=Object.assign(Error('unreadable task'),{code:'TASK_BINDINGS_UNREADABLE'});
+ const runtime=createRuntime({tasks:{counts:async()=>({[A]:1}),get:async()=>{throw error;}},settingsFile:path.join(await tmp(t),'s.json'),dispatch:async()=>({devices:[{udid:A,state:'Booted'}]})});
+ await assert.rejects(runtime.request('devices',{session_context:{session_id:'task-1'}}),e=>e===error);
+});
+
 async function runtimeFixture(t,{viewerUrl=null}={}){
  const dir=await tmp(t);const tasks=createTaskBindings(path.join(dir,'b.json'));const calls=[];
  const states={[A]:'Shutdown',[B]:'Booted'};

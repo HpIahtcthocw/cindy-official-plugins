@@ -140,7 +140,17 @@ async function initializeBridge(server,deviceSet,clipboardAction){
  const preferred=readSession(deviceSet);
  server.clipboard=await createClipboard(server.base,clipboardAction,{
   port:server.port,
-  status:async p=>{const state=controls?await controls.status():null;return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),devices:state?.devices,deviceJob:state?.deviceJob,currentApp:await controls?.currentApp?.(p.udid),settings:state?.settings,idleDeadline:state?.idleDeadline};},
+  status:async p=>{
+   const state=controls?await controls.status():null;
+   let currentApp=null,currentAppError;
+   try{currentApp=await controls?.currentApp?.(p.udid)??null;}
+   catch(error){
+    if(error.code!=='APP_CONTEXT_UNREADABLE')throw error;
+    currentAppError={code:error.code,message:error.message};
+   }
+   return {...await viewerStatus(server),device:state?.devices.find(d=>d.udid===p.udid),devices:state?.devices,deviceJob:state?.deviceJob,
+    currentApp,...(currentAppError?{currentAppError}:{}),settings:state?.settings,idleDeadline:state?.idleDeadline};
+  },
   catalog:()=>controls.request('viewer_catalog'),
   create:async p=>{const created=await controls.request('create_device',{name:p.name,deviceType:p.deviceType,runtime:p.runtime});return {ok:true,created,devices:(await controls.status()).devices};},
   rename:async p=>{await controls.request('rename_device',{udid:p.targetUdid,name:p.name});return {ok:true,devices:(await controls.status()).devices};},

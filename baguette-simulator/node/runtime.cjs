@@ -116,8 +116,8 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
   // so the AI can reuse a free device or create one for this task.
   async function annotate(devices, session) {
     if (!tasks) return devices;
-    const counts = await tasks.counts().catch(() => ({}));
-    const mine = session ? (await tasks.get(session).catch(() => null))?.udid : null;
+    const counts = await tasks.counts();
+    const mine = session ? (await tasks.get(session))?.udid : null;
     return devices.map(d => ({...d, tasks: counts[deviceId(d.udid)] || 0, ...(session ? {thisTask: deviceId(d.udid) === deviceId(mine)} : {})}));
   }
   const withTask = (url, session) => url.replace('#', `&task=${encodeURIComponent(session)}#`);

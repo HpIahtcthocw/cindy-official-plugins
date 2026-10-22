@@ -184,7 +184,7 @@
     label($('btn-home'), t.home, '⇧⌘H'); label($('btn-shot'), `${t.screenshot} · ${shotTo() === 'clipboard' ? t.shotToClipboard : t.shotToDesktop}`, '⌘S'); label($('btn-shot-menu'), t.shotTo);
     label($('btn-rotl'), t.rotateLeft, '⌘←'); label($('btn-rotr'), t.rotateRight, '⌘→');
     label($('zoom-out'), t.zoomOut, '⌘−'); label($('zoom-in'), t.zoomIn, '⌘+'); label($('btn-more'), t.more);
-    $('device-chip').title = t.devices;
+    $('device-chip').title = s?.currentAppError ? t.appRecordUnreadable : t.devices;
     renderPosture();
   }
   function renderOverlay() {
@@ -435,7 +435,8 @@
     const paused = state.status?.settings?.enabled === false;
     showMenu($('device-chip'), [
       h('div', { class: 'head', text: t.devices }),
-      ...rows.map((d) => h('button', { class: 'item', role: 'menuitemradio', 'aria-checked': String(d.current), disabled: paused || state.switching || !d.available || (d.current && d.tone === 'on'),
+      state.status?.currentAppError ? h('div', { class: 'head', role: 'status', text: t.appRecordUnreadable }) : null,
+      ...rows.map((d) => h('button', { class: 'item', role: 'menuitemradio', 'aria-checked': String(d.current), disabled: paused || !!state.status?.currentAppError || state.switching || !d.available || (d.current && d.tone === 'on'),
         title: d.current ? t.current : t.switchTo, onclick: () => { closeMenu(); switchTo(d.udid); } }, [
         h('span', { class: 'dot', 'data-tone': d.tone }),
         h('span', { class: 'label' }, [h('span', { text: d.name }), h('span', { class: 'sub', text: d.meta })]),

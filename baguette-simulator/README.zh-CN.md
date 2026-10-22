@@ -84,3 +84,5 @@ Node Worker 有当前用户级本机权限。只调用固定可执行文件和�
 本插件基于 tddworks 的开源项目 [Baguette](https://github.com/tddworks/baguette)（Apache-2.0）。Cindy 维护插件集成、Node Worker 以及 VENDOR-REVIEW.md 记录的本地补丁（`vendor-native.patch`、`vendor-web.patch`），与 tddworks 无隶属或背书关系。随包 HingeControl 含改编自 Meta idb 的代码（MIT）。完整许可证见 THIRD-PARTY-LICENSES.txt 与 `HingeControl/LICENSE.idb`；图标为 Cindy 自有的 iOS 模拟器图标。
 
 设置无法读取时，仍可查看状态和关闭设备，但禁止启动和修改设置；恢复设置文件后才能恢复运行许可。切换设备自动安装源应用包时，可能替换目标上相同 bundleId 的已有 App；不会复制源 App 数据或登录凭证。
+
+画面也允许文件和 App 安装（可能覆盖已有 App）、会替换 Mac 或模拟器剪贴板的复制粘贴，以及可能触发 App 行为的远程通知注入。打开前向用户说明这些能力；仅打开页面不会执行它们。任务绑定不可读时，设备归属查询会报错，不会报告为空闲。近期 App 记录不可读时禁止切换设备，正常画面和控制仍可用，设备菜单会提示记录问题。
