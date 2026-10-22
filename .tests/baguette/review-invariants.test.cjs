@@ -544,6 +544,36 @@ test('all six capture actions inherit the outer deadline, including nested scree
   }
 });
 
+test('nested capture images remain paths while only the outer contact sheet can attach image bytes',async()=>{
+  for(const tool of ['app_launch','tap','gesture','type_text'])for(const enabled of [false,true])for(const failed of [false,true]){
+    const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+    const f=agentFixture({frames:[jpeg],clockStep:0,onDelay:(ms,s)=>s.advance(ms),onCommand:(_file,args)=>{
+      if(failed&&args[2]?.endsWith?.('sheet.jxa.js'))throw new Failure('RENDER_FAILED','contact sheet failed');
+    }});
+    f.agent.settle=async()=>({settled:true});
+    const context={module:{exports:{}},__dirname:dir,setTimeout,clearTimeout,process:{platform:'darwin',arch:'arm64',env:{}},require(name){
+      if(name==='./viewer.cjs')return {};
+      if(name==='./agent.cjs')return {createAgent:()=>f.agent};
+      if(name==='./apps.cjs')return {createApps:()=>({runningFor:()=>null})};
+      if(name==='node:child_process')return {execFile(file,args,_options,callback){
+        const stdout=file.endsWith('sw_vers')?'27.0':args.includes('--json')?JSON.stringify({devices:{r:[{udid:A,state:'Booted'}]}}):'/Xcode';
+        queueMicrotask(()=>callback(null,stdout,''));return {stdin:{on(){},end(){}}};
+      }};
+      return require(name.startsWith('./')?path.join(dir,name):name);
+    }};
+    vm.runInNewContext(syncFs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+    const args=tool==='app_launch'?{bundleId:'test.example.app',screenshot:true}:tool==='tap'?{x:10,y:10,until:'Never'}:tool==='gesture'?{kind:'swipe',from:[10,10],to:[20,20],until:'Never'}:{keys:['a'],until:'Never'};
+    const result=await context.module.exports.dispatch('capture',{udid:A,_inline:enabled,seconds:0.5,action:{tool,args:{...args,_inline:true}}});
+    assert.equal(result.execution,'executed');
+    const shot=tool==='app_launch'?result.action.screenshot:result.action.until.screenshot;
+    assert.ok(shot.path,tool);
+    assert.ok(!JSON.stringify(result.action).includes('_modelImages'),tool);
+    const {_modelImages,...structured}=result;
+    assert.equal(!!_modelImages,enabled&&!failed);assert.ok(!JSON.stringify(structured).includes('_modelImages'));
+    assert.ok(failed?result.captureError:result.sheet);
+  }
+});
+
 test('input ACK timers and multi-step gesture waits use the same remaining deadline',async()=>{
   for(const mode of ['ack','steps','wait','expired']){
     let clock=mode==='expired'?1000:0,writes=0,kills=0;const timers=[];

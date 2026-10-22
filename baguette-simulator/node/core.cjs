@@ -117,6 +117,7 @@ async function nativeKey(device,code,modifiers=[],deadline) {
 async function clipboardAction(p) {
  if(keyboardBusy)throw new Failure('INPUT_BUSY','Another keyboard operation is running; retry after it finishes');
  keyboardBusy=true;
+ let inputCompleted=false;
  try{
   const device=await target(p);
   if(p.action==='release')return await nativeKey(device,null,[],p._deadline);
@@ -125,11 +126,12 @@ async function clipboardAction(p) {
     const text=string(p.text,'text',8000);
     // First release any existing repeat before replacing its clipboard payload
     // (not for a touch paste: any key event hides the on-screen keyboard).
-    if(!p.touch)await nativeKey(device,null,[],p._deadline);
+    if(!p.touch){await nativeKey(device,null,[],p._deadline);inputCompleted=true;}
     // CoreDevice (devicectl) cannot see a private device set, so write with
     // simctl --set. Xcode 27 pbcopy has been seen to exit 0 without changing the
     // guest clipboard: compare exact UTF-8 text (whitespace kept) before pasting.
     await sim(['pbcopy',device.udid],{input:text,mutation:true,...commandBudget(30000,p._deadline),env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
+    inputCompleted=true;
     let actual;
     try {
       actual=await sim(['pbpaste',device.udid],{trimOutput:false,...commandBudget(30000,p._deadline),env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
@@ -140,10 +142,12 @@ async function clipboardAction(p) {
     if(!p.touch)await nativeKey(device,'KeyV',['command'],p._deadline);
   } else if(p.action==='copy') {
     await nativeKey(device,'KeyC',['command']);
+    inputCompleted=true;
     await new Promise(resolve=>setTimeout(resolve,250));
     await sim(['pbsync',device.udid,'host'],{mutation:true});
   } else throw new Failure('INVALID_ARGUMENT','Unknown input action');
- }finally{keyboardBusy=false;}
+ }catch(error){if(inputCompleted&&error.execution==='not_executed')error.execution='unknown';throw error;}
+ finally{keyboardBusy=false;}
 }
 async function dispatch(method,p={},deadline=Date.now()+110000) {
   // Core owns the request deadline, including preflight. Nested observation
@@ -232,7 +236,9 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     return agent().capture(device,p,async action=>{
       if(!action||!allowed.includes(action.tool))throw new Failure('INVALID_ARGUMENT',`capture action.tool must be one of ${allowed.join(', ')}`);
       const args={...(action.args||{}),udid:device.udid,observe:'none'};
-      return dispatch(action.tool==='app_launch'?'launch_app':action.tool,{...args,showViewer:false,_inline:p._inline},p._deadline);
+      // Only the outer contact sheet uses the attachment channel. Nested
+      // screenshots keep paths; private image bytes must not enter action JSON.
+      return dispatch(action.tool==='app_launch'?'launch_app':action.tool,{...args,showViewer:false,_inline:false},p._deadline);
     });
   }
   if(method==='type_text') {
@@ -249,7 +255,7 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     if(how==='type'&&text!==undefined&&!typeable(text))throw new Failure('INVALID_ARGUMENT','method=type types US-keyboard characters only (letters, digits, punctuation, space, newline). Use paste for other text such as Chinese.');
     if(how==='type'&&text!==undefined&&text.length>300)throw new Failure('INVALID_ARGUMENT','method=type is limited to 300 characters per call (about 0.1 s each); split the text or use paste.');
     let inputStarted=false;
-    const inputAction=async args=>{inputStarted=true;return clipboardAction({udid:device.udid,...args,_deadline:p._deadline});};
+    const inputAction=async args=>{const result=await clipboardAction({udid:device.udid,...args,_deadline:p._deadline});inputStarted=true;return result;};
     try {
     if(p.clear===true){await inputAction({action:'key',code:'KeyA',modifiers:['command']});await inputAction({action:'key',code:'Backspace',modifiers:[]});}
     let used=null,typed=null;

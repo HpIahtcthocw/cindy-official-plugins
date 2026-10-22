@@ -66,3 +66,40 @@ test('clipboard verification preserves leading/trailing whitespace and Unicode',
  assert.deepEqual(Array.from(read.args.slice(0,3)),Array.from(h.calls.find(c=>c.args.includes('pbcopy')).args.slice(0,3)));
  assert.ok(h.calls.at(-1).file.endsWith('/native/keyboard'));
 });
+
+test('input tri-state follows completed steps, preserving busy and preflight rejection before any input',async()=>{
+ for(const mode of ['busy','first-preflight','expired','first-unknown','after-key','after-clipboard']){
+  let release;const blocked=new Promise(resolve=>release=resolve);
+  // run() uses the existing commandBudget helper; replace only the executor
+  // through a fresh core VM so failures remain in the production input path.
+  let keyboardCalls=0,queries=0,clipboard='',clock=0;
+  const context={module:{exports:{}},__dirname:path.resolve('baguette-simulator/node'),setTimeout,clearTimeout,Date:{now:()=>clock},process:{platform:'darwin',arch:'arm64',env:{}},require(name){
+   if(name==='./budget.cjs')return {commandBudget:(ms,deadline)=>require('../../baguette-simulator/node/budget.cjs').commandBudget(ms,deadline,()=>clock)};
+   if(name==='./viewer.cjs')return {};
+   if(name==='node:fs/promises')return {mkdir:async()=>{}};
+   if(name==='node:child_process')return {execFile(file,args,_options,callback){
+    let stdout='',error=null;
+    if(file.endsWith('sw_vers'))stdout='27.0';
+    else if(args.includes('--json')){queries++;stdout=JSON.stringify({devices:{r:[{udid,state:'Booted'}]}});if(mode==='expired')clock=110000;if((mode==='first-preflight'&&queries===2)||(mode==='after-key'&&queries===3))error=Error('device query failed');}
+    else if(file.endsWith('xcode-select')){stdout='/Xcode';if(mode==='after-clipboard'&&clipboard)error=Error('xcode query failed');}
+    else if(file.endsWith('/keyboard')){keyboardCalls++;if(mode==='first-unknown')error=Error('ack lost');}
+    if(mode==='busy'&&file.endsWith('/keyboard')&&keyboardCalls===1)blocked.then(()=>callback(null,'',''));
+    else queueMicrotask(()=>callback(error,args.includes('pbpaste')?clipboard:stdout,''));
+    return {stdin:{on(){},end(text){if(args.includes('pbcopy'))clipboard=text;}}};
+   }};
+   return require(name.startsWith('./')?path.resolve('baguette-simulator/node',name):name);
+  }};
+  vm.runInNewContext(fs.readFileSync(path.resolve('baguette-simulator/node/core.cjs'),'utf8'),context);
+  let other;
+  if(mode==='busy'){
+   other=vm.runInContext('clipboardAction',context)({udid,action:'key',code:'KeyA'});
+   while(!keyboardCalls)await new Promise(resolve=>setImmediate(resolve));
+  }
+  const params=mode==='after-clipboard'?{text:'new',method:'paste'}:{keys:['a','b']};
+  await assert.rejects(context.module.exports.dispatch('type_text',{udid,...params}),e=>e.execution===(['busy','first-preflight','expired'].includes(mode)?'not_executed':'unknown'),mode);
+  if(mode==='busy'){assert.equal(keyboardCalls,1);release();await other;}
+  if(['first-preflight','expired'].includes(mode))assert.equal(keyboardCalls,0);
+  if(mode==='after-key')assert.equal(keyboardCalls,1);
+  if(mode==='after-clipboard'){assert.equal(clipboard,'new');assert.equal(keyboardCalls,1,'no paste key was sent after the Xcode lookup failed');}
+ }
+});
