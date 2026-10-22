@@ -256,6 +256,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   }
 
   async function resolveTarget(device, p) {
+    G.validateSelector(p);
     if (typeof p.text === 'string' || typeof p.id === 'string') {
       const nth = number(p.nth, 'nth', 0, 200, 0);
       const target = element => ({x: element.center[0], y: element.center[1]});
@@ -368,6 +369,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   // Swipe until the element is fully on screen, or the content stops moving.
   async function scrollTo(device, p) {
+    G.validateSelector(p);
     if (typeof p.text !== 'string' && typeof p.id !== 'string') throw failure('INVALID_ARGUMENT', 'scroll_to needs text or id');
     const max = number(p.max_swipes, 'max_swipes', 1, 30, 10), direction = p.direction || 'up';
     let last = null;
@@ -471,6 +473,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const ambient = typical !== null && typical < 15;
       return unmet(`The ${region ? 'region' : 'screen'} kept changing for ${Math.round(timeout / 1000)} s${typical !== null ? `, typically ${typical.toFixed(1)}% of pixels per frame` : ''}.${ambient ? ` That looks like ongoing animation (a game scene); if so, wait with tolerance=${Math.min(50, Math.ceil(typical * 1.5 + 1))} or watch a calm region.` : ''} The current screen is attached.`);
     }
+    G.validateSelector(p);
     if (typeof p.text !== 'string' && typeof p.id !== 'string') throw failure('INVALID_ARGUMENT', 'wait_for needs text, id, stable or log');
     const gone = p.gone === true;
     let seenText = [], source = 'ui';
@@ -499,22 +502,36 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const processName = await logProcess(device, p);
     const args = ['simctl', '--set', deviceSet, 'spawn', device.udid, 'log', 'stream', '--style', 'ndjson', '--level', 'debug'];
     if (processName) args.push('--predicate', `process == ${JSON.stringify(processName)}`);
+    let child;
+    try { child = spawnImpl('/usr/bin/xcrun', args, {stdio: ['ignore', 'pipe', 'pipe']}); }
+    catch (error) { throw failure('LOGS_UNAVAILABLE', error.message); }
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     return new Promise((resolve, reject) => {
-      const child = spawnImpl('/usr/bin/xcrun', args, {stdio: ['ignore', 'pipe', 'ignore']});
-      let buffer = '', settled = false;
+      let buffer = '', stderr = '', settled = false;
       const end = (fn, value) => { if (settled) return; settled = true; clearTimeout(timer); child.kill('SIGKILL'); fn(value); };
       const timer = setTimeout(() => end(reject, failure('WAIT_TIMEOUT', `No log line matched /${p.log}/ within ${Math.round(timeout / 1000)} s.`)), Math.max(0, timeout - (now() - started)));
+      const consume = raw => {
+        const line = matchingLogLine(raw, pattern);
+        if (line !== null) end(resolve, done({line}));
+      };
       child.stdout.on('data', chunk => {
+        if (settled) return;
         buffer += chunk;
         let i;
-        while ((i = buffer.indexOf('\n')) >= 0) {
+        while (!settled && (i = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, i); buffer = buffer.slice(i + 1);
-          let entry; try { entry = JSON.parse(line); } catch { continue; }
-          const message = logMessage(entry);
-          if (pattern.test(message)) end(resolve, done({line: formatLog(entry)}));
+          consume(line);
         }
       });
+      child.stderr.on('data', chunk => { if (!settled) stderr = (stderr + chunk).slice(-4000); });
       child.on('error', error => end(reject, failure('LOGS_UNAVAILABLE', error.message)));
+      // close follows drained stdout/stderr; exit may precede the last log line.
+      child.on('close', (code, signal) => {
+        if (settled) return;
+        if (buffer) consume(buffer);
+        if (!settled) end(reject, failure('LOGS_UNAVAILABLE', `Log stream closed (${signal || code})${stderr.trim() ? ': ' + stderr.trim() : ''}`));
+      });
     });
   }
 
@@ -790,12 +807,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const out = await sim(args, {timeout: 60000, maxBuffer: 64 * 1024 * 1024}).catch(error => { throw failure('LOGS_UNAVAILABLE', error.message); });
     const lines = [];
     for (const line of out.stdout.split('\n')) {
-      let entry; try { entry = JSON.parse(line); } catch { continue; }
-      if (!logMessage(entry)) continue;
-      // `match` sees the line as shown: time, type, subsystem/category and message.
-      const shown = formatLog(entry);
-      if (pattern && !pattern.test(shown)) continue;
-      lines.push(shown);
+      const shown = matchingLogLine(line, pattern);
+      if (shown !== null) lines.push(shown);
     }
     const result = {udid: device.udid, ...(processName ? {process: processName} : {}), level, lastSeconds: last, total: lines.length, lines: lines.slice(-limit), truncated: lines.length > limit};
     if (p.crashes !== false) result.crashes = await crashReports(device, processName, Math.max(last, 3600)).catch(() => []);
@@ -844,6 +857,14 @@ function directionVector(direction, view, distance) {
 // Metro and other tools colour their messages; control characters are not text.
 const plain = text => String(text).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 const logMessage = entry => entry.eventMessage || entry.composedMessage || '';
+// History and streaming match the complete displayed line, not just its message.
+function matchingLogLine(raw, pattern) {
+  let entry;
+  try { entry = JSON.parse(raw); } catch { return null; }
+  if (!entry || typeof entry !== 'object' || !logMessage(entry)) return null;
+  const shown = formatLog(entry);
+  return !pattern || pattern.test(shown) ? shown : null;
+}
 function formatLog(entry) {
   const time = (entry.timestamp || '').replace(/^.*?(\d\d:\d\d:\d\d\.\d{3}).*$/, '$1');
   const type = entry.messageType && entry.messageType !== 'Default' ? `[${entry.messageType.toLowerCase()}] ` : '';

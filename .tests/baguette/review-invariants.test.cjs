@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises'), syncFs = require('node:fs');
 const os = require('node:os'), path = require('node:path'), vm = require('node:vm');
 const {EventEmitter} = require('node:events');
+const {PassThrough} = require('node:stream');
 const {execFile} = require('node:child_process');
 const exec = require('node:util').promisify(execFile);
 const dir = path.resolve('baguette-simulator/node');
@@ -72,7 +73,7 @@ test('background install retains the device lock through success and failure, wh
 
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
-function agentFixture({frames=[],streamError=false}={}) {
+function agentFixture({frames=[],streamError=false,streamEvents=[]}={}) {
   const state={orientation:'portrait',calls:[],files:new Map(),diagnostics:new Map(),inputs:[],imageBytes:4,failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}}});
   const run=async(file,args)=>{
@@ -97,7 +98,14 @@ function agentFixture({frames=[],streamError=false}={}) {
       c.stdin.write=line=>{state.inputs.push(JSON.parse(line));queueMicrotask(()=>c.stdout.emit('data','{"ok":true}\n'));};
       c.stdin.end=()=>c.emit('exit',0);return c;
     }
-    queueMicrotask(()=>{if(streamError)c.emit('error',Error('stream failed'));else for(const f of frames)c.stdout.emit('data',f);});return c;
+    const streaming=args.includes('stream');
+    if(streaming){c.stdout=new PassThrough();c.stderr=new PassThrough();c.kill=()=>c.emit('close',null,'SIGKILL');}
+    queueMicrotask(()=>{
+      if(streamError)c.emit('error',Error('stream failed'));else for(const f of frames){if(streaming)c.stdout.write(f);else c.stdout.emit('data',f);}
+      for(const {source,event,args:values} of streamEvents){
+        if(streaming&&source&&event==='data')c[source].write(values[0]);else (source?c[source]:c).emit(event,...values);
+      }
+    });return c;
   };
   const context={module:{exports:{}},__dirname:dir,Buffer,Date,
     setTimeout:(fn,ms)=>{const timer=setTimeout(fn,ms===2000?2000:0);if(ms===2000)timer.unref();return timer;},clearTimeout,
@@ -148,6 +156,44 @@ test('tap, scroll and wait distinguish identifiers from same-named labels and ne
   await assert.rejects(f.agent.tap(f.device,{id:'checkout',text:'checkout',observe:'none'}),e=>e.code==='ELEMENT_NOT_FOUND');
   assert.equal((await f.agent.waitFor(f.device,{id:'checkout',text:'checkout',timeout:1})).met,false);
   assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('ocr.jxa.js')),'explicit id never falls back to text recognition');
+});
+
+test('identifier representation survives the raw AX tree through tap, scroll and present/gone waits',async()=>{
+  for(const node of [
+    {role:'AXButton',identifier:'checkout',label:'checkout'},
+    {role:'AXGroup',identifier:'checkout'},
+    {role:'AXGenericElement',identifier:'checkout'},
+    {role:'AXButton',identifier:' checkout ',label:'Pay'},
+  ]) {
+    const f=agentFixture(),id=node.identifier;
+    f.state.treeChildren=[
+      {role:'AXButton',label:id,frame:{x:10,y:100,width:80,height:40}},
+      {...node,frame:{x:110,y:200,width:80,height:40}},
+    ];
+    assert.equal((await f.agent.describe(f.device,{})).elements[1].id,id);
+    assert.equal((await f.agent.tap(f.device,{id,observe:'none'})).element.id,id);
+    assert.equal(f.state.inputs[0].x,150,'only the true identifier is tapped');
+    assert.equal((await f.agent.gesture(f.device,{kind:'scroll_to',id,observe:'none'})).swipes,0);
+    assert.equal((await f.agent.waitFor(f.device,{id,timeout:1})).met,true);
+    assert.equal((await f.agent.waitFor(f.device,{id,gone:true,timeout:1})).met,false);
+    f.state.treeChildren.pop();
+    assert.equal((await f.agent.waitFor(f.device,{id,gone:true,timeout:1})).met,true);
+  }
+});
+
+test('explicit invalid selectors fail before AX/OCR reads, coordinate input or scrolling',async()=>{
+  const f=agentFixture();
+  f.state.treeChildren=[{role:'AXButton',label:'Unrelated',frame:{x:10,y:100,width:80,height:40}}];
+  for(const key of ['text','id','role'])for(const value of ['', ' \t\n ',null,42]) {
+    const selector={text:'Unrelated',[key]:value};
+    for(const operation of [
+      ()=>f.agent.tap(f.device,{...selector,x:50,y:120,observe:'none'}),
+      ()=>f.agent.gesture(f.device,{...selector,kind:'scroll_to'}),
+      ()=>f.agent.waitFor(f.device,{...selector,timeout:1}),
+      ()=>f.agent.waitFor(f.device,{...selector,gone:true,timeout:1}),
+    ])await assert.rejects(operation(),e=>e.code==='INVALID_ARGUMENT'&&e.execution==='not_executed');
+  }
+  assert.equal(f.state.calls.length,0);assert.equal(f.state.inputs.length,0);
 });
 
 test('crash summaries take the latest five from all matching reports regardless of directory order',async()=>{
@@ -208,6 +254,41 @@ test('live log waits and history use the same message field with eventMessage ta
     const wait=await f.agent.waitFor(f.device,{log:'ready',timeout:1});
     assert.equal(wait.met,true);assert.equal(wait.line,history.lines[0]);
   }
+});
+
+test('live and historical log matching share formatted metadata, message normalization and partial-line parsing',async()=>{
+  const entry={timestamp:'2026-10-22 10:00:00.123+0000',messageType:'Error',subsystem:'example.test',category:'network',eventMessage:' ready\n now 测试 '};
+  const raw=Buffer.from('not json\nnull\n{}\n'+JSON.stringify(entry)),cut=raw.indexOf(Buffer.from('测试'))+1;
+  for(const match of ['10:00:00\\.123','\\[error\\]','example\\.test/network','ready now','测试']) {
+    const f=agentFixture({frames:[raw.subarray(0,23),raw.subarray(23,cut),raw.subarray(cut)],streamEvents:[{event:'exit',args:[0]},{event:'close',args:[0]}]});
+    f.state.logEntries=[null,{},entry];
+    const history=await f.agent.logs(f.device,{match,crashes:false});
+    const live=await f.agent.waitFor(f.device,{log:match,timeout:1});
+    assert.equal(live.met,true);assert.equal(live.line,history.lines[0]);
+  }
+});
+
+test('log stream terminal events settle once, consume trailing output and distinguish failure from timeout',async()=>{
+  const ready={source:'stdout',event:'data',args:[JSON.stringify({eventMessage:'ready'})+'\n']};
+  const close={event:'close',args:[1]},error={event:'error',args:[Error('spawn failed')]};
+  for(const terminal of [close,error]) {
+    const success=agentFixture({streamEvents:[ready,terminal,close,ready]});
+    assert.equal((await success.agent.waitFor(success.device,{log:'ready',timeout:1})).met,true);
+    const failed=agentFixture({streamEvents:[{source:'stderr',event:'data',args:['x'.repeat(5000)+' device shut down']},terminal,ready,close]});
+    await assert.rejects(failed.agent.waitFor(failed.device,{log:'ready',timeout:90}),e=>{
+      assert.equal(e.code,'LOGS_UNAVAILABLE');
+      if(terminal===close){assert.match(e.message,/device shut down/);assert.ok(e.message.length<4100);}
+      return true;
+    });
+    assert.ok(!failed.state.calls.some(c=>c[1][0]==='screenshot'),'infrastructure failure is not a normal wait timeout');
+  }
+  // exit can precede the final stdout data; only close proves the pipes drained.
+  const drained=agentFixture({streamEvents:[{event:'exit',args:[0]},{...ready,args:[JSON.stringify({eventMessage:'ready'})]}, {event:'close',args:[0]}]});
+  assert.equal((await drained.agent.waitFor(drained.device,{log:'ready',timeout:1})).met,true);
+  const ended=agentFixture({streamEvents:[{event:'close',args:[0]}]});
+  await assert.rejects(ended.agent.waitFor(ended.device,{log:'ready',timeout:1}),e=>e.code==='LOGS_UNAVAILABLE');
+  const waiting=agentFixture();
+  assert.equal((await waiting.agent.waitFor(waiting.device,{log:'ready',timeout:1})).met,false,'timeout kills the stream without turning its own close into a failure');
 });
 
 test('capture keeps same-length different frames and carries action execution through every result path', async()=>{

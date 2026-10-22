@@ -89,8 +89,9 @@ function compactTree(tree, screen, {query, role, limit = 250, turned = axTurned(
     if (!node.frame) continue;
     const kind = ROLE[node.role] || (typeof node.role === 'string' ? node.role.replace(/^AX/, '').toLowerCase() : 'element');
     if (kind === 'app') continue;
-    const label = text(node.label) || text(node.title), id = text(node.identifier), value = text(node.value);
-    if (!label && !value && !INTERACTIVE.has(kind)) continue;
+    const label = text(node.label) || text(node.title), value = text(node.value);
+    const id = typeof node.identifier === 'string' && node.identifier.trim() ? node.identifier : null;
+    if (!label && !id && !value && !INTERACTIVE.has(kind)) continue;
     const f = frameToView(screen, axFrameToNative(screen, node.frame, turned));
     if (f.width < 1 || f.height < 1 || f.x >= view.width || f.y >= view.height || f.x + f.width <= 0 || f.y + f.height <= 0) continue;
     // Baguette's status-bar sweep reports its items in a different frame once
@@ -103,7 +104,7 @@ function compactTree(tree, screen, {query, role, limit = 250, turned = axTurned(
     seen.add(key);
     const entry = {role: kind};
     if (label) entry.label = label.length > 160 ? label.slice(0, 157) + '…' : label;
-    if (id && id !== label) entry.id = id;
+    if (id) entry.id = id;
     if (value && value !== label) entry.value = value.length > 120 ? value.slice(0, 117) + '…' : value;
     if (node.enabled === false) entry.enabled = false;
     if (node.focused === true) entry.focused = true;
@@ -120,7 +121,18 @@ function compactTree(tree, screen, {query, role, limit = 250, turned = axTurned(
  * Pick the element a tap, scroll or wait should target. An explicit id only
  * matches the identifier. Text prefers exact label/id/value over partial matches.
  */
-function findElement(elements, {text: wanted, id, role, nth = 0, view}) {
+function validateSelector(selector) {
+  for (const key of ['text', 'id', 'role']) {
+    const value = selector[key];
+    if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
+      throw Object.assign(new Error(`${key} must be a non-blank string`), {code: 'INVALID_ARGUMENT', execution: 'not_executed'});
+    }
+  }
+}
+
+function findElement(elements, selector) {
+  validateSelector(selector);
+  const {text: wanted, id, role, nth = 0, view} = selector;
   const w = typeof wanted === 'string' ? wanted.trim().toLowerCase() : null;
   const want = typeof id === 'string' ? id : null;
   let pool = elements.filter(e => (!role || e.role === role));
@@ -140,4 +152,4 @@ function findElement(elements, {text: wanted, id, role, nth = 0, view}) {
   return {element: pool[nth] || null, matches: pool.length};
 }
 
-module.exports = {ROTATION, rotation, viewSize, toNative, toView, frameToView, axTurned, axFrameToNative, nativeToAx, compactTree, findElement, INTERACTIVE};
+module.exports = {ROTATION, rotation, viewSize, toNative, toView, frameToView, axTurned, axFrameToNative, nativeToAx, compactTree, validateSelector, findElement, INTERACTIVE};
