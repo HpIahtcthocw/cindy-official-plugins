@@ -13,6 +13,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const {commandBudget} = require('./budget.cjs');
 const {deviceId} = require('./device-id.cjs');
+const {appContainer} = require('./app-container.cjs');
 
 const BUNDLE = /^[A-Za-z0-9][A-Za-z0-9.-]+$/;
 const SYNC_LIMIT = 300;
@@ -51,8 +52,7 @@ function createApps({sim, run, Failure, now = Date.now, rsync = '/usr/bin/rsync'
     return real;
   }
   async function installedAt(device, bundleId, deadline) {
-    try { return (await sim(['get_app_container', device.udid, bundleId, 'app'], budget(10000, deadline))).stdout || null; }
-    catch (error) { if (error.code === 'TIME_BUDGET_EXHAUSTED') throw error; return null; }
+    return appContainer({sim, Failure}, device, bundleId, budget(10000, deadline));
   }
   /** Compare bytes, including resources whose size and timestamp were preserved. */
   async function differences(from, to, deadline) {

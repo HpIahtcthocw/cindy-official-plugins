@@ -66,7 +66,7 @@ test('installation identity remains exact across case variants, polling modes an
   for(const installedId of variants(A))for(const fail of [false,true]){
     const gate=deferred();
     const apps=createApps({Failure:class extends Error{constructor(code,message,execution='not_executed'){super(message);Object.assign(this,{code,execution});}},
-      run:async()=>({stdout:info}),sim:async args=>{if(args[0]==='get_app_container')throw Error('not installed');if(args[0]==='install'){await gate.promise;if(fail)throw Error('install failed');}return {stdout:''};}});
+      run:async()=>({stdout:info}),sim:async args=>{if(args[0]==='get_app_container')throw Object.assign(Error('An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=2):\nNo such file or directory'),{code:'COMMAND_FAILED'});if(args[0]==='install'){await gate.promise;if(fail)throw Error('install failed');}return {stdout:''};}});
     const job=await apps.install({udid:installedId},{appPath:source,wait:0},{terminate:async()=>{}});
     for(const udid of variants(A)){
       assert.equal((await apps.status({udid,job:job.job,wait:0})).job,job.job);

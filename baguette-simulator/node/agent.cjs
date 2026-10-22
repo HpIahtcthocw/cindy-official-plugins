@@ -10,6 +10,7 @@ const G = require('./geometry.cjs');
 const input = require('./input.cjs');
 const pixels = require('./pixels.cjs');
 const {commandBudget} = require('./budget.cjs');
+const {appContainer} = require('./app-container.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SCREEN_TTL_MS = 8000;
@@ -677,13 +678,22 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     // close, unlike exit, proves all stdout data has been delivered.
     child.once('close', (code, signal) => { interrupted(code, signal); closed = true; finishDrain(); });
     let actionResult = null, actionError = null, screenError = null;
+    const requireFrame = () => {
+      if (streamFailure) throw streamFailure;
+      if (closed || !frames.length) throw failure('CAPTURE_EMPTY', 'Recording ended without a usable first frame; the action was not started.');
+    };
     const checkScreen = async () => {
       const current = await geometry(device, {maxAge: 0, deadline});
       if (current.stale) throw failure('SCREEN_UNAVAILABLE', 'Capture screen geometry could not be confirmed; no contact sheet was generated.');
       if (!sameScreen(current.screen, screen)) throw failure('SCREEN_CHANGED', 'Capture requires a fixed orientation and panel. The screen changed; no contact sheet was generated. The action may already have run; check execution before continuing.');
     };
     try {
-      await pause(400, deadline); // first frame = the "before" state
+      // Only a complete JPEG proves the stream captured the before state.
+      // Reuse the call's waiting budget; never dispatch an action on a timer.
+      while (!frames.length && !streamFailure && !closed) await pause(Math.min(100, budget(100, deadline).timeout), deadline);
+      requireFrame();
+      await checkScreen();
+      requireFrame(); // The stream can fail while geometry is being confirmed.
       if (p.action) {
         budget(1, deadline);
         try { actionResult = await perform(p.action); } catch (error) { actionError = error; }
@@ -849,7 +859,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   // ---- logs and crashes ----
   async function executableOf(device, bundleId, deadline) {
-    const container = (await sim(['get_app_container', device.udid, bundleId, 'app'], budget(10000, deadline))).stdout;
+    const container = await appContainer({sim, Failure}, device, bundleId, budget(10000, deadline));
+    if (!container) throw failure('APP_NOT_INSTALLED', `No App container was found for ${bundleId}. Install the App before reading its logs.`);
     return (await run('/usr/bin/plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(container, 'Info.plist')], budget(5000, deadline))).stdout;
   }
 
@@ -861,7 +872,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     if (p.bundleId !== undefined && (typeof p.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(p.bundleId))) throw failure('INVALID_ARGUMENT', 'Invalid bundleId');
     if (p.process !== undefined) return p.process;
     if (p.bundleId === undefined) return null;
-    const name = await executableOf(device, p.bundleId, p._deadline).catch(error => { if (error.code === 'TIME_BUDGET_EXHAUSTED') throw error; throw failure('APP_NOT_INSTALLED', `Could not resolve ${p.bundleId} on this device. Check app action=info before reading logs.`); });
+    const name = await executableOf(device, p.bundleId, p._deadline);
     if (!valid(name)) throw failure('LOGS_UNAVAILABLE', 'The App executable name could not be read; log scope was not widened.');
     return name;
   }

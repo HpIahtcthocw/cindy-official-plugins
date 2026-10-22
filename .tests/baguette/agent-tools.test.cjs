@@ -85,7 +85,7 @@ function fakeApps({installed,changed=0}){
   if(file.endsWith('plutil')){const app=path.dirname(args.at(-1));const key=Object.keys(plists).find(k=>fs.realpathSync(real(k))===fs.realpathSync(app));return {stdout:JSON.stringify(plists[key])};}
   if(file.endsWith('rsync'))return {stdout:args.includes('--dry-run')?Array.from({length:changed},(_,i)=>`>f.st.... f${i}`).join('\n'):''};
   return {stdout:''};};
- const sim=async args=>{calls.push(['simctl',...args]);if(args[0]==='get_app_container'){if(!installed)throw new Failure('COMMAND_FAILED','not installed');return {stdout:fs.realpathSync(real('/sim/Game.app'))};}return {stdout:''};};
+ const sim=async args=>{calls.push(['simctl',...args]);if(args[0]==='get_app_container'){if(!installed)throw new Failure('COMMAND_FAILED','An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=2):\nNo such file or directory');return {stdout:fs.realpathSync(real('/sim/Game.app'))};}return {stdout:''};};
  const apps=require(path.join(node,'apps.cjs')).createApps({sim,run,Failure});
  return {apps,calls,app:real('/build/Game.app')};
 }

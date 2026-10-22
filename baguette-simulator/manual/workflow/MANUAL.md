@@ -24,6 +24,7 @@ CMake、Unity、游戏引擎等用项目已有的脚本，找到输出的模拟�
 
 - `app action=install appPath=<绝对路径>`：与已装内容完全相同时直接跳过（`mode: unchanged`）；只改了少量文件时增量同步（`mode: sync`，保留 App 数据）；否则整包安装（`mode: full`）。哈希、构建比较和写入属于同一个 job；`mode: checking` 表示还在比较。整个流程默认等待约 80 秒，未完成会返回 `state: running` 与 `job`，用 `app action=install_status job=<job>` 继续等，不要重复发起安装。
 - `app action=info appPath=<同一路径>`：`matchesLocal: true` 才说明设备上装的就是这次构建。版本号相同不代表是同一次构建，以可执行文件指纹为准。测试前、向用户报告“已修复”前都应确认。
+- 容器查询只有明确的 App 缺失才视为未安装；超时、设备服务故障或空响应会报错，自动安装在写入前停止。日志与日志等待也保留查询错误，不扩大到全设备。
 - `app action=launch`：默认先结束旧进程再启动；需要启动参数或环境变量时传 `arguments`、`env`。
 
 ## 3. 坐标：一律用视图点
@@ -69,7 +70,7 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 `execution` 表示动作是 `not_executed`、`executed` 还是 `unknown`；动作失败时 `actionError` 含 `code`、`message`、`execution`。即使没有录到帧，动作也可能已经发生；先核对设备实际状态，不要盲目重发。
 
-内部动作（含附图）、录制、几何核验与联系表渲染共用本次调用截止时间。录屏流提前退出、发生错误或停止后未能在剩余时间内排空输出，都视为录制失败，即使已经收到部分帧也不生成联系表。预算不足或录制失败时返回 `captureError`（`code`、`message`），保留完整的 `action` 或 `actionError` 与 `execution`；不会为录制结果重新执行动作。需要核对当前画面时另调 `screenshot`。
+录制等到完整首帧并确认画面后才执行动作；此前无帧、流故障或预算耗尽时返回 `captureError` 与 `execution: not_executed`。内部动作（含附图）、录制、几何核验与联系表渲染共用本次调用截止时间。录屏流提前退出、发生错误或停止后未能在剩余时间内排空输出，都视为录制失败，即使已经收到部分帧也不生成联系表。预算不足或录制失败时返回 `captureError`（`code`、`message`），保留完整的 `action` 或 `actionError` 与 `execution`；不会为录制结果重新执行动作。需要核对当前画面时另调 `screenshot`。
 
 ## 7. 设备状态
 

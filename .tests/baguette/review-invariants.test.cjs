@@ -10,6 +10,7 @@ const dir = path.resolve('baguette-simulator/node');
 const A = '00000000-0000-4000-8000-000000000001', B = '00000000-0000-4000-8000-000000000002';
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b;}); return {promise,resolve,reject}; };
 class Failure extends Error { constructor(code,message,execution='not_executed') {super(message);Object.assign(this,{code,execution});} }
+const missingContainer = () => new Failure('COMMAND_FAILED', 'xcrun: An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=2):\nNo such file or directory');
 async function temporary(t) {const root=await fs.mkdtemp(path.join(os.tmpdir(),'bag-review-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));return root;}
 
 test('bundle comparison detects equal-size equal-time resource changes; registration changes use installd', async t => {
@@ -171,7 +172,7 @@ function agentFixture({frames=[],streamError=false,streamEvents=[],onDelay,onCom
     }
     return {stdout:''};
   };
-  const sim=async(args,options)=>{state.calls.push(['sim',args,options]);onCommand?.('sim',args,options,state);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
+  const sim=async(args,options)=>{state.calls.push(['sim',args,options]);onCommand?.('sim',args,options,state);if(args[0]==='get_app_container'){if(state.missingApp)throw missingContainer();return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
   const spawnImpl=(_file,args)=>{
     const c=new EventEmitter();c.stdout=new EventEmitter();c.stderr=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
     if(args[0]==='input') {
@@ -322,6 +323,31 @@ test('explicit log scope is shared by history and waits and never widens after l
   for(const process of ['',42,'bad\nprocess','a'.repeat(101)])await assert.rejects(agent.logs(device,{process,crashes:false}),e=>e.code==='INVALID_ARGUMENT');
   await agent.logs(device,{process:'测试 "Game"',crashes:false});
   const args=state.calls.find(c=>c[1].includes('show'))[1];assert.equal(args[args.indexOf('--predicate')+1],'process == '+JSON.stringify('测试 "Game"'));
+});
+
+test('container lookup failures never become absent apps, installations or widened log scopes',async t=>{
+  const root=await temporary(t),source=path.join(root,'Game.app');await fs.mkdir(source);await fs.writeFile(path.join(source,'Game'),'executable');
+  const plist=JSON.stringify({CFBundleIdentifier:'test.example.game',CFBundleExecutable:'Game'});
+  for(const code of ['COMMAND_FAILED','COMMAND_TIMEOUT','TIME_BUDGET_EXHAUSTED']) {
+    const error=new Failure(code,'CoreSimulator service unavailable');const mutations=[];
+    const apps=require(path.join(dir,'apps.cjs')).createApps({Failure,
+      run:async()=>({stdout:plist}),sim:async args=>{if(args[0]==='get_app_container')throw error;mutations.push(args);return {stdout:''};}});
+    await assert.rejects(apps.info({udid:A},{bundleId:'test.example.game'}),e=>e===error);
+    await assert.rejects(apps.install({udid:A},{appPath:source},{terminate:async()=>mutations.push('terminate')}),e=>e.code===code&&e.execution==='not_executed');
+    assert.deepEqual(mutations,[]);assert.equal(apps.pending(A),null);
+    const f=agentFixture({onCommand(file,args){if(file==='sim'&&args[0]==='get_app_container')throw error;}});
+    for(const call of [()=>f.agent.logs(f.device,{bundleId:'test.example.game',crashes:false}),()=>f.agent.waitFor(f.device,{bundleId:'test.example.game',log:'ready',timeout:1})])await assert.rejects(call(),e=>e===error);
+    assert.ok(!f.state.calls.some(c=>c[1].includes('show')||c[1].includes('stream')));
+  }
+  const {appContainer}=require(path.join(dir,'app-container.cjs'));
+  const lookup=sim=>appContainer({sim,Failure},{udid:A},'test.example.game');
+  assert.equal(await lookup(async()=>{throw missingContainer();}),null);
+  assert.equal(await lookup(async()=>({stdout:'/Game.app'})),'/Game.app');
+  await assert.rejects(lookup(async()=>({stdout:''})),e=>e.code==='APP_LOOKUP_FAILED');
+  // Generic missing files and other POSIX errors cannot establish App absence.
+  for(const message of ['No such file or directory','domain=NSPOSIXErrorDomain, code=60): No such file or directory'])await assert.rejects(lookup(async()=>{throw new Failure('COMMAND_FAILED',message);}),e=>e.message===message);
+  const absent=require(path.join(dir,'apps.cjs')).createApps({Failure,run:async()=>{throw Error('no identity lookup');},sim:async()=>{throw missingContainer();}});
+  assert.equal((await absent.info({udid:A},{bundleId:'test.example.game'})).installed,false);
 });
 
 test('compound state requests validate all fields before mutating and preserve partial execution on command failure', async()=>{
@@ -547,36 +573,62 @@ test('log stream terminal events settle once, consume trailing output and distin
   assert.equal((await waiting.agent.waitFor(waiting.device,{log:'ready',timeout:1})).met,false,'timeout kills the stream without turning its own close into a failure');
 });
 
+test('capture gates actions on a complete first frame within the original deadline',async()=>{
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+  for(const mode of ['delayed','partial','missing','late','changed','stream-error','geometry-error']){
+    let actions=0,received=false,stopped=false;
+    const f=agentFixture({clockStep:0,onDelay(ms,s){
+      s.advance(ms);
+      if(!stopped&&s.time()===100){const kill=s.stream.kill;s.stream.kill=signal=>{stopped=true;return kill(signal);};}
+      if(s.time()===500&&mode==='partial')s.stream.stdout.write(jpeg.subarray(0,4));
+      if(s.time()===800&&['delayed','partial','changed','stream-error','geometry-error'].includes(mode)){
+        s.stream.stdout.write(mode==='partial'?jpeg.subarray(4):jpeg);received=true;
+        if(mode==='changed')s.orientation='landscape-left';
+        if(mode==='stream-error')s.stream.emit('error',Error('recording unavailable'));
+      }
+    },onCommand(_file,args,_options,s){if(mode==='geometry-error'&&received&&args[0]==='input')s.stream.emit('error',Error('failed during geometry confirmation'));}});
+    const result=await f.agent.capture(f.device,{seconds:0.5,_deadline:2000,action:{tool:'tap'}},async()=>{
+      actions++;assert.equal(received,true);assert.ok(f.state.time()>=800,'a fixed 400ms delay is insufficient');f.state.advance(50);return {execution:'executed'};
+    });
+    assert.equal(stopped,true);
+    if(['delayed','partial'].includes(mode)){assert.equal(actions,1);assert.ok(result.sheet);assert.ok(result.frames.some(frame=>frame.ms<0),'the sheet contains a before frame');}
+    else {assert.equal(actions,0);assert.equal(result.execution,'not_executed');assert.ok(result.captureError);assert.equal(result.sheet,undefined);}
+    if(mode==='late'){f.state.stream.stdout.write(jpeg);await new Promise(resolve=>setImmediate(resolve));assert.equal(actions,0,'late frames cannot revive the action');}
+    assert.ok(f.state.time()<=2000);
+  }
+});
+
 test('capture keeps same-length different frames and carries action execution through every result path', async()=>{
   const a=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]),b=Buffer.from([0xff,0xd8,3,4,0xff,0xd9]);
-  for(const frames of [[],[a,a,b]]) for(const execution of ['not_executed','executed','unknown']) {
+  for(const frames of [[a,a,b]]) for(const execution of ['not_executed','executed','unknown']) {
     const {agent,device}=agentFixture({frames});
     const result=await agent.capture(device,{action:{tool:'tap'},seconds:0.5},async()=>{throw new Failure('ACTION_FAILED','action failed',execution);});
     assert.equal(result.execution,execution);assert.equal(result.actionError.execution,execution);
-    if(!frames.length)assert.equal(result.captureError.code,'CAPTURE_EMPTY');
-    else assert.equal(result.distinct,2);
+    assert.equal(result.distinct,2);
   }
   const f=agentFixture({frames:[a]});f.state.failRender=true;
   const failed=await f.agent.capture(f.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed',bundleId:'test.example.app'}));
   assert.equal(failed.execution,'executed');assert.equal(failed.action.bundleId,'test.example.app');assert.equal(failed.captureError.code,'RENDER_FAILED');
   const broken=agentFixture({streamError:true});
   const empty=await broken.agent.capture(broken.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'}));
-  assert.equal(empty.captureError.code,'CAPTURE_FAILED');assert.equal(empty.execution,'executed');assert.equal(empty.action.execution,'executed');
+  assert.equal(empty.captureError.code,'CAPTURE_FAILED');assert.equal(empty.execution,'not_executed');assert.equal(empty.action,undefined);
 });
 
 test('capture rejects interrupted streams with or without frames and preserves every action outcome',async()=>{
   const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
   for(const terminal of ['exit','close','error','stdout-error'])for(const when of ['before','action','window'])for(const frames of [[],[jpeg]])for(const execution of ['executed','unknown','not_executed']){
     const interrupt=state=>{for(let i=0;i<2;i++)terminal==='stdout-error'?state.stream.stdout.emit('error',Error('pipe failed')):state.stream.emit(terminal,...(terminal==='error'?[Error('stream failed')]:[0]));};
-    const f=agentFixture({frames,onDelay(ms,state){if((when==='before'&&ms===400)||(when==='window'&&ms===500))interrupt(state);}});
-    const result=await f.agent.capture(f.device,{seconds:0.5,action:{tool:'tap'}},async()=>{
+    const f=agentFixture({frames,onDelay(ms,state){state.advance(ms);if((when==='before'&&ms===100)||(when==='window'&&ms===500))interrupt(state);}});
+    const result=await f.agent.capture(f.device,{seconds:0.5,_deadline:2000,action:{tool:'tap'}},async()=>{
       if(when==='action')interrupt(f.state);
       if(execution!=='executed')throw new Failure('ACTION_FAILED','action not confirmed',execution);
       return {execution,marker:'original action result'};
     });
-    assert.ok(result.captureError);assert.equal(result.sheet,undefined);assert.equal(result.execution,execution);
+    const acted=frames.length&&when!=='before';
+    assert.ok(result.captureError);assert.equal(result.sheet,undefined);assert.equal(result.execution,acted?execution:'not_executed');
     assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('sheet.jxa.js')));
-    if(execution==='executed')assert.equal(result.action.marker,'original action result');
+    if(!acted){assert.equal(result.action,undefined);assert.equal(result.actionError,undefined);}
+    else if(execution==='executed')assert.equal(result.action.marker,'original action result');
     else assert.equal(result.actionError.execution,execution);
   }
 });
@@ -587,7 +639,7 @@ test('capture drains trailing stdout after its own stop and bounds missing close
     let drained=false;const signals=[];
     const f=agentFixture({frames:[a],clockStep:0,onDelay(ms,state){
       state.advance(ms);
-      if(ms===400)state.stream.kill=signal=>{
+      if(ms===100)state.stream.kill=signal=>{
         signals.push(signal);
         if(mode!=='drained')return;
         state.stream.emit('exit',null,signal);
@@ -624,10 +676,10 @@ test('capture shares one deadline across before/action/record/check/render and r
   for(const phase of ['before','action','record','check','render','success'])for(const execution of ['executed','unknown','not_executed']){
     let checked=0,acted=0;
     const f=agentFixture({frames:[jpeg],clockStep:0,onDelay:(ms,s)=>s.advance(ms),onCommand:(_file,args,options,s)=>{
-      if(args[0]==='input'&&++checked===2&&phase==='check'){s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow geometry');}
+      if(args[0]==='input'&&++checked===3&&phase==='check'){s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow geometry');}
       if(args[2]?.endsWith?.('sheet.jxa.js')&&phase==='render'){s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow rendering');}
     }});
-    if(phase==='before')f.state.advance(109800);
+    if(phase==='before')f.state.advance(109950);
     const result=await f.agent.capture(f.device,{seconds:15,_deadline:110000,action:{tool:'app_launch'}},async()=>{
       acted++;
       if(phase==='action')f.state.advance(109600);
@@ -675,7 +727,7 @@ test('all six capture actions inherit the outer deadline, including nested scree
   assert.equal(result.execution,['type_text','open_url'].includes(action.tool)?'unknown':'executed',action.tool);assert.ok(result.captureError);
   assert.ok(f.state.time()<=110000,action.tool+': '+f.state.time());
   if(action.tool==='app_launch'){assert.equal(result.action.bundleId,'test.example.app');assert.ok(result.action.screenshot.error);assert.equal(commands.filter(c=>c.args.includes('launch')).length,1);}
-  if(action.tool==='type_text')assert.equal(commands.filter(c=>c.file.endsWith('/keyboard')).length,3,'partially completed key sequence is not retried');
+  if(action.tool==='type_text')assert.equal(commands.filter(c=>c.file.endsWith('/keyboard')).length,2,'partially completed key sequence is not retried');
   }
 });
 
