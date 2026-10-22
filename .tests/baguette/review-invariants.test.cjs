@@ -453,14 +453,17 @@ test('capture keeps same-length different frames and carries action execution th
   const a=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]),b=Buffer.from([0xff,0xd8,3,4,0xff,0xd9]);
   for(const frames of [[],[a,a,b]]) for(const execution of ['not_executed','executed','unknown']) {
     const {agent,device}=agentFixture({frames});
-    const capture=agent.capture(device,{action:{tool:'tap'},seconds:0.5},async()=>{throw new Failure('ACTION_FAILED','action failed',execution);});
-    if(!frames.length)await assert.rejects(capture,e=>e.code==='CAPTURE_EMPTY'&&e.execution===execution);
-    else {const result=await capture;assert.equal(result.execution,execution);assert.equal(result.actionError.execution,execution);assert.equal(result.distinct,2);}
+    const result=await agent.capture(device,{action:{tool:'tap'},seconds:0.5},async()=>{throw new Failure('ACTION_FAILED','action failed',execution);});
+    assert.equal(result.execution,execution);assert.equal(result.actionError.execution,execution);
+    if(!frames.length)assert.equal(result.captureError.code,'CAPTURE_EMPTY');
+    else assert.equal(result.distinct,2);
   }
   const f=agentFixture({frames:[a]});f.state.failRender=true;
-  await assert.rejects(f.agent.capture(f.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'})),e=>e.execution==='executed');
+  const failed=await f.agent.capture(f.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed',bundleId:'test.example.app'}));
+  assert.equal(failed.execution,'executed');assert.equal(failed.action.bundleId,'test.example.app');assert.equal(failed.captureError.code,'RENDER_FAILED');
   const broken=agentFixture({streamError:true});
-  await assert.rejects(broken.agent.capture(broken.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'})),e=>e.code==='CAPTURE_EMPTY'&&e.execution==='executed');
+  const empty=await broken.agent.capture(broken.device,{action:{tool:'tap'},seconds:0.5},async()=>({execution:'executed'}));
+  assert.equal(empty.captureError.code,'CAPTURE_EMPTY');assert.equal(empty.execution,'executed');assert.equal(empty.action.execution,'executed');
 });
 
 test('capture refuses changed or unconfirmed geometry at action/end boundaries while preserving action execution',async()=>{
@@ -468,15 +471,95 @@ test('capture refuses changed or unconfirmed geometry at action/end boundaries w
   const changes=[s=>{s.orientation='landscape-left';},s=>{s.width=800;},s=>{s.target.litPanel='secondary';},s=>{s.target.screenId=2;},s=>{s.target.pixelSize={width:2400,height:2622};},s=>{s.failTree=true;s.failConfirm=true;}];
   for(const change of changes)for(const when of ['action','end'])for(const execution of ['executed','unknown','not_executed']) {
     const f=agentFixture({frames:[jpeg],onDelay:(ms,state)=>{if(ms===500&&when==='end')change(state);}});
-    await assert.rejects(f.agent.capture(f.device,{seconds:0.5,action:{tool:'tap'}},async()=>{
+    const result=await f.agent.capture(f.device,{seconds:0.5,action:{tool:'tap'}},async()=>{
       if(when==='action')change(f.state);
       if(execution!=='executed')throw new Failure('ACTION_FAILED','ack lost',execution);
       return {execution};
-    }),e=>['SCREEN_CHANGED','SCREEN_UNAVAILABLE'].includes(e.code)&&e.execution===execution);
+    });
+    assert.ok(['SCREEN_CHANGED','SCREEN_UNAVAILABLE'].includes(result.captureError.code));assert.equal(result.execution,execution);
     assert.ok(!f.state.calls.some(c=>c[1][2]?.endsWith?.('sheet.jxa.js')),'uncertain geometry never produces a misleading sheet');
   }
   const f=agentFixture({frames:[jpeg],onDelay:(ms,state)=>{if(ms===500)state.orientation='landscape-left';}});
-  await assert.rejects(f.agent.capture(f.device,{seconds:0.5},()=>{}),e=>e.code==='SCREEN_CHANGED'&&e.execution==='not_executed');
+  const result=await f.agent.capture(f.device,{seconds:0.5},()=>{});
+  assert.equal(result.captureError.code,'SCREEN_CHANGED');assert.equal(result.execution,'not_executed');
+});
+
+test('capture shares one deadline across before/action/record/check/render and retains the full action outcome',async()=>{
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]);
+  for(const phase of ['before','action','record','check','render','success'])for(const execution of ['executed','unknown','not_executed']){
+    let checked=0,acted=0;
+    const f=agentFixture({frames:[jpeg],clockStep:0,onDelay:(ms,s)=>s.advance(ms),onCommand:(_file,args,options,s)=>{
+      if(args[0]==='input'&&++checked===2&&phase==='check'){s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow geometry');}
+      if(args[2]?.endsWith?.('sheet.jxa.js')&&phase==='render'){s.advance(options.timeout);throw new Failure('COMMAND_TIMEOUT','slow rendering');}
+    }});
+    if(phase==='before')f.state.advance(109800);
+    const result=await f.agent.capture(f.device,{seconds:15,_deadline:110000,action:{tool:'app_launch'}},async()=>{
+      acted++;
+      if(phase==='action')f.state.advance(109600);
+      if(phase==='record')f.state.advance(100000);
+      if(phase==='check')f.state.advance(94000);
+      if(phase==='render')f.state.advance(90000);
+      if(execution!=='executed')throw new Failure('ACTION_FAILED','ack lost',execution);
+      return {execution,bundleId:'test.example.app'};
+    });
+    assert.ok(f.state.time()<=110000,phase+': '+f.state.time());
+    assert.equal(result.execution,phase==='before'?'not_executed':execution);
+    assert.equal(acted,phase==='before'?0:1);
+    if(acted){if(execution==='executed')assert.equal(result.action.bundleId,'test.example.app');else assert.equal(result.actionError.execution,execution);}
+    assert.ok(phase==='success'?result.sheet:result.captureError,phase);
+    assert.ok(f.state.calls.every(([, ,options])=>options.timeout>0&&options.timeout<=30000));
+  }
+});
+
+test('all six capture actions inherit the outer deadline, including nested screenshots and partial key sequences',async()=>{
+  for(const action of [{tool:'app_launch',args:{bundleId:'test.example.app',screenshot:true,_deadline:Infinity}},
+    {tool:'tap',args:{x:10,y:10}},{tool:'gesture',args:{kind:'swipe',from:[10,10],to:[20,20]}},
+    {tool:'press',args:{button:'home'}},{tool:'open_url',args:{url:'https://example.test'}},{tool:'type_text',args:{keys:Array(40).fill('a')}}]){
+  const jpeg=Buffer.from([0xff,0xd8,1,2,0xff,0xd9]),commands=[];
+  const f=agentFixture({frames:[jpeg],clockStep:0,onDelay:(ms,s)=>s.advance(ms),onCommand:(_file,_args,options,s)=>{
+    const cost=15000;s.advance(Math.min(cost,options.timeout));if(cost>=options.timeout)throw new Failure('COMMAND_TIMEOUT','slow observation');
+  }});
+  const {commandBudget}=require(path.join(dir,'budget.cjs'));
+  const context={module:{exports:{}},__dirname:dir,Date:{now:f.state.time},process:{platform:'darwin',arch:'arm64',env:{}},
+    require(name){
+      if(name==='./budget.cjs')return {commandBudget:(ms,deadline)=>commandBudget(ms,deadline,f.state.time)};
+      if(name==='./viewer.cjs')return {};
+      if(name==='./agent.cjs')return {createAgent:()=>f.agent};
+      if(name==='./apps.cjs')return {createApps:()=>({runningFor:()=>null})};
+      if(name==='node:child_process')return {execFile(file,args,options,callback){
+        commands.push({file,args,timeout:options.timeout});
+        const cost=file.endsWith('sw_vers')?3000:args.includes('--json')||file.endsWith('xcode-select')?5000:file.endsWith('/keyboard')?15000:30000;
+        f.state.advance(Math.min(cost,options.timeout));
+        const stdout=file.endsWith('sw_vers')?'27.0':args.includes('--json')?JSON.stringify({devices:{r:[{udid:A,state:'Booted'}]}}):'launched';
+        queueMicrotask(()=>callback(cost>options.timeout?Error('command timeout'):null,stdout,''));return {stdin:{on(){},end(){}}};
+      }};
+      return require(name.startsWith('./')?path.join(dir,name):name);
+    }};
+  vm.runInNewContext(syncFs.readFileSync(path.join(dir,'core.cjs'),'utf8'),context);
+  const result=await context.module.exports.dispatch('capture',{udid:A,seconds:15,action});
+  assert.equal(result.execution,['type_text','open_url'].includes(action.tool)?'unknown':'executed',action.tool);assert.ok(result.captureError);
+  assert.ok(f.state.time()<=110000,action.tool+': '+f.state.time());
+  if(action.tool==='app_launch'){assert.equal(result.action.bundleId,'test.example.app');assert.ok(result.action.screenshot.error);assert.equal(commands.filter(c=>c.args.includes('launch')).length,1);}
+  if(action.tool==='type_text')assert.equal(commands.filter(c=>c.file.endsWith('/keyboard')).length,3,'partially completed key sequence is not retried');
+  }
+});
+
+test('input ACK timers and multi-step gesture waits use the same remaining deadline',async()=>{
+  for(const mode of ['ack','steps','wait','expired']){
+    let clock=mode==='expired'?1000:0,writes=0,kills=0;const timers=[];
+    const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.stdin=new EventEmitter();
+    child.kill=()=>{kills++;child.emit('exit',null);};child.stdin.end=()=>child.emit('exit',0);
+    child.stdin.write=()=>{writes++;if(mode!=='ack')queueMicrotask(()=>{clock+=600;child.stdout.emit('data','{"ok":true}\n');});};
+    const context={module:{exports:{}},setTimeout:(fn,ms)=>{const timer={fn,ms,unref(){}};timers.push(timer);return timer;},clearTimeout:timer=>{timer.cleared=true;},require:name=>require(name.startsWith('./')?path.join(dir,name):name)};
+    vm.runInNewContext(syncFs.readFileSync(path.join(dir,'input.cjs'),'utf8'),context);
+    const input=context.module.exports,deadline=1000,now=()=>clock;
+    const session=input.openSession('/bag',[],{spawnImpl:()=>child,deadline,now});
+    const result=input.perform(session,[{envelope:{type:'touch1-down'},waitMs:mode==='wait'?500:0},...(mode==='steps'?[{envelope:{type:'touch1-up'},waitMs:0},{envelope:{type:'tap'},waitMs:0}]:[])],{deadline,now});
+    if(mode==='ack'){assert.equal(timers[0].ms,1000);clock=1000;timers[0].fn();}
+    await assert.rejects(result,e=>e.execution===(mode==='expired'?'not_executed':'unknown'));
+    assert.equal(writes,mode==='expired'?0:mode==='steps'?2:mode==='wait'?2:1);
+    assert.ok(timers.every(t=>t.ms<=1000));if(mode==='ack')assert.equal(kills,1);session.close();
+  }
 });
 
 test('hidden subtrees and unreachable centres never become text tap targets; 3D zoom stays relative to fit',()=>{

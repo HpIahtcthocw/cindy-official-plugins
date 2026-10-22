@@ -5,10 +5,11 @@
 // Coordinates arrive in view points (geometry.cjs) and leave in native points.
 const {spawn} = require('node:child_process');
 const {toNative} = require('./geometry.cjs');
+const {commandBudget} = require('./budget.cjs');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function openSession(binary, args, {spawnImpl = spawn} = {}) {
+function openSession(binary, args, {spawnImpl = spawn, deadline, now = Date.now} = {}) {
   const child = spawnImpl(binary, ['input', ...args], {stdio: ['pipe', 'pipe', 'pipe']});
   const waiting = [];
   let buffer = '', stderr = '', closed = false;
@@ -34,8 +35,11 @@ function openSession(binary, args, {spawnImpl = spawn} = {}) {
   return {
     send(envelope) {
       if (closed) return Promise.resolve({ok: false, error: 'input session ended', execution: 'not_executed'});
+      let timeout;
+      try { ({timeout} = commandBudget(10000, deadline, now)); }
+      catch (error) { return Promise.resolve({ok: false, error: error.message, execution: 'not_executed'}); }
       return new Promise(resolve => {
-        const timer = setTimeout(() => { end('no acknowledgement within 10 s'); child.kill('SIGKILL'); }, 10000);
+        const timer = setTimeout(() => { end('no acknowledgement within the input time budget'); child.kill('SIGKILL'); }, timeout);
         waiting.push(ack => { clearTimeout(timer); resolve(ack); });
         try { child.stdin.write(JSON.stringify(envelope) + '\n'); }
         catch (error) { end(error.message); }
@@ -130,7 +134,7 @@ function nativeEdgeOf(screen, edge) {
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
-async function perform(session, steps) {
+async function perform(session, steps, {deadline, now = Date.now} = {}) {
   let sent = 0;
   for (const {envelope, waitMs} of steps) {
     const ack = await session.send(envelope).catch(error => ({ok: false, error: error.message, execution: 'unknown'}));
@@ -140,7 +144,16 @@ async function perform(session, steps) {
       throw Object.assign(new Error(`Touch not confirmed: ${ack.error || 'rejected'}`), {code: 'INPUT_FAILED', execution: sent || ack.execution !== 'not_executed' ? 'unknown' : 'not_executed'});
     }
     sent++;
-    if (waitMs > 0) await sleep(waitMs);
+    if (waitMs > 0) {
+      try {
+        const {timeout} = commandBudget(waitMs, deadline, now);
+        if (timeout < waitMs) throw new Error('Input time budget exhausted during gesture');
+        await sleep(waitMs);
+      } catch (error) {
+        await session.send({...envelope, type: envelope.type.replace(/down|move/, 'up')}).catch(() => {});
+        throw Object.assign(error, {code: 'INPUT_FAILED', execution: 'unknown'});
+      }
+    }
   }
   return sent;
 }

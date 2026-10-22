@@ -31,6 +31,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   const bag = (words, device, args = [], options) => run(binary, [...words, ...dargs(device), ...args], options);
   const failure = (code, message, execution = 'not_executed') => new Failure(code, message, execution);
   const budget = (timeout, deadline) => commandBudget(timeout, deadline, now);
+  const pause = async (ms, deadline) => {
+    if (budget(ms, deadline).timeout < ms) throw failure('TIME_BUDGET_EXHAUSTED', 'Not enough time remains to complete the capture or input interval.');
+    await sleep(ms);
+  };
   const number = (value, name, min, max, fallback) => {
     if (value === undefined || value === null) return fallback;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) throw failure('INVALID_ARGUMENT', `${name} must be ${min}–${max}`);
@@ -209,7 +213,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const screen = before.screen;
     // Baguette's capture occasionally fails once with an internal error; the next frame is fine.
     await bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], budget(20000, p._deadline))
-      .catch(() => sleep(300).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], budget(20000, p._deadline))));
+      .catch(() => pause(300, p._deadline).then(() => bag(['screenshot'], device, ['--format', 'png', '--output', raw, '--scale', String(divisor)], budget(20000, p._deadline))));
     const afterFrame = await geometry(device, {maxAge: 0, deadline: p._deadline});
     if (afterFrame.stale || !sameScreen(afterFrame.screen, screen)) {
       await fs.rm(raw, {force: true});
@@ -286,11 +290,12 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     return {screen, x: number(p.x, 'x', 0, view.width), y: number(p.y, 'y', 0, view.height)};
   }
 
-  async function act(device, screen, gesture) {
+  async function act(device, screen, gesture, deadline) {
     const steps = input.plan(screen, gesture);
     // Pinned to the screen the points were planned on: Baguette refuses if it turned meanwhile.
-    const session = input.openSession(binary, [...dargs(device), ...pinned(screen)], {spawnImpl});
-    try { return await input.perform(session, steps); }
+    budget(10000, deadline);
+    const session = input.openSession(binary, [...dargs(device), ...pinned(screen)], {spawnImpl, deadline, now});
+    try { return await input.perform(session, steps, {deadline, now}); }
     catch (error) {
       if (error.execution === 'not_executed' && /changed|observe again/.test(error.message)) {
         forget(device.udid);
@@ -315,7 +320,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       if (!waited.met) return out;
     }
     if (observeMode === 'none') return out;
-    if (!until) await sleep(number(p.settle, 'settle', 0, 5, 0.6) * 1000);
+    if (!until) {
+      try { await pause(number(p.settle, 'settle', 0, 5, 0.6) * 1000, p._deadline); }
+      catch (error) { return {...out, observationError: error.message}; }
+    }
     forgetTree(device.udid);
     if (observeMode === 'ui' || observeMode === 'both') {
       try { const ui = await describe(device, {limit: 120, _deadline: p._deadline}); out.ui = {screen: ui.screen, elements: ui.elements, total: ui.total, ...(ui.source ? {source: ui.source} : {}), ...(ui.note ? {note: ui.note} : {})}; }
@@ -332,7 +340,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const target = await resolveTarget(device, p);
     const count = number(p.count, 'count', 1, 3, 1), duration = number(p.duration, 'duration', 0.02, 10, undefined);
     const hint = target.element ? null : overlap(device, target.screen, target.x, target.y);
-    await act(device, target.screen, {kind: 'tap', x: target.x, y: target.y, count, duration});
+    await act(device, target.screen, {kind: 'tap', x: target.x, y: target.y, count, duration}, p._deadline);
     return after(device, p, {udid: device.udid, execution: 'executed', tapped: [round(target.x), round(target.y)], ...(target.element ? {element: target.element, matches: target.matches} : {}),
       ...(duration >= 0.5 ? {held: duration} : {}), ...(hint ? {hint} : {})});
   }
@@ -368,7 +376,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       if (p.to) g.to = point(p.to, 'to');
       if (p.from) g.x = point(p.from, 'from')[0];
     } else throw failure('INVALID_ARGUMENT', 'kind must be swipe, drag, pinch, pan, edge or scroll_to');
-    await act(device, screen, g);
+    await act(device, screen, g, p._deadline);
     return after(device, p, {udid: device.udid, execution: 'executed', kind});
   }
 
@@ -396,8 +404,10 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       if (i === max) break;
       const area = p.within ? point(p.within, 'within') : [view.width / 2, view.height / 2];
       const d = directionVector(direction, view, view.height * 0.45);
-      await act(device, screen, {kind: 'swipe', from: [area[0] - d.dx / 2, area[1] - d.dy / 2], to: [area[0] + d.dx / 2, area[1] + d.dy / 2], duration: 0.35});
-      await sleep(450);
+      try {
+        await act(device, screen, {kind: 'swipe', from: [area[0] - d.dx / 2, area[1] - d.dy / 2], to: [area[0] + d.dx / 2, area[1] + d.dy / 2], duration: 0.35}, p._deadline);
+        await pause(450, p._deadline);
+      } catch (error) { if (i || error.execution === 'not_executed') error.execution = 'unknown'; throw error; }
     }
     throw failure('ELEMENT_NOT_FOUND', `Not found after ${max} swipes: ${JSON.stringify(p.text ?? p.id)}.`, 'executed');
   }
@@ -443,7 +453,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         if (now() - content >= 6000) return {settled: false, animated: true, waitedMs: now() - started};
         prev = f;
       } else { prev = null; content = null; }
-      await sleep(200);
+      await sleep(Math.min(200, Math.max(0, deadline - now())));
     }
     return {settled: false, waitedMs: now() - started, ...(content ? {} : {blank: true})};
   }
@@ -551,18 +561,18 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
 
   // ---- typing ----
   /** Whether the current screen exposes accessibility elements (false for most games). */
-  async function hasAccessibility(device) {
+  async function hasAccessibility(device, deadline) {
     const at = noAx.get(device.udid);
     if (at && now() - at < NO_AX_TTL_MS) return false;
     const cached = screens.get(device.udid);
     if (cached?.tree && now() - cached.treeAt < NO_AX_TTL_MS) return true;
-    try { await observe(device, {fresh: true}); } catch { return true; }
+    try { await observe(device, {fresh: true, deadline}); } catch { return true; }
     return !noAx.has(device.udid);
   }
   // The input source the hardware keyboard types through, e.g. "en_US@sw=QWERTY;hw=Automatic".
-  async function inputSource(device) {
+  async function inputSource(device, deadline) {
     try {
-      const {stdout} = await sim(['spawn', device.udid, 'defaults', 'read', 'com.apple.keyboard.preferences', 'KeyboardsCurrentAndNext'], {timeout: 5000});
+      const {stdout} = await sim(['spawn', device.udid, 'defaults', 'read', 'com.apple.keyboard.preferences', 'KeyboardsCurrentAndNext'], budget(5000, deadline));
       const first = stdout.replace(/^\s*\(\s*/, '').split(/,|\)/)[0].trim().replace(/^"|"$/g, '');
       return first || null;
     } catch { return null; }
@@ -578,20 +588,21 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
    * Ctrl+Space (as on a Mac) and leaves it there: iOS records the switch about
    * 2 s late, and switching back would make the next call read a stale source.
    */
-  async function typeText(device, text) {
-    const session = input.openSession(binary, dargs(device), {spawnImpl});
+  async function typeText(device, text, deadline) {
+    budget(10000, deadline);
+    const session = input.openSession(binary, dargs(device), {spawnImpl, deadline, now});
     let switched = false, typed = 0;
     const send = async envelope => {
-      try { await input.perform(session, [{envelope, waitMs: 0}]); }
+      try { await input.perform(session, [{envelope, waitMs: 0}], {deadline, now}); }
       catch (error) { if (typed || switched) error.execution = 'unknown'; throw error; }
     };
     try {
-      let source = await inputSource(device);
+      let source = await inputSource(device, deadline);
       for (let i = 0; i < 4 && !english(source); i++) {
         await send({type: 'key', code: 'Space', modifiers: ['control']});
         switched = true;
         const before = source, until = now() + 3500;
-        do { await sleep(250); source = await inputSource(device); } while (source === before && now() < until);
+        do { await pause(250, deadline); source = await inputSource(device, deadline); } while (source === before && now() < until);
         if (source === before) break;
       }
       if (!english(source)) throw failure('INPUT_SOURCE', `The simulator keyboard is set to ${source} and Ctrl+Space did not reach an English input source. Use method=paste, or add an English keyboard in Settings.`, switched ? 'executed' : 'not_executed');
@@ -601,7 +612,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         for (let i = 0; i < part.length; i += 30) { await send({type: 'type', text: part.slice(i, i + 30)}); typed += Math.min(30, part.length - i); }
       }
       return {typed, ...(switched ? {inputSource: 'The simulator keyboard was switched to English for typing (Ctrl+Space switches back).'} : {})};
-    } finally { session.close(); }
+    } catch (error) { if (typed || switched) error.execution = 'unknown'; throw error; }
+    finally { session.close(); }
   }
 
   // The edit menu's Paste item, as iOS labels it in common languages.
@@ -610,8 +622,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
    * Paste the clipboard into the focused field through its edit menu, by touch
    * only: no key event, so the on-screen keyboard stays (keyboard layout checks).
    */
-  async function pasteByTouch(device) {
-    const items = async () => { const {screen, tree} = await observe(device, {fresh: true}); return {screen, elements: G.compactTree(tree, screen, {limit: 1000}).elements}; };
+  async function pasteByTouch(device, deadline) {
+    const items = async () => { const {screen, tree} = await observe(device, {fresh: true, deadline}); return {screen, elements: G.compactTree(tree, screen, {limit: 1000}).elements}; };
     const pasteItem = list => list.find(e => PASTE.has((e.label || '').trim()));
     let {screen, elements} = await items();
     const field = elements.find(e => e.focused);
@@ -620,11 +632,11 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     // A tap on the focused field opens its edit menu; a press-and-hold does where a tap only moves the cursor.
     for (const hold of [undefined, 0.8]) {
       if (item) break;
-      await act(device, screen, {kind: 'tap', x: field.center[0], y: field.center[1], duration: hold});
-      for (let i = 0; i < 6 && !item; i++) { await sleep(250); ({screen, elements} = await items()); item = pasteItem(elements); }
+      await act(device, screen, {kind: 'tap', x: field.center[0], y: field.center[1], duration: hold}, deadline);
+      for (let i = 0; i < 6 && !item; i++) { await pause(250, deadline); ({screen, elements} = await items()); item = pasteItem(elements); }
     }
     if (!item) throw failure('PASTE_MENU', 'The edit menu with Paste did not appear on the focused field. Use method=paste (hides the on-screen keyboard).', 'executed');
-    await act(device, screen, {kind: 'tap', x: item.center[0], y: item.center[1]});
+    await act(device, screen, {kind: 'tap', x: item.center[0], y: item.center[1]}, deadline);
     forgetTree(device.udid);
     return {pastedInto: field.label || field.id || field.role};
   }
@@ -632,7 +644,8 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
   // ---- capturing a transition ----
   async function capture(device, p, perform) {
     const seconds = number(p.seconds, 'seconds', 0.5, 15, 3), fps = number(p.fps, 'fps', 1, 20, 10), maxFrames = number(p.max_frames, 'max_frames', 2, 30, 12);
-    const {screen, stale} = await geometry(device, {maxAge: 0});
+    const deadline = p._deadline ?? now() + 110000;
+    const {screen, stale} = await geometry(device, {maxAge: 0, deadline});
     if (stale) throw failure('SCREEN_UNAVAILABLE', 'Current screen geometry could not be confirmed.');
     const view = G.viewSize(screen);
     const nativeScale = (screen.target?.pixelSize?.width || screen.width * 3) / screen.width;
@@ -655,26 +668,29 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     child.once('error', error => { streamFailure = error; });
     let actionResult = null, actionError = null, screenError = null;
     const checkScreen = async () => {
-      const current = await geometry(device, {maxAge: 0});
+      const current = await geometry(device, {maxAge: 0, deadline});
       if (current.stale) throw failure('SCREEN_UNAVAILABLE', 'Capture screen geometry could not be confirmed; no contact sheet was generated.');
       if (!sameScreen(current.screen, screen)) throw failure('SCREEN_CHANGED', 'Capture requires a fixed orientation and panel. The screen changed; no contact sheet was generated. The action may already have run; check execution before continuing.');
     };
     try {
-      await sleep(400); // first frame = the "before" state
+      await pause(400, deadline); // first frame = the "before" state
       if (p.action) {
+        budget(1, deadline);
         try { actionResult = await perform(p.action); } catch (error) { actionError = error; }
       }
       // Times are measured from the moment the action finished (the touch landed);
       // keep recording for `seconds` after it so the whole transition is in.
       t0 = now();
       await checkScreen();
-      await sleep(seconds * 1000);
+      await pause(seconds * 1000, deadline);
       await checkScreen();
     } catch (error) { screenError = error; }
     finally { child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 2000).unref?.(); }
     const execution = actionError ? (actionError.execution || 'unknown') : actionResult ? (actionResult.execution || 'executed') : 'not_executed';
-    if (screenError) { screenError.execution = execution; throw screenError; }
-    if (!frames.length) throw failure('CAPTURE_EMPTY', `No frames arrived. ${streamFailure ? streamFailure.message : 'The screen may not have changed, or streaming failed.'}`, execution);
+    const outcome = {udid: device.udid, execution, ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: {code: actionError.code, message: actionError.message, execution}} : {})};
+    const failed = error => ({...outcome, captureError: {code: error.code || 'CAPTURE_FAILED', message: error.message}, note: 'No contact sheet was generated. The action outcome is retained; inspect execution before continuing.'});
+    if (screenError) return failed(screenError);
+    if (!frames.length) return failed(failure('CAPTURE_EMPTY', `No frames arrived. ${streamFailure ? streamFailure.message : 'The screen may not have changed, or streaming failed.'}`));
     try {
       // Keep frames that differ from the last kept one; then thin evenly in time.
       const kept = [];
@@ -688,6 +704,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const base = t0 ?? frames[0].at;
       const files = [];
       for (const [i, f] of chosen.entries()) {
+        budget(1, deadline);
         const file = path.join(dir, `frame-${String(i).padStart(2, '0')}.jpg`);
         await fs.writeFile(file, f.jpeg);
         const ms = f.at - base;
@@ -696,15 +713,15 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
       const columns = Math.min(files.length, view.width > view.height ? 3 : 6);
       const cellWidth = Math.min(view.width, Math.floor(1560 / columns)), cellHeight = Math.round(cellWidth * view.height / view.width);
       const sheet = path.join(dir, 'sheet.jpg');
-      await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], {timeout: 30000});
+      await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(__dirname, 'sheet.jxa.js'), sheet, JSON.stringify({frames: files, rotate: G.rotation(screen), cell: {width: cellWidth, height: cellHeight}, columns})], budget(30000, deadline));
       // Share screenshots' inline budget; oversized sheets remain available by path.
       const sheetBytes = await fs.readFile(sheet).catch(() => null);
       const inline = inlineImage(sheetBytes, p._inline);
-      return {udid: device.udid, execution, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
+      return {...outcome, sheet, frames: files.map(({path: file, ms}) => ({path: file, ms})), received: frames.length, distinct: kept.length,
         ...(inline ? {_modelImages: inline} : {}),
-        screen: viewInfo(screen), ...(actionResult ? {action: actionResult} : {}), ...(actionError ? {actionError: {code: actionError.code, message: actionError.message, execution}} : {}),
+        screen: viewInfo(screen),
         note: `${inline ? 'The contact sheet is attached to this result and shown to the user in this tool step' : 'Open sheet with your image tool'}: frames left to right, labelled with milliseconds since the action finished (negative = before). Individual frames are native-orientation JPEGs.`};
-    } catch (error) { error.execution = execution; throw error; }
+    } catch (error) { return failed(error); }
   }
 
   // ---- device state ----

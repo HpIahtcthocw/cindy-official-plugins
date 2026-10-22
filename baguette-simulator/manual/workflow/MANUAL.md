@@ -69,6 +69,8 @@ capture action={"tool":"tap","args":{"text":"登录"}} seconds=2 fps=12
 
 `execution` 表示动作是 `not_executed`、`executed` 还是 `unknown`；动作失败时 `actionError` 含 `code`、`message`、`execution`。即使没有录到帧，动作也可能已经发生；先核对设备实际状态，不要盲目重发。
 
+内部动作（含附图）、录制、几何核验与联系表渲染共用本次调用截止时间。预算不足或录制失败时返回 `captureError`（`code`、`message`），保留完整的 `action` 或 `actionError` 与 `execution`，不生成联系表；不会为录制结果重新执行动作。需要核对当前画面时另调 `screenshot`。
+
 ## 7. 设备状态
 
 一次 `set_state` 可改多项：

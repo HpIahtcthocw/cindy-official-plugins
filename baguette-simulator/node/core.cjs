@@ -46,15 +46,15 @@ function run(file,args,{timeout=30000,mutation=false,input,env,trimOutput=true,e
 }
 async function sim(args, options) { return run('/usr/bin/xcrun',['simctl','--set',DEVICE_SET,...args],options); }
 async function jsonRun(file,args) { const {stdout}=await run(file,args); try{return JSON.parse(stdout);}catch{throw new Failure('INVALID_OUTPUT','Command did not return JSON');} }
-async function listDevices() {
+async function listDevices(deadline) {
   await fs.mkdir(DEVICE_SET,{recursive:true,mode:0o700});
-  const data=await sim(['list','devices','--json'],{timeout:5000});
+  const data=await sim(['list','devices','--json'],commandBudget(5000,deadline));
   return Object.entries(JSON.parse(data.stdout).devices).flatMap(([runtime,devices])=>devices.map(d=>({name:d.name,udid:d.udid,state:d.state,isAvailable:d.isAvailable,runtime,deviceType:d.deviceTypeIdentifier})));
 }
 async function target(p, booted=true) {
   const udid=string(p.udid,'udid',36);
   if(!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(udid)) throw new Failure('INVALID_DEVICE','Use an exact UDID returned by this plugin');
-  const device=(await listDevices()).find(d=>d.udid.toLowerCase()===udid.toLowerCase());
+  const device=(await listDevices(p._deadline)).find(d=>d.udid.toLowerCase()===udid.toLowerCase());
   if(!device) throw new Failure('DEVICE_NOT_OWNED','Device is not in the Baguette plugin device set. Create a dedicated device first.');
   if(booted&&device.state!=='Booted') throw new Failure('DEVICE_NOT_BOOTED','Boot this device first');
   return device;
@@ -109,35 +109,35 @@ function softKeyboardBack(device){
   const timer=setTimeout(()=>{softTimers.delete(device.udid);sim(['spawn',device.udid,'defaults','write','com.apple.keyboard.preferences','HardwareKeyboardLastSeen','-bool','false'],{timeout:10000}).catch(()=>{});},3000);
   timer.unref?.();softTimers.set(device.udid,timer);
 }
-async function nativeKey(device,code,modifiers=[]) {
+async function nativeKey(device,code,modifiers=[],deadline) {
  const [key,mask]=code?require('./keys.cjs').chord(code,modifiers):[0,0];
- const dev=(await run('/usr/bin/xcode-select',['-p'],{timeout:5000})).stdout;
- return run(path.join(__dirname,'../native/keyboard'),[DEVICE_SET,device.udid,dev,String(key),String(mask)],{mutation:true,timeout:15000});
+ const dev=(await run('/usr/bin/xcode-select',['-p'],commandBudget(5000,deadline))).stdout;
+ return run(path.join(__dirname,'../native/keyboard'),[DEVICE_SET,device.udid,dev,String(key),String(mask)],{mutation:true,...commandBudget(15000,deadline)});
 }
 async function clipboardAction(p) {
  if(keyboardBusy)throw new Failure('INPUT_BUSY','Another keyboard operation is running; retry after it finishes');
  keyboardBusy=true;
  try{
   const device=await target(p);
-  if(p.action==='release')return await nativeKey(device,null);
-  if(p.action==='key')return await nativeKey(device,p.code,p.modifiers);
+  if(p.action==='release')return await nativeKey(device,null,[],p._deadline);
+  if(p.action==='key')return await nativeKey(device,p.code,p.modifiers,p._deadline);
   if(p.action==='paste') {
     const text=string(p.text,'text',8000);
     // First release any existing repeat before replacing its clipboard payload
     // (not for a touch paste: any key event hides the on-screen keyboard).
-    if(!p.touch)await nativeKey(device,null);
+    if(!p.touch)await nativeKey(device,null,[],p._deadline);
     // CoreDevice (devicectl) cannot see a private device set, so write with
     // simctl --set. Xcode 27 pbcopy has been seen to exit 0 without changing the
     // guest clipboard: compare exact UTF-8 text (whitespace kept) before pasting.
-    await sim(['pbcopy',device.udid],{input:text,mutation:true,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
+    await sim(['pbcopy',device.udid],{input:text,mutation:true,...commandBudget(30000,p._deadline),env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
     let actual;
     try {
-      actual=await sim(['pbpaste',device.udid],{trimOutput:false,env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
+      actual=await sim(['pbpaste',device.udid],{trimOutput:false,...commandBudget(30000,p._deadline),env:{...process.env,LC_ALL:'en_US.UTF-8',LANG:'en_US.UTF-8'}});
     } catch {
       throw new Failure('CLIPBOARD_UNVERIFIED','Could not confirm guest clipboard contents; paste was not sent','unknown');
     }
     if(actual.stdout!==text)throw new Failure('CLIPBOARD_UNVERIFIED','Guest clipboard did not match requested text; paste was not sent','unknown');
-    if(!p.touch)await nativeKey(device,'KeyV',['command']);
+    if(!p.touch)await nativeKey(device,'KeyV',['command'],p._deadline);
   } else if(p.action==='copy') {
     await nativeKey(device,'KeyC',['command']);
     await new Promise(resolve=>setTimeout(resolve,250));
@@ -145,13 +145,13 @@ async function clipboardAction(p) {
   } else throw new Failure('INVALID_ARGUMENT','Unknown input action');
  }finally{keyboardBusy=false;}
 }
-async function dispatch(method,p={}) {
+async function dispatch(method,p={},deadline=Date.now()+110000) {
   // Core owns the request deadline, including preflight. Nested observation
   // never starts another full budget after a slow boot, launch or input.
-  p={...p,_deadline:Date.now()+110000};
+  p={...p,_deadline:deadline};
   if(!methods.has(method)) throw new Failure('UNKNOWN_TOOL','Unknown Baguette operation');
   if(process.platform!=='darwin'||process.arch!=='arm64') throw new Failure('UNSUPPORTED_PLATFORM','This package requires an Apple Silicon Mac');
-  const macOS=(await run('/usr/bin/sw_vers',['-productVersion'],{timeout:3000})).stdout;
+  const macOS=(await run('/usr/bin/sw_vers',['-productVersion'],commandBudget(3000,deadline))).stdout;
   if(!/^\d+\.\d+(?:\.\d+)?$/.test(macOS)||Number(macOS.split('.')[0])<15)throw new Failure('UNSUPPORTED_OS',`Requires macOS 15.0 or newer; detected ${macOS || 'unknown'}. Upgrade macOS before using this plugin.`);
   if(method==='environment') {
     const [version,xcode,runtimes,types]=await Promise.all([
@@ -232,7 +232,7 @@ async function dispatch(method,p={}) {
     return agent().capture(device,p,async action=>{
       if(!action||!allowed.includes(action.tool))throw new Failure('INVALID_ARGUMENT',`capture action.tool must be one of ${allowed.join(', ')}`);
       const args={...(action.args||{}),udid:device.udid,observe:'none'};
-      return dispatch(action.tool==='app_launch'?'launch_app':action.tool,{...args,showViewer:false});
+      return dispatch(action.tool==='app_launch'?'launch_app':action.tool,{...args,showViewer:false,_inline:p._inline},p._deadline);
     });
   }
   if(method==='type_text') {
@@ -248,16 +248,19 @@ async function dispatch(method,p={}) {
     const text=p.text===undefined?undefined:string(p.text,'text (1–8000 characters)',8000);
     if(how==='type'&&text!==undefined&&!typeable(text))throw new Failure('INVALID_ARGUMENT','method=type types US-keyboard characters only (letters, digits, punctuation, space, newline). Use paste for other text such as Chinese.');
     if(how==='type'&&text!==undefined&&text.length>300)throw new Failure('INVALID_ARGUMENT','method=type is limited to 300 characters per call (about 0.1 s each); split the text or use paste.');
-    if(p.clear===true){await clipboardAction({udid:device.udid,action:'key',code:'KeyA',modifiers:['command']});await clipboardAction({udid:device.udid,action:'key',code:'Backspace',modifiers:[]});}
+    let inputStarted=false;
+    const inputAction=async args=>{inputStarted=true;return clipboardAction({udid:device.udid,...args,_deadline:p._deadline});};
+    try {
+    if(p.clear===true){await inputAction({action:'key',code:'KeyA',modifiers:['command']});await inputAction({action:'key',code:'Backspace',modifiers:[]});}
     let used=null,typed=null;
     if(text!==undefined){
       // Paste is exact and works with any input method; games often ignore it, so they get keystrokes.
-      used=how==='auto'?(typeable(text)&&text.length<=300&&!(await agent().hasAccessibility(device))?'type':'paste'):how;
-      if(used==='type')typed=await agent().typeText(device,text);
-      else if(used==='touch'){await clipboardAction({udid:device.udid,action:'paste',text,touch:true});typed=await agent().pasteByTouch(device);}
-      else await clipboardAction({udid:device.udid,action:'paste',text});
+      used=how==='auto'?(typeable(text)&&text.length<=300&&!(await agent().hasAccessibility(device,p._deadline))?'type':'paste'):how;
+      if(used==='type'){typed=await agent().typeText(device,text,p._deadline);inputStarted=true;}
+      else if(used==='touch'){await inputAction({action:'paste',text,touch:true});typed=await agent().pasteByTouch(device,p._deadline);}
+      else await inputAction({action:'paste',text});
     }
-    for(const key of keys)await clipboardAction({udid:device.udid,action:'key',code:key.code,modifiers:key.modifiers});
+    for(const key of keys)await inputAction({action:'key',code:key.code,modifiers:key.modifiers});
     agentImpl?.forgetTree(device.udid);
     const keyEvents=keys.length||p.clear===true||(used&&used!=='touch');
     if(keyEvents)softKeyboardBack(device);
@@ -268,10 +271,11 @@ async function dispatch(method,p={}) {
     if(keyEvents)notes.push('Key events act like a hardware keyboard and hide the on-screen keyboard during input. About 3 seconds after the last input, the plugin attempts to clear that hardware-keyboard record; tap outside and refocus the field to check whether the keyboard returns. To check keyboard overlap without sending keys, use method=touch. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
     const typedResult={udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
     // Like tap: optionally wait for text and/or look at the result in the same call.
-    return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline,_deadline:p._deadline},typedResult);
+    return p.observe===undefined&&p.until===undefined?typedResult:await agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline,_deadline:p._deadline},typedResult);
+    } catch(error){if(inputStarted&&error.execution==='not_executed')error.execution='unknown';throw error;}
   }
   if(method==='press'&&p.button==='release-input') {
-    await clipboardAction({udid:device.udid,action:'release'});
+    await clipboardAction({udid:device.udid,action:'release',_deadline:p._deadline});
     return {udid:device.udid,execution:'executed',note:'Stuck keys released; nothing restarted.'};
   }
   if(method==='press') {
@@ -279,7 +283,7 @@ async function dispatch(method,p={}) {
     if(!allowed.includes(p.button)) throw new Failure('INVALID_ARGUMENT',`button must be one of ${allowed.join(', ')} or release-input`);
     const args=['--button',p.button];
     if(p.duration!==undefined)args.push('--duration',String(number(p.duration,'duration',0,10)));
-    const pressed=await baguette('press',device,args,{mutation:true});
+    const pressed=await baguette('press',device,args,{mutation:true,...commandBudget(30000,p._deadline)});
     agent().forget(device.udid);
     return {udid:device.udid,execution:pressed.execution};
   }
@@ -320,7 +324,7 @@ async function dispatch(method,p={}) {
   if(method==='open_url') {
     const url=string(p.url,'url',4096);
     if(!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(url))throw new Failure('INVALID_ARGUMENT','url needs a scheme, e.g. myapp://path or https://…');
-    await run(BINARY,['openurl',...deviceArgs(device),url],{mutation:true,timeout:20000});
+    await run(BINARY,['openurl',...deviceArgs(device),url],{mutation:true,...commandBudget(20000,p._deadline)});
     agent().forget(device.udid);
     return {udid:device.udid,execution:'executed',note:'Opened. iOS may ask whether to open another App; take a screenshot and tap the system prompt if one appears.'};
   }
@@ -341,7 +345,7 @@ async function dispatch(method,p={}) {
       for(const [k,v] of Object.entries(p.env)){if(!/^[A-Za-z_][A-Za-z0-9_]{0,100}$/.test(k)||typeof v!=='string'||v.length>4000)throw new Failure('INVALID_ARGUMENT','env names must be identifiers and values strings');env['SIMCTL_CHILD_'+k]=v;}
     }
     agent().forget(device.udid);
-    const launched={udid:device.udid,bundleId:id,...await sim(args,{mutation:true,env}),execution:'executed'};
+    const launched={udid:device.udid,bundleId:id,...await sim(args,{mutation:true,env,...commandBudget(30000,p._deadline)}),execution:'executed'};
     if(p.showViewer===false)return settledShot(device,p,launched);
     let viewer;
     try{viewer={viewer:await openViewer(BINARY,DEVICE_SET,children,device.udid,clipboardAction,p._locale)};}
