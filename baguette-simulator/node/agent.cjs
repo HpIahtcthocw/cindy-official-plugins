@@ -857,19 +857,19 @@ function directionVector(direction, view, distance) {
 // Metro and other tools colour their messages; control characters are not text.
 const plain = text => String(text).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
 const logMessage = entry => entry.eventMessage || entry.composedMessage || '';
-// History and streaming match the complete displayed line, not just its message.
+// Match the complete normalized line; only the returned display is shortened.
 function matchingLogLine(raw, pattern) {
   let entry;
   try { entry = JSON.parse(raw); } catch { return null; }
   if (!entry || typeof entry !== 'object' || !logMessage(entry)) return null;
-  const shown = formatLog(entry);
-  return !pattern || pattern.test(shown) ? shown : null;
+  if (pattern && !pattern.test(formatLog(entry, Infinity))) return null;
+  return formatLog(entry);
 }
-function formatLog(entry) {
+function formatLog(entry, messageLimit = 600) {
   const time = (entry.timestamp || '').replace(/^.*?(\d\d:\d\d:\d\d\.\d{3}).*$/, '$1');
   const type = entry.messageType && entry.messageType !== 'Default' ? `[${entry.messageType.toLowerCase()}] ` : '';
   const where = [entry.subsystem, entry.category].filter(Boolean).join('/');
-  const message = plain(logMessage(entry)).replace(/\s+/g, ' ').slice(0, 600);
+  const message = plain(logMessage(entry)).replace(/\s+/g, ' ').slice(0, messageLimit);
   return `${time} ${type}${where ? where + ': ' : ''}${message}`;
 }
 

@@ -262,7 +262,7 @@ async function dispatch(method,p={}) {
     if(used==='paste')notes.push('Text was pasted (Cmd+V). If the field stayed empty (some games ignore paste), retry with method=type.');
     if(used==='type')notes.push('Text was typed key by key; text fields may auto-capitalise or autocorrect it, as with a real keyboard.');
     if(used==='touch')notes.push('Pasted through the edit menu by touch; the on-screen keyboard stays as it was.');
-    if(keyEvents)notes.push('Key events work like an attached hardware keyboard: iOS hides the on-screen keyboard for the rest of this boot (it returns after the device restarts). To check what the keyboard covers, use method=touch from a fresh boot. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
+    if(keyEvents)notes.push('Key events act like a hardware keyboard and hide the on-screen keyboard during input. About 3 seconds after the last input, the plugin attempts to clear that hardware-keyboard record; tap outside and refocus the field to check whether the keyboard returns. To check keyboard overlap without sending keys, use method=touch. Enter may submit a form or confirm a game screen; to only end editing, tap an empty area.');
     const typedResult={udid:device.udid,execution:'executed',...(used?{method:used}:{}),...(typed?.inputSource?{inputSource:typed.inputSource}:{}),...(keys.length?{keys:keys.map(k=>[...k.modifiers,k.code].join('+'))}:{}),note:notes.join(' ')};
     // Like tap: optionally wait for text and/or look at the result in the same call.
     return p.observe===undefined&&p.until===undefined?typedResult:agent().after(device,{observe:p.observe??(p.until?undefined:'none'),settle:p.settle,until:p.until,_inline:p._inline},typedResult);

@@ -257,7 +257,7 @@ test('live log waits and history use the same message field with eventMessage ta
 });
 
 test('live and historical log matching share formatted metadata, message normalization and partial-line parsing',async()=>{
-  const entry={timestamp:'2026-10-22 10:00:00.123+0000',messageType:'Error',subsystem:'example.test',category:'network',eventMessage:' ready\n now 测试 '};
+  const entry={timestamp:'2026-10-22 10:00:00.123+0000',messageType:'Error',subsystem:'example.test',category:'network',eventMessage:'x'.repeat(700)+' ready\n now 测试 '};
   const raw=Buffer.from('not json\nnull\n{}\n'+JSON.stringify(entry)),cut=raw.indexOf(Buffer.from('测试'))+1;
   for(const match of ['10:00:00\\.123','\\[error\\]','example\\.test/network','ready now','测试']) {
     const f=agentFixture({frames:[raw.subarray(0,23),raw.subarray(23,cut),raw.subarray(cut)],streamEvents:[{event:'exit',args:[0]},{event:'close',args:[0]}]});
@@ -265,6 +265,7 @@ test('live and historical log matching share formatted metadata, message normali
     const history=await f.agent.logs(f.device,{match,crashes:false});
     const live=await f.agent.waitFor(f.device,{log:match,timeout:1});
     assert.equal(live.met,true);assert.equal(live.line,history.lines[0]);
+    assert.ok(!live.line.includes('ready'),'full content is matched while the display remains shortened');
   }
 });
 
@@ -344,6 +345,7 @@ test('management view ignores late viewer successes and failures, including retu
     await old;assert.match(get('screen').src,/udid=B/);assert.equal(get('screen').hidden,false);
     // A -> B -> A: device id alone is insufficient to identify an in-flight request.
     const firstA=context.page.showScreen({udid:A}),middle=context.page.showScreen({udid:B}),lastA=context.page.showScreen({udid:A});
+    assert.equal(get('screen').src,'about:blank','a pending selection never leaves the previous device interactive');
     requests[4].resolve({ok:true,url:'http://127.0.0.1:1/control?udid=A&new=1'});await lastA;
     requests[2].reject(Error('obsolete A'));requests[3].reject(Error('obsolete B'));await Promise.all([firstA,middle]);
     assert.match(get('screen').src,/new=1/);assert.equal(get('screen').hidden,false);
@@ -414,4 +416,73 @@ test('launches reuse the shared lock for app records without serializing unrelat
   hold.resolve();await first;await runtime.request('launch_app',{udid:B,bundleId:'test.example.b'});
   const reloaded=createRuntime({settingsFile,dispatch});
   assert.equal(await reloaded.currentApp(A),'test.example.a');assert.equal(await reloaded.currentApp(B),'test.example.b');
+});
+
+function pageFixture(kind) {
+  const nodes=new Map(),requests=[];let push;
+  const get=id=>{
+    if(!nodes.has(id))nodes.set(id,{replaceChildren(){},append(){},querySelector(){return null;},classList:{contains:()=>false,toggle(){}}});
+    return nodes.get(id);
+  };
+  const context={URLSearchParams,location:{search:'?session=task-1'},document:{getElementById:get,addEventListener(){},hidden:false},
+    localStorage:{getItem:()=>null},clearTimeout(){},setTimeout:()=>0,
+    CindySimPages:{locale:()=>new Promise(()=>{}),onPush:fn=>{push=fn;},createDevice:async()=>({udid:B}),
+      rpc:(action,params)=>{const d=deferred();requests.push({...d,action,params});return d.promise;},
+      h:()=>({}),GLYPH:{iphone:'',big:'',pause:''}},CindySimModel:{runtimeLabel:()=>'',deviceRows:()=>[]}};
+  const expose=kind==='task'
+    ? 'globalThis.page={refresh,act,createDevice,state:()=>state,note:()=>note,seed:r=>{state=r;show(r.viewer?.url);}};'
+    : 'globalThis.page={refresh,act,showScreen,hero,state:()=>state,seed:r=>{state=r;selected=r.devices[0]?.udid;}};';
+  vm.runInNewContext(syncFs.readFileSync(path.resolve(`baguette-simulator/${kind}.js`),'utf8')+'\n'+expose,context);
+  return {page:context.page,get,requests,push:m=>push(m)};
+}
+const taskState=udid=>({ok:true,settings:{enabled:true},devices:[],device:{udid,state:'Booted'},viewer:{url:`http://127.0.0.1:1/control?udid=${udid}`}});
+
+test('task RPC results have one owner across polling, binding, boot, creation and viewer pushes',async()=>{
+  for(const lateFails of [false,true])for(const action of ['task_bind','task_boot','create']) {
+    const f=pageFixture('task');f.page.seed(taskState(A));
+    const old=f.page.refresh();
+    const current=action==='create'?f.page.createDevice():f.page.act(action,{udid:B},B);
+    await new Promise(r=>setImmediate(r));
+    await f.page.refresh();assert.equal(f.requests.length,2,'polls do not overlap an action');
+    f.requests[1].resolve(taskState(B));await current;
+    if(lateFails)f.requests[0].reject(Error('old device unavailable'));else f.requests[0].resolve(taskState(A));
+    await old;
+    assert.equal(f.page.state().device.udid,B);assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
+  }
+  for(const lateFails of [false,true]) {
+    const f=pageFixture('task');f.page.seed(taskState(A));
+    const first=f.page.refresh(),second=f.page.refresh();
+    f.requests[1].resolve(taskState(B));await second;
+    if(lateFails)f.requests[0].reject(Error('late poll'));else f.requests[0].resolve(taskState(A));
+    await first;assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
+    const action=f.page.act('task_bind',{udid:A},A);
+    f.push({type:'viewer',sessionId:'task-1',url:taskState(B).viewer.url});
+    if(lateFails)f.requests[2].reject(Error('late bind'));else f.requests[2].resolve(taskState(A));
+    await action;assert.match(f.get('screen').src,new RegExp(B));assert.equal(f.page.note(),null);
+  }
+});
+
+test('management actions retire old refreshes and unload the iframe for shutdown, erase and delete',async()=>{
+  for(const action of ['shutdown','erase','delete'])for(const fails of [false,true]) {
+    const f=pageFixture('manage'),d={udid:A,name:'Phone',state:'Booted'};
+    const state={ok:true,settings:{enabled:true},devices:[d]};f.page.seed(state);
+    const opening=f.page.showScreen(d);f.requests[0].resolve({ok:true,url:taskState(A).viewer.url});await opening;
+    const old=f.page.refresh(),operation=f.page.act(action,d);
+    assert.equal(f.get('screen').src,'about:blank','starting the action unloads the real frame');
+    assert.equal(f.get('screen').hidden,true);
+    f.requests[1].resolve(state);await old;
+    assert.equal(f.get('screen').src,'about:blank','old manage_state cannot reopen it');
+    if(fails)f.requests[2].reject(Error('action failed'));else f.requests[2].resolve({ok:true});
+    await new Promise(r=>setImmediate(r));
+    const read=f.requests.at(-1);assert.equal(read.action,'manage_state');
+    const devices=action==='delete'?[]:[{...d,state:'Shutdown'}];read.resolve({...state,devices});await operation;
+    assert.equal(f.get('screen').src,'about:blank');assert.equal(f.get('screen').hidden,true);
+  }
+  // A new viewer request has no URL yet while an older iframe is still loaded.
+  const f=pageFixture('manage');f.page.seed({ok:true,devices:[],settings:{enabled:true}});
+  const first=f.page.showScreen({udid:A});f.requests[0].resolve({ok:true,url:taskState(A).viewer.url});await first;
+  const pending=f.page.showScreen({udid:B});f.page.hero(null);
+  assert.equal(f.get('screen').src,'about:blank');
+  f.requests[1].resolve({ok:true,url:taskState(B).viewer.url});await pending;
+  assert.equal(f.get('screen').src,'about:blank','late viewer cannot resurrect an unloaded page');
 });

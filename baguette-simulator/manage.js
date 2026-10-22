@@ -47,6 +47,7 @@ const $ = (id) => document.getElementById(id);
 const SELECTED = 'cindy.hub.selected';
 let T = TEXT.en, lang = 'en', state = null, busy = {}, renaming = null, query = '', models = new Map(), shown = { udid: null, url: null };
 let selected = (() => { try { return localStorage.getItem(SELECTED); } catch { return null; } })();
+let pending = null;
 
 const glyphFor = (d) => {
   const kind = `${d.deviceType || ''} ${d.name || ''}`;
@@ -142,8 +143,14 @@ function renderList() {
 }
 
 // ---- detail ----
+function clearScreen() {
+  shown = { udid: null, url: null };
+  $('screen').hidden = true;
+  $('screen').src = 'about:blank';
+}
 async function showScreen(d) {
   if (shown.udid === d.udid && shown.url) { $('screen').hidden = false; $('hero').hidden = true; return; }
+  clearScreen();
   const request = shown = { udid: d.udid, url: null };
   try {
     const r = await rpc('viewer_url', { udid: d.udid }, T.timeout);
@@ -155,10 +162,7 @@ async function showScreen(d) {
   } catch { if (shown === request) hero(d); } // only this request may replace its own screen with an error
 }
 function hero(d, note) {
-  $('screen').hidden = true; $('hero').hidden = false;
-  const previousUrl = shown.url;
-  shown = { udid: null, url: null }; // also retire a pending request when selection becomes off/empty
-  if (previousUrl) $('screen').src = 'about:blank';
+  clearScreen(); $('hero').hidden = false;
   const big = (glyph) => h('div', { class: 'hero-glyph', html: glyph.replace(/width="20" height="20"/, 'width="56" height="56"').replace(/stroke-width="1.5"/, 'stroke-width="1"') });
   let children;
   if (!state) children = [h('div', { class: 'spinner' })];
@@ -195,12 +199,15 @@ function render() {
 
 // ---- data & actions ----
 async function refresh() {
-  try { const r = await rpc('manage_state', {}, T.timeout); if (!r.ok) throw r; state = r; if ($('message').classList.contains('error')) message(''); }
-  catch (error) { if (!state) message(error?.code ? errorText(error) : T.readFailed, true); }
+  if (Object.keys(busy).length) return;
+  const request = pending = {};
+  try { const r = await rpc('manage_state', {}, T.timeout); if (pending !== request) return; if (!r.ok) throw r; state = r; if ($('message').classList.contains('error')) message(''); }
+  catch (error) { if (pending !== request) return; if (!state) message(error?.code ? errorText(error) : T.readFailed, true); }
   render();
 }
 async function act(action, d, done, extra = {}) {
   if (busy[d.udid]) return;
+  pending = null;
   busy[d.udid] = action === 'boot' ? T.starting : action === 'shutdown' ? T.stopping : '…';
   message(''); render();
   try {
@@ -209,7 +216,7 @@ async function act(action, d, done, extra = {}) {
     if (done) message(done);
     if (action === 'delete' && selected === d.udid) selected = null;
   } catch (error) { message(errorText(error), true); }
-  finally { delete busy[d.udid]; if (action === 'shutdown' || action === 'delete' || action === 'erase') shown = shown.udid === d.udid ? { udid: null, url: null } : shown; await refresh(); }
+  finally { delete busy[d.udid]; await refresh(); }
 }
 async function newDevice(family) {
   const made = await createDevice({ family, lang });

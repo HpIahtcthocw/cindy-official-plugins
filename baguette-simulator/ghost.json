@@ -5,7 +5,7 @@
   "name": "iOS 模拟器",
   "description": "独立的 iOS 模拟器：每个任务在自己的侧栏页签里看到自己的设备画面，「模拟器」主视图管理所有设备。插件设置提供运行开关，默认闲置 15 分钟关闭并保留数据。需要 macOS 15.0+、Apple Silicon、完整 Xcode 和 iOS runtime。基于开源项目 Baguette（tddworks，Apache-2.0）。",
   "whenToUse": "iOS 模拟器任务默认使用：在独立设备上安装、启动和操作已构建的 App，截图、等待、录下变化、看日志，画面实时显示在任务侧栏。先 devices，复用本任务或空闲设备（新建设备时才需要 environment）。用 tap/gesture 的真实触摸验证，不要另外下载 AXe/idb 或去点 Xcode 窗口。完整流程见手册。heal 须用户同意；不替用户重开运行开关。",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "kind": "chip",
   "entry": "main.js",
   "icon": "assets/icon.png",
@@ -479,7 +479,7 @@
     },
     {
       "name": "type_text",
-      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键会让 iOS 当作接了硬件键盘，本次开机内不再弹屏幕键盘；要检查键盘遮挡，开机后用 method=touch。 method=touch 不可与 clear=true 或 keys 同用。",
+      "description": "向当前聚焦的输入框输入。text 任意文字：method=auto（默认）在普通 App 里粘贴（精确，支持中文），在没有无障碍元素的游戏里逐键输入英文、数字与符号（拼音等输入法会自动切到英文）；也可指定 paste 或 type。keys 发送按键，如 Enter、Escape、Backspace、Tab、up、a、cmd+A、shift+Tab；clear=true 先全选删除。输入前确认焦点，之后观察结果。 逐键输入时屏幕键盘不会出现；游戏里 Enter 可能直接提交，只想结束编辑就点空白处。observe、until 同 tap。 按键输入期间隐藏屏幕键盘；最后输入后约 3 秒尝试清除硬件键盘记录，重新聚焦后观察是否恢复，不保证自动弹出。检查键盘遮挡用 method=touch，无需重启。 method=touch 不可与 clear=true 或 keys 同用。",
       "parameters": {
         "type": "object",
         "properties": {

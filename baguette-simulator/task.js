@@ -31,11 +31,17 @@ const M = globalThis.CindySimModel;
 const session = new URLSearchParams(location.search).get('session') || '';
 const $ = (id) => document.getElementById(id);
 let T = TEXT.en, lang = 'en', state = null, busy = null, choosing = false, note = null, viewerUrl = null;
+let pending = null; // identity of the only RPC still allowed to update this page
 
 function show(url) {
   if (url && url !== viewerUrl) { viewerUrl = url; $('screen').src = url; }
   if (!url && viewerUrl) { viewerUrl = null; $('screen').src = 'about:blank'; }
   $('screen').hidden = !viewerUrl; $('home').hidden = !!viewerUrl;
+}
+function accept(r) {
+  state = r;
+  if (r.viewer?.url) choosing = false;
+  show(r.viewer?.url);
 }
 function errorText(r) {
   return ({ BUSY: T.busy, RUNTIME_DISABLED: T.pausedTitle, TIMEOUT: T.timeout, PLUGIN_OFF: T.pluginOff })[r?.errorCode || r?.code] || T.failed;
@@ -83,24 +89,27 @@ function render() {
   inner.append(h('p', { class: 'status' + (note?.error ? ' error' : ''), text: note?.text || '' }));
 }
 async function refresh() {
+  if (busy) return;
+  const request = pending = {};
   try {
     const r = await rpc('task_state', { sessionId: session }, T.timeout);
+    if (pending !== request) return;
     if (!r.ok) throw r;
-    state = r; if (note && !note.sticky) note = null;
-    if (r.viewer?.url) { choosing = false; show(r.viewer.url); } else show(null);
-  } catch (error) { if (!viewerUrl) note = { text: errorText(error), error: true }; }
+    accept(r); if (note && !note.sticky) note = null;
+  } catch (error) { if (pending !== request) return; if (!viewerUrl) note = { text: errorText(error), error: true }; }
   render();
 }
 async function act(action, params, marker) {
   if (busy) return;
+  const request = pending = {};
   busy = marker; note = null; render();
   try {
     const r = await rpc(action, { sessionId: session, ...params }, T.timeout);
+    if (pending !== request) return;
     if (!r.ok) throw r;
-    state = r; choosing = false;
-    if (r.viewer?.url) show(r.viewer.url);
-  } catch (error) { note = { text: errorText(error), error: true, sticky: true }; }
-  finally { busy = null; render(); if (!viewerUrl) refresh(); }
+    choosing = false; accept(r);
+  } catch (error) { if (pending === request) note = { text: errorText(error), error: true, sticky: true }; }
+  finally { busy = null; render(); if (pending === request && !viewerUrl) refresh(); }
 }
 // Same sheet as the management view (name, OS version, model); the new device
 // then becomes this task's.
@@ -108,16 +117,10 @@ async function createDevice() {
   if (busy) return;
   const made = await newDevice({ family: 'iphone', lang });
   if (!made?.udid) return;
-  busy = 'create'; note = null; render();
-  try {
-    const r = await rpc('task_bind', { sessionId: session, udid: made.udid }, T.timeout);
-    if (!r.ok) throw r;
-    state = r; choosing = false;
-  } catch (error) { note = { text: errorText(error), error: true, sticky: true }; }
-  finally { busy = null; render(); if (!viewerUrl) refresh(); }
+  return act('task_bind', { udid: made.udid }, 'create');
 }
 // The logic page pushes a fresh viewer when Cindy opens the simulator for this task.
-onPush((m) => { if (m?.type === 'viewer' && m.sessionId === session && typeof m.url === 'string') { choosing = false; show(m.url); } });
+onPush((m) => { if (m?.type === 'viewer' && m.sessionId === session && typeof m.url === 'string') { pending = null; choosing = false; show(m.url); } });
 (async () => {
   lang = await locale(); T = TEXT[lang] || TEXT.en; document.documentElement.lang = lang;
   $('screen').title = lang === 'zh-CN' ? 'iOS 模拟器' : 'iOS Simulator';
