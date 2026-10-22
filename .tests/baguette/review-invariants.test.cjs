@@ -73,7 +73,7 @@ test('background install retains the device lock through success and failure, wh
 // One deterministic harness for read, mutate and capture outcomes. No simulator,
 // image tool or real timers; each test exercises the production Agent methods.
 function agentFixture({frames=[],streamError=false}={}) {
-  const state={orientation:'portrait',calls:[],files:new Map(),failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null};
+  const state={orientation:'portrait',calls:[],files:new Map(),failWord:null,missingApp:false,turnOnShot:false,failRender:false,failTree:false,treeChildren:[],ocr:null,logEntries:[]};
   const screen=()=>({width:402,height:874,orientation:state.orientation,target:{litPanel:'primary',screenId:1,pixelSize:{width:1206,height:2622}}});
   const run=async(file,args)=>{
     state.calls.push([file,args]);
@@ -90,7 +90,7 @@ function agentFixture({frames=[],streamError=false}={}) {
     }
     return {stdout:''};
   };
-  const sim=async args=>{state.calls.push(['sim',args]);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:''};};
+  const sim=async args=>{state.calls.push(['sim',args]);if(args[0]==='get_app_container'){if(state.missingApp)throw Error('lookup failed');return {stdout:'/App.app'};}return {stdout:args.includes('show')?state.logEntries.map(e=>JSON.stringify(e)).join('\n'):''};};
   const spawnImpl=()=>{
     const c=new EventEmitter();c.stdout=new EventEmitter();c.stdin=new EventEmitter();c.kill=()=>{};
     queueMicrotask(()=>{if(streamError)c.emit('error',Error('stream failed'));else for(const f of frames)c.stdout.emit('data',f);});return c;
@@ -139,6 +139,18 @@ test('a log wait timeout includes the current screenshot without a separate requ
   const {agent,device}=agentFixture();
   const result=await agent.waitFor(device,{log:'never printed',timeout:1});
   assert.equal(result.met,false);assert.ok(result.screenshot.path);
+});
+
+test('live log waits and history use the same message field with eventMessage taking precedence',async()=>{
+  for(const entry of [{composedMessage:'ready'},{eventMessage:'',composedMessage:'ready'},{eventMessage:'ready',composedMessage:'ignored'}]) {
+    const line=JSON.stringify(entry)+'\n';
+    // NDJSON fields can arrive across arbitrary stream chunks.
+    const f=agentFixture({frames:[line.slice(0,9),line.slice(9)]});
+    f.state.logEntries=[entry];
+    const history=await f.agent.logs(f.device,{match:'ready',crashes:false});
+    const wait=await f.agent.waitFor(f.device,{log:'ready',timeout:1});
+    assert.equal(wait.met,true);assert.equal(wait.line,history.lines[0]);
+  }
 });
 
 test('capture keeps same-length different frames and carries action execution through every result path', async()=>{
@@ -246,9 +258,9 @@ test('explicit viewer close survives task polling and worker restart; an unexpec
     dispatch:async(method)=>{if(method==='devices')return {devices:[{udid:A,state:'Booted'}]};if(method==='close_viewer')live=false;if(method==='open_viewer'){opens++;live=true;wanted=true;return {url:'http://127.0.0.1:1/control?udid=A#token'};}return {ok:true};}});
   let runtime=make();await runtime.request('task_state',{_task:'task-1'});assert.equal(opens,1);
   await runtime.request('viewer',{action:'close'});
-  for(let i=0;i<2;i++)assert.equal((await runtime.request('task_state',{_task:'task-1'})).viewer,null);
+  for(let i=0;i<2;i++){const state=await runtime.request('task_state',{_task:'task-1'});assert.equal(state.viewer,null);assert.equal(state.viewerClosed,true);}
   runtime=make();assert.equal((await runtime.request('task_state',{_task:'task-1'})).viewer,null);assert.equal(opens,1);
-  await runtime.request('viewer',{action:'open',udid:A});assert.equal(opens,2);
+  const reopened=await runtime.request('task_bind',{_task:'task-1',udid:A});assert.equal(opens,2);assert.equal(reopened.viewerClosed,false);assert.ok(reopened.viewer);
   live=false;runtime=make();assert.ok((await runtime.request('task_state',{_task:'task-1'})).viewer);assert.equal(opens,3);
 });
 
@@ -259,6 +271,7 @@ test('launches reuse the shared lock for app records without serializing unrelat
   const runtime=createRuntime({settingsFile,dispatch});
   const first=runtime.request('launch_app',{udid:A,bundleId:'test.example.a'});await started.promise;
   await assert.rejects(runtime.request('launch_app',{udid:B,bundleId:'test.example.b'}),e=>e.code==='BUSY');
+  for(const method of ['app_uninstall','erase_device','delete_device'])await assert.rejects(runtime.request(method,{udid:B,bundleId:'test.example.b'}),e=>e.code==='BUSY');
   assert.deepEqual(await runtime.request('logs',{udid:B}),{ok:true});
   hold.resolve();await first;await runtime.request('launch_app',{udid:B,bundleId:'test.example.b'});
   const reloaded=createRuntime({settingsFile,dispatch});

@@ -1,13 +1,13 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
 const {createRuntime}=require('../../baguette-simulator/node/runtime.cjs');
-const a='00000000-0000-4000-8000-000000000001',b='00000000-0000-4000-8000-000000000002';
+const a='00000000-0000-4000-8000-00000000000A',b='00000000-0000-4000-8000-00000000000B';
 async function fixture(t){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'baguette-switch-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  const devices=[{udid:a,name:'Duo',state:'Booted',isAvailable:true},{udid:b,name:'Phone',state:'Shutdown',isAvailable:true}],calls=[];
  let failAt,hold,unconfirmed=false;
  const bindings=new Map();
- const opts={settingsFile:path.join(dir,'settings.json'),tasks:{bind:async(s,id)=>bindings.set(s,id)},dispatch:async(method,p={})=>{
+ const opts={settingsFile:path.join(dir,'settings.json'),tasks:{bind:async(s,id)=>bindings.set(s,id),forgetDevice:async id=>{for(const [s,device] of bindings)if(device===id)bindings.delete(s);}},dispatch:async(method,p={})=>{
   calls.push({method,...p});if(method==='devices')return {devices:devices.map(d=>({...d}))};
   if(method===failAt)throw Object.assign(Error('Fixture failure'),{code:'FIXTURE_ERROR',execution:'unknown'});
   if(method==='shutdown'){if(hold)await hold;if(!unconfirmed)devices.find(d=>d.udid===p.udid).state='Shutdown';}
@@ -20,6 +20,28 @@ async function fixture(t){
  return {runtime,devices,calls,bindings,restart:()=>createRuntime(opts),fail:m=>failAt=m,hold:p=>hold=p,unconfirmed:()=>unconfirmed=true};
 }
 async function finish(f){for(let i=0;i<100;i++){const job=(await f.runtime.status()).deviceJob;if(job.state!=='running')return job;await new Promise(r=>setTimeout(r,2));}assert.fail('switch did not finish');}
+test('successful uninstall, erase and delete clear only the affected recent app; failures retain it',async t=>{
+ for(const method of ['app_uninstall','erase_device','delete_device']) {
+  const f=await fixture(t);
+  await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.app'});
+  await f.runtime.request('launch_app',{udid:b,bundleId:'test.example.other'});
+  if(method==='app_uninstall') {
+   await f.runtime.request(method,{udid:a,bundleId:'test.example.unrelated'});
+   assert.equal(await f.runtime.currentApp(a),'test.example.app');
+  }
+  f.fail(method);
+  await assert.rejects(f.runtime.request(method,{udid:a,bundleId:'test.example.app'}));
+  assert.equal(await f.restart().currentApp(a),'test.example.app');
+  f.fail(null);await f.runtime.request(method,{udid:a.toLowerCase(),bundleId:'test.example.app'});
+  f.runtime=f.restart();
+  assert.equal(await f.runtime.currentApp(a),null);assert.equal(await f.runtime.currentApp(b),'test.example.other');
+  if(method!=='delete_device') {
+   f.calls.length=0;
+   await f.runtime.request('viewer_switch',{udid:a,targetUdid:b});assert.equal((await finish(f)).state,'done');
+   assert.ok(!f.calls.some(c=>['app_bundle','install_app','launch_app'].includes(c.method)),'removed app never blocks or participates in the switch');
+  }
+ }
+});
 test('switch preserves app context across runtime restart, shuts down before boot, and installs only app bundle',async t=>{
  const f=await fixture(t);await f.runtime.request('launch_app',{udid:a,bundleId:'test.example.app'});f.runtime=f.restart();
  await f.runtime.request('viewer_switch',{udid:a,targetUdid:b});const job=await finish(f);assert.equal(job.state,'done');assert.equal(job.activeUdid,b);

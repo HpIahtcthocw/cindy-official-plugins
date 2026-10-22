@@ -8,18 +8,25 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
  const fail=(code,message,execution='not_executed')=>Object.assign(Error(message),{code,execution});
  async function contexts(){
   if(apps)return apps;
-  try{const value=JSON.parse(await fs.readFile(contextFile,'utf8'));apps ||= Object.fromEntries(Object.entries(value).filter(([id,bundle])=>/^[0-9a-f-]{36}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)));}
+  try{const value=JSON.parse(await fs.readFile(contextFile,'utf8'));apps ||= Object.fromEntries(Object.entries(value).filter(([id,bundle])=>/^[0-9a-f-]{36}$/i.test(id)&&typeof bundle==='string'&&/^[A-Za-z0-9][A-Za-z0-9.-]+$/.test(bundle)).map(([id,bundle])=>[id.toUpperCase(),bundle]));}
   catch{apps ||= {};}return apps;
  }
  async function remember(udid,bundleId){
-  const values=await contexts();values[udid]=bundleId;
+  const values=await contexts(),id=udid.toUpperCase();
+  if(bundleId)values[id]=bundleId;else delete values[id];
   if(!contextFile)return;
   const temporary=contextFile+'.'+randomUUID()+'.tmp';
   try{await fs.mkdir(path.dirname(contextFile),{recursive:true,mode:0o700});await fs.writeFile(temporary,JSON.stringify(values),{mode:0o600});await fs.rename(temporary,contextFile);}
   finally{await fs.rm(temporary,{force:true}).catch(()=>{});}
  }
  const snapshot=()=>job?{...job}:null;
- async function currentApp(udid){return (await contexts())[udid]||null;}
+ async function currentApp(udid){return (await contexts())[udid.toUpperCase()]||null;}
+ async function forget(udid,bundleId){
+  const current=await currentApp(udid);
+  if(!current||(bundleId&&current!==bundleId))return;
+  try{await remember(udid,null);}
+  catch{throw fail('APP_CONTEXT_UNSAVED','The App was removed, but its recent-app record could not be cleared. Check storage before switching devices.','executed');}
+ }
  async function selection(p){
   const devices=(await dispatch('devices')).devices;
   const source=devices.find(d=>d.udid===p.udid),target=devices.find(d=>d.udid===p.targetUdid);
@@ -74,6 +81,6 @@ function createDeviceManager({dispatch,exclusive,assertEnabled,touch,contextFile
   operation.catch(failed);
   return snapshot();
  }
- return {snapshot,currentApp,remember,start};
+ return {snapshot,currentApp,remember,forget,start};
 }
 module.exports={createDeviceManager};

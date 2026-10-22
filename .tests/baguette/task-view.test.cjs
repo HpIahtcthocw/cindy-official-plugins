@@ -134,3 +134,23 @@ test('an already streaming task page polls binding changes and follows a newly a
  await settle();assert.match(get('screen').src,new RegExp(A));
  device=B;poll();await settle();assert.match(get('screen').src,new RegExp(B));
 });
+
+test('a closed task screen stays closed on refresh and offers an explicit reopen action in either language',async()=>{
+ for(const lang of ['en','zh-CN']) {
+  const nodes=new Map(),calls=[];
+  const get=id=>{if(!nodes.has(id))nodes.set(id,{children:[],replaceChildren(){this.children=[];},append(...children){this.children.push(...children);}});return nodes.get(id);};
+  let closed=true,poll;
+  const context={URLSearchParams,location:{search:'?session=task-1'},document:{hidden:false,documentElement:{},getElementById:get,addEventListener(){}},
+   setInterval:fn=>{poll=fn;},CindySimPages:{locale:async()=>lang,onPush(){},h:(tag,props,children=[])=>({tag,props,children}),GLYPH:{},
+    rpc:async(action,params)=>{calls.push({action,params});if(action==='task_bind')closed=false;return {ok:true,settings:{enabled:true},device:{udid:A,name:'Phone',state:'Booted'},viewerClosed:closed,viewer:closed?null:{url:'http://127.0.0.1:1/control?udid='+A}};}},CindySimModel:{}};
+  vm.runInNewContext(require('node:fs').readFileSync('baguette-simulator/task.js','utf8'),context);
+  await settle();poll();await settle();
+  const flatten=node=>[node,...(node.children||[]).filter(Boolean).flatMap(flatten)];
+  const rendered=get('inner').children.flatMap(flatten);
+  assert.ok(rendered.some(n=>n.props?.text===(lang==='zh-CN'?'画面已关闭':'Screen closed')));
+  assert.ok(!rendered.some(n=>n.props?.class==='spinner'));
+  assert.ok(calls.every(c=>c.action==='task_state'),'polling never reopens');
+  await rendered.find(n=>n.tag==='button').props.onclick();await settle();
+  assert.equal(calls.find(c=>c.action==='task_bind').params.udid,A);assert.match(get('screen').src,new RegExp(A));
+ }
+});

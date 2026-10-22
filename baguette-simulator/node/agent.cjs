@@ -507,7 +507,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
         while ((i = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, i); buffer = buffer.slice(i + 1);
           let entry; try { entry = JSON.parse(line); } catch { continue; }
-          const message = entry.eventMessage || '';
+          const message = logMessage(entry);
           if (pattern.test(message)) end(resolve, done({line: formatLog(entry)}));
         }
       });
@@ -787,7 +787,7 @@ function createAgent({binary, deviceSet, root, run, sim, Failure, spawnImpl = sp
     const lines = [];
     for (const line of out.stdout.split('\n')) {
       let entry; try { entry = JSON.parse(line); } catch { continue; }
-      if (!entry.eventMessage && !entry.composedMessage) continue;
+      if (!logMessage(entry)) continue;
       // `match` sees the line as shown: time, type, subsystem/category and message.
       const shown = formatLog(entry);
       if (pattern && !pattern.test(shown)) continue;
@@ -840,11 +840,12 @@ function directionVector(direction, view, distance) {
 }
 // Metro and other tools colour their messages; control characters are not text.
 const plain = text => String(text).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+const logMessage = entry => entry.eventMessage || entry.composedMessage || '';
 function formatLog(entry) {
   const time = (entry.timestamp || '').replace(/^.*?(\d\d:\d\d:\d\d\.\d{3}).*$/, '$1');
   const type = entry.messageType && entry.messageType !== 'Default' ? `[${entry.messageType.toLowerCase()}] ` : '';
   const where = [entry.subsystem, entry.category].filter(Boolean).join('/');
-  const message = plain(entry.eventMessage || entry.composedMessage || '').replace(/\s+/g, ' ').slice(0, 600);
+  const message = plain(logMessage(entry)).replace(/\s+/g, ' ').slice(0, 600);
   return `${time} ${type}${where ? where + ': ' : ''}${message}`;
 }
 

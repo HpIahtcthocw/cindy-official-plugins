@@ -5,6 +5,7 @@
 const TEXT = {
   en: {
     loading: 'Loading…', connecting: 'Connecting to the screen…',
+    closedTitle: 'Screen closed', closedBody: 'The simulator is still running. Open the screen to continue.', open: 'Open screen', opening: 'Opening…',
     noneTitle: 'This task has no simulator yet', noneBody: 'Pick a device for this task or create a new one. Cindy also picks one when it opens the simulator.',
     use: 'Use', create: 'New iPhone…', creating: 'Creating…', inOther: (n) => n === 1 ? 'used by another task' : `used by ${n} other tasks`,
     offTitle: (name) => `${name} is off`, offBody: 'Start it to see the screen here. Apps and data are kept.', start: 'Start', starting: 'Starting…', change: 'Use another device',
@@ -15,6 +16,7 @@ const TEXT = {
   },
   'zh-CN': {
     loading: '正在读取…', connecting: '正在连接画面…',
+    closedTitle: '画面已关闭', closedBody: '模拟器仍在运行，打开画面即可继续。', open: '打开画面', opening: '正在打开…',
     noneTitle: '这个任务还没有模拟器', noneBody: '选一台设备给这个任务用，或新建一台。Cindy 打开模拟器时也会自己选。',
     use: '用这台', create: '新建 iPhone…', creating: '正在创建…', inOther: (n) => `另有 ${n} 个任务在用`,
     offTitle: (name) => `${name} 已关闭`, offBody: '启动后画面会显示在这里，App 和数据都保留。', start: '启动', starting: '正在启动…', change: '换一台设备',
@@ -63,7 +65,10 @@ function render() {
   if (state.settings?.enabled === false) inner.append(hero(GLYPH.pause, T.pausedTitle, T.pausedBody));
   else if (state.device && !choosing) {
     const d = state.device;
-    if (d.state === 'Booted') inner.append(hero(GLYPH.big, d.name, state.busy ? T.busy : T.connecting, [h('span', { class: 'spinner' })]));
+    if (d.state === 'Booted' && state.viewerClosed) inner.append(hero(GLYPH.big, T.closedTitle, T.closedBody, [
+      h('button', { class: 'btn cta', text: busy === d.udid ? T.opening : T.open, disabled: !!busy, onclick: () => act('task_bind', { udid: d.udid }, d.udid) }),
+    ]));
+    else if (d.state === 'Booted') inner.append(hero(GLYPH.big, d.name, state.busy ? T.busy : T.connecting, [h('span', { class: 'spinner' })]));
     else inner.append(hero(GLYPH.big, T.offTitle(d.name), T.offBody, [
       h('button', { class: 'btn cta', text: busy === d.udid ? T.starting : T.start, disabled: !!busy, onclick: () => act('task_boot', { udid: d.udid }, d.udid) }),
       (state.devices || []).length > 1 ? h('button', { class: 'link', text: T.change, disabled: !!busy, onclick: () => { choosing = true; render(); } }) : null,

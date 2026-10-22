@@ -29,6 +29,16 @@ test('turning simulators off still stops devices that are in use',async t=>{
  assert.equal(f.state(),'Shutdown');
 });
 
+test('unknown external use defers idle shutdown until a later confirmed idle period, while manual stop still works',async t=>{
+ let unavailable=true;
+ const f=await fixture(t,{inUse:async()=>{if(unavailable)throw Error('ps timed out');return false;}});
+ f.advance(16*60000);await f.runtime.checkIdle();assert.equal(f.state(),'Booted');
+ unavailable=false;f.advance(14*60000);await f.runtime.checkIdle();assert.equal(f.state(),'Booted');
+ f.advance(2*60000);await f.runtime.checkIdle();assert.equal(f.state(),'Shutdown');
+ const manual=await fixture(t,{inUse:async()=>{throw Error('ps failed');}});
+ await manual.runtime.request('settings_stop_all');assert.equal(manual.state(),'Shutdown');
+});
+
 test('device_hold waits while a device runs, returns as soon as none runs, and keeps going while a window is open',async t=>{
  const running=await fixture(t);
  assert.deepEqual(await running.runtime.request('device_hold'),{running:true},'held to the limit');

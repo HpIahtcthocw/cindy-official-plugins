@@ -122,7 +122,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       }
       if (url) viewer = {udid:device.udid, url:withTask(url, session)};
     }
-    return {ok:true, sessionId:session, device, devices, settings:{...settings}, viewer, busy:waiting};
+    return {ok:true, sessionId:session, device, devices, settings:{...settings}, viewer, viewerClosed, busy:waiting};
   }
   // Agent tools grouped by intent → the worker's own operations.
   const ROUTES = {
@@ -173,9 +173,9 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       return {...result, devices: await annotate(result.devices, sessionOf(params))};
     }
     if (method === 'environment') return dispatch(method, params);
-    // Launch updates the shared app-context file. Reuse the existing global
+    // App creation and removal update the shared app-context file. Reuse the existing global
     // lock for that entire operation instead of adding another writer queue.
-    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save', 'launch_app'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
+    const key = typeof params?.udid === 'string' && params.udid && !['settings_stop_all', 'settings_save', 'launch_app', 'app_uninstall', 'erase_device', 'delete_device'].includes(method) ? `device:${params.udid.toUpperCase()}` : '*';
     return exclusive(async () => {
       // Emergency stop stays available even if settings are damaged.
       if (method === 'shutdown') return dispatch(method, params);
@@ -190,6 +190,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       if (method === 'reveal_screenshot') return dispatch(method, params);
       if (method === 'delete_device' || method === 'erase_device') {
         const result = await dispatch(method, params);
+        await manager.forget(result.udid || params.udid);
         if (method === 'delete_device' && tasks) await tasks.forgetDevice(params.udid).catch(() => {});
         return {...result, devices: (await status()).devices};
       }
@@ -210,6 +211,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       // Re-arm cleanup before dispatch, even when no success result follows.
       touch();
       const result = await dispatch(actual, params);
+      if (actual === 'app_uninstall') await manager.forget(result.udid || params.udid, params.bundleId);
       if (actual === 'boot' || actual === 'open_viewer' || (actual === 'launch_app' && result?.viewer?.ready)) viewerClosed = false;
       if(actual==='launch_app')await manager.remember(params.udid,params.bundleId).catch(()=>{});
       // Starting, opening or launching on a device from a task gives that task the device.
@@ -239,7 +241,7 @@ function createRuntime({dispatch, settingsFile, now = Date.now, inUse = async ()
       const settings = await load();
       if (settings.enabled && (!settings.idleMinutes || now() - lastActivity < settings.idleMinutes * 60000)) return;
       // Someone is still watching or operating a device: start a new idle period.
-      if (settings.enabled && await inUse().catch(() => false)) { touch(); return; }
+      if (settings.enabled && await inUse().catch(() => true)) { touch(); return; }
       const result = await stopAll(settings.enabled ? 'idle' : 'disabled');
       // Incomplete shutdown stays visible; do not silently retry forever.
       idleHandled = true;
