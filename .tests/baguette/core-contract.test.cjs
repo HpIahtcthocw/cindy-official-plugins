@@ -258,3 +258,9 @@ test('erase and delete share preflight and shutdown time, never start a late mut
   if(remove)assert.equal(remove.timeout,deviceState==='Booted'?47000:102000);
  }
 });
+
+test('remote trackpad rejects iOS and unowned devices before native input',async()=>{
+ for(const [id,code] of [[udid,'UNSUPPORTED_INPUT'],['00000000-0000-4000-8000-000000000002','DEVICE_NOT_OWNED']]){
+  const c=core('');await assert.rejects(c.dispatch('viewer_trackpad',{udid:id,phase:'began',x:.5,y:.5,gesture:udid}),e=>e.code===code);assert.equal(c.mutations(),0);
+ }
+});
