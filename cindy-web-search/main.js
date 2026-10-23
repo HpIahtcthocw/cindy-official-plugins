@@ -198,7 +198,7 @@ async function searchDeepSeek(query, limit, callId) {
 
 function anySearchFailure(errorCode) {
   var messages = {
-    NOT_CONFIGURED: '请在「插件」→「Web Search」详情页配置 AnySearch API Key。',
+    NOT_CONFIGURED: '请先在「插件」→「Web Search」详情页选择 AnySearch 作为自备搜索渠道，或配置 AnySearch API Key，然后重试。',
     AUTH_REJECTED: 'AnySearch API Key 无效，请在「插件」→「Web Search」详情页更新 Key。',
     PERMISSION_DENIED: 'AnySearch 搜索请求未获授权，请检查 AnySearch 账号及接口权限。',
     QUOTA_EXHAUSTED: 'AnySearch 搜索额度已用完，请在「插件」→「Web Search」详情页配置 AnySearch API Key 后重试。',
@@ -218,13 +218,47 @@ function anySearchFailure(errorCode) {
 }
 
 /**
+ * AnySearch is a keyless provider, so an anonymous call would send the user's
+ * query to api.anysearch.com even if they never opted in. Gate anonymous usage
+ * on an explicit user choice: the user selected AnySearch as their BYO default
+ * in settings, or saved an AnySearch API Key. Otherwise fail closed like the
+ * other providers (NOT_CONFIGURED).
+ */
+async function anySearchConfigured() {
+  try {
+    var kvResponse = await fetch('/kv');
+    if (kvResponse.ok) {
+      var kv = await kvResponse.json();
+      if (kv && typeof kv === 'object' && !Array.isArray(kv)
+        && kv.byoDefaultProvider === 'anysearch') return true;
+    }
+  } catch (e) {
+    // fall through to the secrets check
+  }
+  try {
+    var secretsResponse = await fetch('/secrets');
+    if (secretsResponse.ok) {
+      var secrets = await secretsResponse.json();
+      if (Array.isArray(secrets) && secrets.some(function (s) {
+        return s && s.key === 'anysearch_api_key' && s.saved;
+      })) return true;
+    }
+  } catch (e) {
+    // fail closed below
+  }
+  return false;
+}
+
+/**
  * AnySearch unified search. The API key is optional: without one the Host sends
  * the request anonymously (国内可访问,速率受每日免费额度限制); with a configured
  * key the Host injects Authorization: Bearer <key> for api.anysearch.com only.
- * The 402 response body may contain auto-generated credentials, so it is never
- * relayed to the model or the user.
+ * Anonymous calls are only allowed after the user explicitly opted in (see
+ * anySearchConfigured). The 402 response body may contain auto-generated
+ * credentials, so it is never relayed to the model or the user.
  */
 async function searchAnySearch(query, limit, callId) {
+  if (!(await anySearchConfigured())) return anySearchFailure('NOT_CONFIGURED');
   var r;
   try {
     r = await cindy.fetch({

@@ -73,6 +73,14 @@ function createHarness(options = {}) {
     cindy,
     fetch: async (url, init) => {
       if (options.kvFetch) return options.kvFetch(url, init);
+      if (url === '/secrets') {
+        return {
+          ok: true,
+          async json() {
+            return options.secrets ?? [];
+          },
+        };
+      }
       assert.equal(url, '/kv');
       return {
         ok: true,
@@ -654,7 +662,7 @@ function anySearchItem(overrides = {}) {
 
 test('AnySearch posts a trimmed query with the shared 1–10 limit and maps snippet/content', async () => {
   const harness = createHarness({
-    kvFetch: () => { throw new Error('explicit selection must not read preferences'); },
+    kv: { byoDefaultProvider: 'anysearch' },
     networkResult: () => anySearchResponse([
       anySearchItem(), anySearchItem({ snippet: '', content: 'Content fallback' }),
       anySearchItem({ title: 'Extra result' }),
@@ -694,7 +702,7 @@ test('AnySearch may be the BYO default while Cindy AI remains the initial defaul
 
 test('AnySearch limit respects the shared 1–10 result contract', async () => {
   for (const [limit, count] of [[0, 1], [2.9, 2], [50, 10]]) {
-    const harness = createHarness({ networkResult: () => anySearchResponse() });
+    const harness = createHarness({ kv: { byoDefaultProvider: 'anysearch' }, networkResult: () => anySearchResponse() });
     assert.equal((await harness.search({ provider: 'anysearch', limit })).ok, true);
     assert.equal(JSON.parse(harness.networkCalls[0].body).max_results, count);
   }
@@ -708,7 +716,7 @@ for (const [status, code, guidance] of [
   [301, 'UPSTREAM_REJECTED', /权限/], [418, 'UPSTREAM_REJECTED', /权限/],
 ]) {
   test(`AnySearch HTTP ${status} gives actionable ${code} without retry, fallback or body disclosure`, async () => {
-    const harness = createHarness({ networkResult: () => ({ ok: true, status, body: 'upstream-private-detail' }) });
+    const harness = createHarness({ kv: { byoDefaultProvider: 'anysearch' }, networkResult: () => ({ ok: true, status, body: 'upstream-private-detail' }) });
     const result = await harness.search({ provider: 'anysearch' });
     assert.equal(result.ok, false);
     assert.equal(result.errorCode, code);
@@ -722,6 +730,7 @@ for (const [status, code, guidance] of [
 
 test('AnySearch 402 with auto-generated credentials never leaks them to the user', async () => {
   const harness = createHarness({
+    kv: { byoDefaultProvider: 'anysearch' },
     networkResult: () => ({
       ok: true,
       status: 402,
@@ -746,7 +755,7 @@ test('AnySearch preserves structured Host error codes with safe, actionable mess
     ['INVALID_INPUT', /查询/], ['UPSTREAM_UNAVAILABLE', /网络连接/],
   ]) {
     for (const throws of [false, true]) {
-      const harness = createHarness({ networkResult: () => {
+      const harness = createHarness({ kv: { byoDefaultProvider: 'anysearch' }, networkResult: () => {
         if (throws) throw Object.assign(new Error('private-host-detail'), { errorCode });
         return { ok: false, errorCode, message: 'private-host-detail' };
       } });
@@ -763,7 +772,7 @@ test('AnySearch preserves structured Host error codes with safe, actionable mess
 
 test('AnySearch handles legacy Host failures and exceptions without exposing diagnostics', async () => {
   for (const failure of [null, { ok: false, message: 'private-host-detail' }, new Error('private-host-detail')]) {
-    const harness = createHarness({ networkResult: () => {
+    const harness = createHarness({ kv: { byoDefaultProvider: 'anysearch' }, networkResult: () => {
       if (failure instanceof Error) throw failure;
       return failure;
     } });
@@ -791,7 +800,7 @@ test('AnySearch rejects malformed, truncated and non-zero-code responses instead
     ...bodies.map(body => ({ ok: true, status: 200, body })),
     { ...anySearchResponse(), truncated: true },
   ]) {
-    const harness = createHarness({ networkResult: () => response });
+    const harness = createHarness({ kv: { byoDefaultProvider: 'anysearch' }, networkResult: () => response });
     const result = await harness.search({ provider: 'anysearch' });
     assert.equal(result.ok, false);
     assert.equal(result.errorCode, 'RESPONSE_INVALID');
@@ -826,4 +835,52 @@ test('settings load and persist AnySearch as the BYO default without losing othe
   const write = harness.fetchCalls.find(call => call.init.method === 'PUT');
   assert.deepEqual(JSON.parse(write.init.body), original);
   assert.match(harness.status.textContent, /已保存/);
+});
+
+test('AnySearch anonymous calls fail closed with NOT_CONFIGURED until the user opts in', async () => {
+  // No AnySearch preference, no saved key -> no network request at all.
+  const neverOptedIn = createHarness({ kv: {}, networkResult: () => anySearchResponse() });
+  const blocked = await neverOptedIn.search({ provider: 'anysearch' });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.errorCode, 'NOT_CONFIGURED');
+  assert.match(blocked.message, /AnySearch/);
+  assert.equal(neverOptedIn.networkCalls.length, 0);
+  assert.equal(neverOptedIn.cindyRequests.length, 0);
+  assert.equal(neverOptedIn.toolResults.length, 1);
+
+  // Explicit provider still requires the same opt-in.
+  const stillBlocked = createHarness({ kv: { cindyAiEnabled: true }, networkResult: () => anySearchResponse() });
+  const blockedAgain = await stillBlocked.search({ provider: 'anysearch' });
+  assert.equal(blockedAgain.ok, false);
+  assert.equal(blockedAgain.errorCode, 'NOT_CONFIGURED');
+  assert.equal(stillBlocked.networkCalls.length, 0);
+
+  // Saving an AnySearch API Key opts the user in even without the preference.
+  const keyOnly = createHarness({
+    kv: {},
+    secrets: [{ key: 'anysearch_api_key', saved: true, tail: 'abcd' }],
+    networkResult: () => anySearchResponse(),
+  });
+  const keyResult = await keyOnly.search({ provider: 'anysearch' });
+  assert.equal(keyResult.ok, true);
+  assert.equal(keyResult.result.provider, 'anysearch');
+  assert.equal(keyOnly.networkCalls.length, 1);
+
+  // An unrelated saved key does not opt in.
+  const unrelatedKey = createHarness({
+    kv: {},
+    secrets: [{ key: 'tavily_api_key', saved: true }],
+    networkResult: () => anySearchResponse(),
+  });
+  const unrelatedResult = await unrelatedKey.search({ provider: 'anysearch' });
+  assert.equal(unrelatedResult.ok, false);
+  assert.equal(unrelatedResult.errorCode, 'NOT_CONFIGURED');
+  assert.equal(unrelatedKey.networkCalls.length, 0);
+
+  // Preference read failures fail closed.
+  const unreadable = createHarness({ kvFetch: async () => { throw new Error('kv unavailable'); } });
+  const unreadableResult = await unreadable.search({ provider: 'anysearch' });
+  assert.equal(unreadableResult.ok, false);
+  assert.equal(unreadableResult.errorCode, 'NOT_CONFIGURED');
+  assert.equal(unreadable.networkCalls.length, 0);
 });
