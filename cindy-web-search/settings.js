@@ -35,7 +35,7 @@
   }
 
   function isByoProvider(value) {
-    return value === 'brave' || value === 'tavily' || value === 'deepseek';
+    return value === 'brave' || value === 'tavily' || value === 'deepseek' || value === 'anysearch';
   }
 
   function normalizePreferences(kv) {

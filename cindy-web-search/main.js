@@ -6,7 +6,9 @@
  *   使用 Cindy AI 额度；
  * - brave:network 槽 -> Brave，使用用户自己的 Brave Key；
  * - tavily:network 槽 -> Tavily，使用用户自己的 Tavily Key；
- * - deepseek:network 槽 -> DeepSeek Search API，使用用户自己的 DeepSeek Key。
+ * - deepseek:network 槽 -> DeepSeek Search API，使用用户自己的 DeepSeek Key；
+ * - anysearch:network 槽 -> AnySearch，Key 可选(匿名额度,国内可访问)，注入
+ *   Authorization:Bearer 时使用用户自己的 AnySearch Key。
  *
  * 未指定 Provider 时只读取普通偏好:
  * - cindyAiEnabled 缺省 true -> cindy；
@@ -19,6 +21,7 @@
 var BRAVE_URL = 'https://api.search.brave.com/res/v1/web/search';
 var TAVILY_URL = 'https://api.tavily.com/search';
 var DEEPSEEK_URL = 'https://api.deepseek.com/v1/tools/search';
+var ANYSEARCH_URL = 'https://api.anysearch.com/v1/search';
 
 function clampLimit(n) {
   var v = typeof n === 'number' && isFinite(n) ? Math.floor(n) : 5;
@@ -26,7 +29,7 @@ function clampLimit(n) {
 }
 
 function isByoProvider(value) {
-  return value === 'brave' || value === 'tavily' || value === 'deepseek';
+  return value === 'brave' || value === 'tavily' || value === 'deepseek' || value === 'anysearch';
 }
 
 async function readSearchPrefs() {
@@ -193,9 +196,92 @@ async function searchDeepSeek(query, limit, callId) {
   };
 }
 
+function anySearchFailure(errorCode) {
+  var messages = {
+    NOT_CONFIGURED: '请在「插件」→「Web Search」详情页配置 AnySearch API Key。',
+    AUTH_REJECTED: 'AnySearch API Key 无效，请在「插件」→「Web Search」详情页更新 Key。',
+    PERMISSION_DENIED: 'AnySearch 搜索请求未获授权，请检查 AnySearch 账号及接口权限。',
+    QUOTA_EXHAUSTED: 'AnySearch 搜索额度已用完，请在「插件」→「Web Search」详情页配置 AnySearch API Key 后重试。',
+    RATE_LIMITED: 'AnySearch 搜索请求过于频繁，请稍后重试。',
+    INVALID_INPUT: 'AnySearch 搜索参数无效，请缩短查询后重试。',
+    UPSTREAM_UNAVAILABLE: 'AnySearch 搜索服务暂时不可用，请检查网络连接后稍后重试。',
+    UPSTREAM_REJECTED: 'AnySearch 未接受搜索请求，请检查账号权限或更新 Web Search 插件后再试。',
+    RESPONSE_INVALID: 'AnySearch 返回的搜索结果格式无效或过大，请缩小结果条数后重试。',
+  };
+  var code = typeof errorCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(errorCode)
+    ? errorCode : 'INTERNAL';
+  return {
+    ok: false,
+    errorCode: code,
+    message: messages[code] || 'AnySearch 搜索请求未完成，请检查网络连接、Cindy 授权，并按需在「插件」→「Web Search」详情页配置 AnySearch API Key。',
+  };
+}
+
+/**
+ * AnySearch unified search. The API key is optional: without one the Host sends
+ * the request anonymously (国内可访问,速率受每日免费额度限制); with a configured
+ * key the Host injects Authorization: Bearer <key> for api.anysearch.com only.
+ * The 402 response body may contain auto-generated credentials, so it is never
+ * relayed to the model or the user.
+ */
+async function searchAnySearch(query, limit, callId) {
+  var r;
+  try {
+    r = await cindy.fetch({
+      url: ANYSEARCH_URL,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: query, max_results: limit }),
+      callId: callId,
+    });
+  } catch (e) {
+    return anySearchFailure(e && e.errorCode);
+  }
+  if (!r || !r.ok) return anySearchFailure(r && r.errorCode);
+  if (r.status !== 200) {
+    var codes = {
+      400: 'INVALID_INPUT',
+      401: 'AUTH_REJECTED',
+      402: 'QUOTA_EXHAUSTED',
+      403: 'PERMISSION_DENIED',
+      415: 'INVALID_INPUT',
+      429: 'RATE_LIMITED',
+    };
+    return anySearchFailure(codes[r.status] || (r.status >= 500 && r.status <= 599
+      ? 'UPSTREAM_UNAVAILABLE' : 'UPSTREAM_REJECTED'));
+  }
+  // Do not parse truncated/oversized responses or pass upstream error bodies on.
+  if (r.truncated || typeof r.body !== 'string' || r.body.length > 1000000) {
+    return anySearchFailure('RESPONSE_INVALID');
+  }
+  var data;
+  try {
+    data = JSON.parse(r.body);
+  } catch (e) {
+    return anySearchFailure('RESPONSE_INVALID');
+  }
+  if (!data || typeof data.code !== 'number' || data.code !== 0 || !data.data
+    || !Array.isArray(data.data.results)) {
+    return anySearchFailure('RESPONSE_INVALID');
+  }
+  if (data.data.results.some(function (item) {
+    return !item || typeof item.title !== 'string' || typeof item.url !== 'string'
+      || !(typeof item.snippet === 'string' || typeof item.content === 'string'
+        || item.snippet === undefined && item.content === undefined);
+  })) return anySearchFailure('RESPONSE_INVALID');
+  return {
+    ok: true,
+    provider: 'anysearch',
+    results: data.data.results.slice(0, limit).map(function (item) {
+      return { title: item.title, url: item.url, snippet: item.snippet || item.content || '' };
+    }),
+  };
+}
+
 function searchByo(provider, query, limit, callId) {
   if (provider === 'deepseek') return searchDeepSeek(query, limit, callId);
   if (provider === 'tavily') return searchTavily(query, limit);
+  if (provider === 'anysearch') return searchAnySearch(query, limit, callId);
   return searchBrave(query, limit);
 }
 
@@ -207,7 +293,7 @@ async function searchWeb(args, callId, callerTool) {
   var provider = args && args.provider;
 
   if (provider !== undefined && provider !== 'cindy' && !isByoProvider(provider)) {
-    return { ok: false, message: 'provider 只支持 cindy / brave / tavily / deepseek' };
+    return { ok: false, message: 'provider 只支持 cindy / brave / tavily / deepseek / anysearch' };
   }
   if (provider === 'cindy') return searchCindy(query, limit, callId, callerTool);
   if (isByoProvider(provider)) return searchByo(provider, query, limit, callId);

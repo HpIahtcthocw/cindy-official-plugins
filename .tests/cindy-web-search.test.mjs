@@ -183,15 +183,15 @@ function createSettingsHarness(options = {}) {
 }
 
 test('manifest declares Cindy Web Search and keeps BYO providers explicit', () => {
-  assert.equal(manifest.version, '1.4.0');
+  assert.equal(manifest.version, '1.5.0');
   assert.equal(manifest.minCindyVersion, '0.1.64');
   assert.equal(manifest.schemaVersion, 3);
   assert.deepEqual(manifest.cindy, { search: ['web'] });
   assert.equal(Object.hasOwn(manifest, 'slots'), false);
-  assert.deepEqual(manifest.network.hosts, ['api.search.brave.com', 'api.tavily.com', 'api.deepseek.com']);
+  assert.deepEqual(manifest.network.hosts, ['api.search.brave.com', 'api.tavily.com', 'api.deepseek.com', 'api.anysearch.com']);
   assert.deepEqual(manifest.setup, { requires: [] });
   const provider = manifest.tools[0].parameters.properties.provider;
-  assert.deepEqual(provider.enum, ['cindy', 'brave', 'tavily', 'deepseek']);
+  assert.deepEqual(provider.enum, ['cindy', 'brave', 'tavily', 'deepseek', 'anysearch']);
   assert.equal(provider.enum.includes('auto'), false);
   const query = manifest.tools[0].parameters.properties.query;
   assert.equal(query.maxLength, 2000);
@@ -625,6 +625,202 @@ test('settings load and persist DeepSeek as the BYO default without losing other
   const harness = createSettingsHarness({ readKv: async () => ({ ok: true, json: async () => original }) });
   await flushAsync();
   assert.equal(harness.byoDefaultProvider.value, 'deepseek');
+  harness.byoDefaultProvider.emit('change');
+  await flushAsync();
+  const write = harness.fetchCalls.find(call => call.init.method === 'PUT');
+  assert.deepEqual(JSON.parse(write.init.body), original);
+  assert.match(harness.status.textContent, /已保存/);
+});
+
+function anySearchResponse(results = []) {
+  return {
+    ok: true,
+    status: 200,
+    body: JSON.stringify({
+      code: 0,
+      message: 'success',
+      request_id: 'test-request-id',
+      data: { results, metadata: { total_results: results.length, search_time_ms: 12 } },
+    }),
+  };
+}
+
+function anySearchItem(overrides = {}) {
+  return {
+    title: 'Example page', url: 'https://example.test/page',
+    snippet: 'Short snippet', content: 'Cleaned content', ...overrides,
+  };
+}
+
+test('AnySearch posts a trimmed query with the shared 1–10 limit and maps snippet/content', async () => {
+  const harness = createHarness({
+    kvFetch: () => { throw new Error('explicit selection must not read preferences'); },
+    networkResult: () => anySearchResponse([
+      anySearchItem(), anySearchItem({ snippet: '', content: 'Content fallback' }),
+      anySearchItem({ title: 'Extra result' }),
+    ]),
+  });
+  const result = await harness.search({ provider: 'anysearch', query: '  Go 1.26 release notes  ', limit: 2 });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'anysearch');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.result.results)), [
+    { title: 'Example page', url: 'https://example.test/page', snippet: 'Short snippet' },
+    { title: 'Example page', url: 'https://example.test/page', snippet: 'Content fallback' },
+  ]);
+  assert.equal(harness.networkCalls.length, 1);
+  assert.equal(harness.cindyRequests.length, 0);
+  assert.equal(harness.toolResults.length, 1);
+  const request = harness.networkCalls[0];
+  assert.equal(request.url, 'https://api.anysearch.com/v1/search');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.callId, 'call-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(request.headers)), { 'Content-Type': 'application/json' });
+  assert.deepEqual(JSON.parse(request.body), { query: 'Go 1.26 release notes', max_results: 2 });
+});
+
+test('AnySearch may be the BYO default while Cindy AI remains the initial default', async () => {
+  const configured = { cindyAiEnabled: false, byoDefaultProvider: 'anysearch' };
+  const harness = createHarness({ kv: configured, networkResult: () => anySearchResponse() });
+  const result = await harness.search();
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'anysearch');
+  assert.equal(JSON.parse(harness.networkCalls[0].body).max_results, 5);
+  assert.equal(harness.cindyRequests.length, 0);
+
+  const enabled = createHarness({ kv: { ...configured, cindyAiEnabled: true } });
+  assert.equal((await enabled.search()).result.provider, 'cindy');
+  assert.equal(enabled.networkCalls.length, 0);
+});
+
+test('AnySearch limit respects the shared 1–10 result contract', async () => {
+  for (const [limit, count] of [[0, 1], [2.9, 2], [50, 10]]) {
+    const harness = createHarness({ networkResult: () => anySearchResponse() });
+    assert.equal((await harness.search({ provider: 'anysearch', limit })).ok, true);
+    assert.equal(JSON.parse(harness.networkCalls[0].body).max_results, count);
+  }
+});
+
+for (const [status, code, guidance] of [
+  [400, 'INVALID_INPUT', /查询/], [401, 'AUTH_REJECTED', /更新 Key/],
+  [402, 'QUOTA_EXHAUSTED', /Key/], [403, 'PERMISSION_DENIED', /授权/],
+  [415, 'INVALID_INPUT', /参数/], [429, 'RATE_LIMITED', /稍后重试/],
+  [500, 'UPSTREAM_UNAVAILABLE', /稍后重试/], [502, 'UPSTREAM_UNAVAILABLE', /稍后重试/],
+  [301, 'UPSTREAM_REJECTED', /权限/], [418, 'UPSTREAM_REJECTED', /权限/],
+]) {
+  test(`AnySearch HTTP ${status} gives actionable ${code} without retry, fallback or body disclosure`, async () => {
+    const harness = createHarness({ networkResult: () => ({ ok: true, status, body: 'upstream-private-detail' }) });
+    const result = await harness.search({ provider: 'anysearch' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, code);
+    assert.match(result.message, guidance);
+    assert.doesNotMatch(result.message, /upstream-private-detail|HTTP|\b[345]\d\d\b/);
+    assert.equal(harness.networkCalls.length, 1);
+    assert.equal(harness.cindyRequests.length, 0);
+    assert.equal(harness.toolResults.length, 1);
+  });
+}
+
+test('AnySearch 402 with auto-generated credentials never leaks them to the user', async () => {
+  const harness = createHarness({
+    networkResult: () => ({
+      ok: true,
+      status: 402,
+      body: JSON.stringify({
+        code: -1,
+        message: 'Your account and API key have been automatically generated.\nusername=u123\npassword=p456\napi_key=as_sk_abcdef',
+        request_id: 'r1',
+      }),
+    }),
+  });
+  const result = await harness.search({ provider: 'anysearch' });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'QUOTA_EXHAUSTED');
+  assert.doesNotMatch(result.message, /u123|p456|as_sk_abcdef|username|password|api_key/);
+  assert.match(result.message, /Key/);
+});
+
+test('AnySearch preserves structured Host error codes with safe, actionable messages', async () => {
+  for (const [errorCode, guidance] of [
+    ['AUTH_REJECTED', /更新 Key/], ['PERMISSION_DENIED', /授权/],
+    ['QUOTA_EXHAUSTED', /Key/], ['RATE_LIMITED', /稍后重试/],
+    ['INVALID_INPUT', /查询/], ['UPSTREAM_UNAVAILABLE', /网络连接/],
+  ]) {
+    for (const throws of [false, true]) {
+      const harness = createHarness({ networkResult: () => {
+        if (throws) throw Object.assign(new Error('private-host-detail'), { errorCode });
+        return { ok: false, errorCode, message: 'private-host-detail' };
+      } });
+      const result = await harness.search({ provider: 'anysearch' });
+      assert.equal(result.errorCode, errorCode);
+      assert.match(result.message, guidance);
+      assert.doesNotMatch(result.message, /private-host-detail/);
+      assert.equal(harness.networkCalls.length, 1);
+      assert.equal(harness.cindyRequests.length, 0);
+      assert.equal(harness.toolResults.length, 1);
+    }
+  }
+});
+
+test('AnySearch handles legacy Host failures and exceptions without exposing diagnostics', async () => {
+  for (const failure of [null, { ok: false, message: 'private-host-detail' }, new Error('private-host-detail')]) {
+    const harness = createHarness({ networkResult: () => {
+      if (failure instanceof Error) throw failure;
+      return failure;
+    } });
+    const result = await harness.search({ provider: 'anysearch' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'INTERNAL');
+    assert.match(result.message, /网络连接/);
+    assert.match(result.message, /AnySearch/);
+    assert.doesNotMatch(result.message, /private-host-detail/);
+    assert.equal(harness.networkCalls.length, 1);
+  }
+});
+
+test('AnySearch rejects malformed, truncated and non-zero-code responses instead of returning empty success', async () => {
+  const bodies = ['invalid-json', 'null', '{}',
+    JSON.stringify({ code: 0, data: {} }),
+    JSON.stringify({ code: 0, data: { results: {} } }),
+    JSON.stringify({ code: -1, message: 'Query is required.', data: { results: [] } }),
+    JSON.stringify({ code: 0, data: { results: [null] } }),
+    JSON.stringify({ code: 0, data: { results: [{ title: null, url: 'u' }] } }),
+    JSON.stringify({ code: 0, data: { results: [{ title: 't', url: 42 }] } }),
+    ' '.repeat(1000001), null,
+  ];
+  for (const response of [
+    ...bodies.map(body => ({ ok: true, status: 200, body })),
+    { ...anySearchResponse(), truncated: true },
+  ]) {
+    const harness = createHarness({ networkResult: () => response });
+    const result = await harness.search({ provider: 'anysearch' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'RESPONSE_INVALID');
+    assert.equal(harness.networkCalls.length, 1);
+    assert.equal(harness.cindyRequests.length, 0);
+  }
+});
+
+test('AnySearch credentials are declared only for the API host and have a settings row', () => {
+  const secret = manifest.network.secrets.find(item => item.key === 'anysearch_api_key');
+  assert.deepEqual(secret.inject, {
+    header: 'Authorization', format: 'Bearer {value}', hosts: ['api.anysearch.com'],
+  });
+  assert.equal(secret.url, 'https://anysearch.com/console/api-keys');
+  assert.equal(manifest.network.hosts.includes('api.anysearch.com'), true);
+  assert.match(settingsHtml, /data-key="anysearch_api_key"/);
+  assert.match(settingsHtml, /href="https:\/\/anysearch\.com\/console\/api-keys"/);
+  assert.match(settingsHtml, /<option value="anysearch">AnySearch<\/option>/);
+  for (const locale of locales) {
+    assert.match(locale.description, /AnySearch/);
+    assert.match(locale.whenToUse, /AnySearch/);
+  }
+});
+
+test('settings load and persist AnySearch as the BYO default without losing other preferences', async () => {
+  const original = { cindyAiEnabled: false, byoDefaultProvider: 'anysearch', unrelated: 'keep' };
+  const harness = createSettingsHarness({ readKv: async () => ({ ok: true, json: async () => original }) });
+  await flushAsync();
+  assert.equal(harness.byoDefaultProvider.value, 'anysearch');
   harness.byoDefaultProvider.emit('change');
   await flushAsync();
   const write = harness.fetchCalls.find(call => call.init.method === 'PUT');
