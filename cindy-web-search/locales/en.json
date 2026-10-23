@@ -1,10 +1,10 @@
 {
   "name": "Web Search",
-  "description": "Cindy's built-in web search plugin. It uses Cindy AI by default, or searches the public web with your own Brave, Tavily, DeepSeek or AnySearch API key. Keys are configured in the plugin details, encrypted locally, and injected only into requests to declared hosts. AnySearch works anonymously without a key.",
+  "description": "Cindy's built-in web search plugin: Cindy AI by default, or your own Brave / Tavily / DeepSeek / AnySearch API key. Keys are configured in the plugin details, encrypted locally, injected only to declared hosts. AnySearch works keyless; opt in in the plugin details first.",
   "whenToUse": "Use this plugin to search the public web, research a topic, find web pages, or check current information. Cindy AI is used by default; you can also configure a Brave, Tavily, DeepSeek or AnySearch key in the Web Search plugin details.",
   "tools": {
     "search_web": {
-      "description": "Search the public web; returns { provider, results: [{ title, url, snippet }] }. Default: Cindy AI; optional Brave, Tavily, DeepSeek or AnySearch. Queries: at most 2000 characters; DeepSeek: 128 Unicode characters, never truncated. DeepSeek prefers summary for snippets, bills successful requests and does not fetch full pages. AnySearch works without a key (anonymous quota, accessible in mainland China, lower rate) or with an AnySearch API key configured in the plugin details; snippet falls back to content when missing. Failures preserve Host errorCode; relay message to the user and configure missing keys in plugin details. No automatic retries or provider fallback."
+      "description": "Search the public web; returns { provider, results: [{ title, url, snippet }] }. Default: Cindy AI; optional Brave, Tavily, DeepSeek or AnySearch. Queries: at most 2000 characters; DeepSeek: 128 Unicode characters, never truncated. DeepSeek prefers summary for snippets, bills successful requests and does not fetch full pages. AnySearch works without a key (anonymous quota, accessible in mainland China, lower rate) or with an AnySearch API key; anonymous usage requires opting in first by selecting AnySearch as the BYO provider or saving a key in the plugin details, otherwise NOT_CONFIGURED is returned; snippet falls back to content when missing. Failures preserve Host errorCode; relay message to the user and configure missing keys in plugin details. No automatic retries or provider fallback."
     }
   }
 }

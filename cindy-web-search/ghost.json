@@ -59,7 +59,7 @@
       {
         "key": "anysearch_api_key",
         "label": "AnySearch API Key",
-        "hint": "可选,不填使用匿名额度(国内可访问、速率较低);as_sk_ 开头",
+        "hint": "可选。免 Key 匿名搜索需先在上方「自备搜索渠道」选择 AnySearch，或填写本 Key（as_sk_ 开头）按账号额度计费",
         "url": "https://anysearch.com/console/api-keys",
         "inject": {
           "header": "Authorization",
@@ -75,7 +75,7 @@
   "tools": [
     {
       "name": "search_web",
-      "description": "搜索公网，返回 { provider, results: [{ title, url, snippet }] }。默认 Cindy AI，也可指定 Brave / Tavily / DeepSeek / AnySearch。查询最多 2000 字符；DeepSeek 最多 128 个 Unicode 字符（不截断），摘要优先使用 summary；AnySearch 可不填 Key 使用匿名额度（国内可访问、速率较低），也可在插件详情页配置 AnySearch API Key，snippet 缺失时用 content 回退，不读取全文。失败时保留宿主 errorCode，把 message 告诉用户；缺 Key 时按指引在插件详情页配置。不自动重试或切换搜索源。",
+      "description": "搜索公网，返回 { provider, results: [{ title, url, snippet }] }。默认 Cindy AI，也可指定 Brave / Tavily / DeepSeek / AnySearch。查询最多 2000 字符；DeepSeek 最多 128 个 Unicode 字符（不截断），摘要优先使用 summary；AnySearch 可免 Key 匿名搜索（国内可访问、速率较低），但需先在「插件」→「Web Search」详情页把 AnySearch 设为自备搜索渠道（关闭 Cindy AI 后生效）或填写 AnySearch API Key，否则返回 NOT_CONFIGURED；snippet 缺失时用 content 回退，不读取全文。失败时保留宿主 errorCode，把 message 告诉用户；缺 Key 时按指引在插件详情页配置。不自动重试或切换搜索源。",
       "parameters": {
         "type": "object",
         "properties": {

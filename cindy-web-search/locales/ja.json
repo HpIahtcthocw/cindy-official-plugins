@@ -1,10 +1,10 @@
 {
   "name": "Web Search",
-  "description": "Cindy 内蔵のウェブ検索プラグインです。既定では Cindy AI を使い、自分の Brave、Tavily、DeepSeek または AnySearch API キーでも公開ウェブを検索できます。キーはプラグイン詳細で設定し、ローカルで暗号化され、宣言済みホストへのリクエストにだけ注入されます。AnySearch はキーなしでも匿名で利用できます。",
+  "description": "Cindy 内蔵のウェブ検索プラグインです。既定では Cindy AI を使い、自分の Brave、Tavily、DeepSeek または AnySearch API キーでも公開ウェブを検索できます。キーはプラグイン詳細で設定し、ローカルで暗号化され、宣言済みホストへのリクエストにだけ注入されます。AnySearch はキーなしの匿名利用に対応しています（プラグイン詳細で AnySearch を BYO プロバイダーに選択するか、キーを保存して事前にオプトインしてください）。",
   "whenToUse": "公開ウェブの検索、調査、ウェブページの発見、最新情報の確認に使用します。既定では Cindy AI を使い、Web Search プラグイン詳細で Brave、Tavily、DeepSeek または AnySearch のキーも設定できます。",
   "tools": {
     "search_web": {
-      "description": "公開ウェブを検索し、{ provider, results: [{ title, url, snippet }] } を返します。既定は Cindy AI。Brave / Tavily / DeepSeek / AnySearch も選択できます。クエリは最大 2000 文字、DeepSeek は Unicode 128 文字（切り詰めなし）。DeepSeek の摘要は summary を優先し、成功したリクエストに課金され、ページ全文は取得しません。AnySearch はキーなしの匿名利用（国内からアクセス可能、低レート）も、プラグイン詳細で設定した AnySearch API キーでも動作し、snippet が無い場合は content にフォールバックします。失敗時はホストの errorCode を保持し、message をユーザーに伝えてください。キー未設定時はプラグイン詳細で設定します。自動再試行や検索元の切り替えは行いません。"
+      "description": "公開ウェブを検索し、{ provider, results: [{ title, url, snippet }] } を返します。既定は Cindy AI。Brave / Tavily / DeepSeek / AnySearch も選択できます。クエリは最大 2000 文字、DeepSeek は Unicode 128 文字（切り詰めなし）。DeepSeek の摘要は summary を優先し、成功したリクエストに課金され、ページ全文は取得しません。AnySearch はキーなしの匿名利用（国内からアクセス可能、低レート）または AnySearch API キーで動作しますが、匿名利用はプラグイン詳細で AnySearch を BYO プロバイダーに選択するかキーを保存して事前にオプトインする必要があり、未設定の場合は NOT_CONFIGURED を返します。snippet が無い場合は content にフォールバックします。失敗時はホストの errorCode を保持し、message をユーザーに伝えてください。キー未設定時はプラグイン詳細で設定します。自動再試行や検索元の切り替えは行いません。"
     }
   }
 }
