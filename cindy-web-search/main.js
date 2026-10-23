@@ -299,15 +299,17 @@ async function searchAnySearch(query, limit, callId) {
     return anySearchFailure('RESPONSE_INVALID');
   }
   if (data.data.results.some(function (item) {
-    return !item || typeof item.title !== 'string' || typeof item.url !== 'string'
-      || !(typeof item.snippet === 'string' || typeof item.content === 'string'
-        || item.snippet === undefined && item.content === undefined);
+    return !item || typeof item.title !== 'string' || typeof item.url !== 'string';
   })) return anySearchFailure('RESPONSE_INVALID');
   return {
     ok: true,
     provider: 'anysearch',
     results: data.data.results.slice(0, limit).map(function (item) {
-      return { title: item.title, url: item.url, snippet: item.snippet || item.content || '' };
+      // snippet/content are optional strings; coerce anything else rather than
+      // returning a non-string (e.g. an object) as the result snippet.
+      var snippet = typeof item.snippet === 'string' ? item.snippet : '';
+      var content = typeof item.content === 'string' ? item.content : '';
+      return { title: item.title, url: item.url, snippet: snippet || content };
     }),
   };
 }

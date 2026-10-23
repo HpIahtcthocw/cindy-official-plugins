@@ -809,6 +809,25 @@ test('AnySearch rejects malformed, truncated and non-zero-code responses instead
   }
 });
 
+test('AnySearch coerces non-string snippet/content instead of returning objects', async () => {
+  const harness = createHarness({
+    kv: { byoDefaultProvider: 'anysearch' },
+    networkResult: () => anySearchResponse([
+      anySearchItem({ snippet: {}, content: 'text' }),
+      anySearchItem({ snippet: 'ok', content: 42 }),
+      anySearchItem({ snippet: null, content: '' }),
+    ]),
+  });
+  const result = await harness.search({ provider: 'anysearch', limit: 3 });
+  assert.equal(result.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.result.results)), [
+    { title: 'Example page', url: 'https://example.test/page', snippet: 'text' },
+    { title: 'Example page', url: 'https://example.test/page', snippet: 'ok' },
+    { title: 'Example page', url: 'https://example.test/page', snippet: '' },
+  ]);
+  assert.equal(harness.networkCalls.length, 1);
+});
+
 test('AnySearch credentials are declared only for the API host and have a settings row', () => {
   const secret = manifest.network.secrets.find(item => item.key === 'anysearch_api_key');
   assert.deepEqual(secret.inject, {
