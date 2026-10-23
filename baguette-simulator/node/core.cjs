@@ -13,10 +13,10 @@ const BINARY = path.join(__dirname, '../vendor/baguette/Baguette');
 const ROOT = path.join(os.homedir(), 'Library/Application Support/BaguetteCindy');
 const DEVICE_SET = path.join(ROOT, 'devices');
 const children = new Set();
-const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','viewer_tap','viewer_trackpad','swipe','gesture','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer','delete_device','erase_device','reveal_screenshot',
+const methods = new Set(['environment','devices','create_device','rename_device','app_bundle','boot','shutdown','describe_ui','tap','viewer_screen','viewer_tap','viewer_trackpad','swipe','gesture','type_text','press','screenshot','install_app','launch_app','heal','open_viewer','close_viewer','delete_device','erase_device','reveal_screenshot',
   'wait_for','capture','set_state','logs','app_install','app_install_status','app_info','app_terminate','app_uninstall','open_url']);
 // Agent operations that only read the device; they never change what is on screen.
-const READ_ONLY = new Set(['describe_ui','screenshot','wait_for','logs','app_info','app_install_status']);
+const READ_ONLY = new Set(['describe_ui','screenshot','wait_for','logs','app_info','app_install_status','viewer_screen']);
 class Failure extends Error {
   constructor(code, message, execution = 'not_executed') { super(message); this.code=code; this.execution=execution; }
 }
@@ -45,7 +45,10 @@ function number(value,name,min,max) {
 }
 function run(file,args,{timeout=30000,mutation=false,input,env,trimOutput=true,encoding='utf8',maxBuffer=4*1024*1024}={}) {
   return new Promise((resolve,reject)=>{
-    const child=execFile(file,args,{timeout,maxBuffer,encoding,killSignal:'SIGKILL',shell:false,env},(err,stdout,stderr)=>{
+    // These bounded native adapters handle TERM by releasing their held input.
+    // Other commands retain the existing hard timeout behavior.
+    const releasesInput = ['remote','spatial'].some(name=>file===path.join(__dirname,'../native',name));
+    const child=execFile(file,args,{timeout,maxBuffer,encoding,killSignal:releasesInput?'SIGTERM':'SIGKILL',shell:false,env},(err,stdout,stderr)=>{
       children.delete(child);
       stderr=String(stderr||'');
       if(err) return reject(new Failure('COMMAND_FAILED',`${path.basename(file)}: ${(stderr||err.message).slice(-5000)}`,mutation?'unknown':'not_executed'));
@@ -265,6 +268,7 @@ async function dispatch(method,p={},deadline=Date.now()+110000) {
     return bagCommand('shutdown',device,[],{timeout:60000,mutation:true});
   }
   if(method==='describe_ui') return agent().describe(device,p);
+  if(method==='viewer_screen') { const {screen}=await agent().geometry(device,{maxAge:0,deadline}); return {width:screen.width,height:screen.height}; }
   if(method==='tap') return agent().tap(device,p);
   if(method==='viewer_tap') {
     if(platform(device)!=='visionOS')throw new Failure('UNSUPPORTED_INPUT','Spatial selection is only available on Vision Pro.');

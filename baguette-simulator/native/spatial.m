@@ -11,6 +11,13 @@
 #import <simd/simd.h>
 #import <mach/mach_time.h>
 #import <math.h>
+#import <signal.h>
+static volatile sig_atomic_t stopping=0;
+static void interrupted(int sig){stopping=1;}
+static void hold(double seconds){
+ double until=NSProcessInfo.processInfo.systemUptime+seconds;
+ while(!stopping){double left=until-NSProcessInfo.processInfo.systemUptime;if(left<=0)break;usleep((useconds_t)(fmin(left,0.01)*1000000));}
+}
 static BOOL sendEvent(id client, void *message) {
  if(!message)return NO;
  dispatch_semaphore_t done=dispatch_semaphore_create(0);
@@ -56,6 +63,7 @@ static void *selection(simd_float3 origin,simd_float3 direction,BOOL down){
  putFloat(m,0x83,1);putFloat(m,0xa3,1);return m;
 }
 int main(int argc,const char **argv){@autoreleasepool{
+ signal(SIGTERM,interrupted);signal(SIGINT,interrupted);
  // set, UDID, developer dir, normalized x/y, framebuffer aspect, hold, count
  if(argc!=9)return 2;double x,y,aspect,duration,count;
  if(!scalar(argv[4],&x,0,1)||!scalar(argv[5],&y,0,1)||!scalar(argv[6],&aspect,0.5,4)||!scalar(argv[7],&duration,0.02,10)||!scalar(argv[8],&count,1,3)||floor(count)!=count)return 2;
@@ -78,14 +86,16 @@ int main(int argc,const char **argv){@autoreleasepool{
  simd_float4 d=simd_mul(pose,(simd_float4){(float)(2*x-1),(float)((1-2*y)/aspect),-1,0});
  if(!isfinite(simd_length(d.xyz))||simd_length(d.xyz)<0.0001)return 4;
  simd_float3 origin=o.xyz,direction=simd_normalize(d.xyz);
+ if(stopping)return 5;
  if(!sendEvent(client,selection(origin,direction,NO)))return 5;
  usleep(100000);
  for(int i=0;i<(int)count;i++){
+  if(stopping)break;
   BOOL pressed=sendEvent(client,selection(origin,direction,YES));
-  if(pressed)usleep((useconds_t)(duration*1000000));
+  if(pressed)hold(duration);
   BOOL released=sendEvent(client,selection(origin,direction,NO));
   if(!pressed||!released){fprintf(stderr,"Spatial selection delivery not confirmed\n");return 5;}
   usleep(150000);
  }
- close(lock);return 0;
+ close(lock);return stopping?5:0;
 }}

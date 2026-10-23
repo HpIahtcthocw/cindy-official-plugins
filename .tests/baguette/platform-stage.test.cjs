@@ -10,7 +10,8 @@ function stage(platform='tvOS',respond=async()=>({ok:true})){
  const canvas={style:{},focus(){},setPointerCapture(){},getBoundingClientRect:()=>({left:0,top:0,width:1920,height:1080}),addEventListener:(name,fn)=>{events[name]=fn;}};
  class Clock extends Date{static now(){return now;}}
  const context={URL,URLSearchParams,Date:Clock,location:{search:`?platform=${platform}&udid=test&cindyViewer=token`},
-  document:{hidden:true,getElementById:id=>id==='display'?canvas:status,addEventListener:(name,fn)=>{docEvents[name]=fn;}},
+  document:{hidden:false,getElementById:id=>id==='display'?canvas:status,addEventListener:(name,fn)=>{docEvents[name]=fn;}},
+  fetch:async(_url,options)=>{const args=JSON.parse(options.body);calls.push(args);await respond(args.action,args);return {ok:true};},
   crypto:require('node:crypto'),setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{at:now+ms,fn});return id;},clearTimeout:id=>timers.delete(id),
   parent:{cindySim:{api:async(action,args)=>{calls.push({action,...args});return respond(action,args);}}},
   addEventListener:(name,fn)=>{windowEvents[name]=fn;},
@@ -18,7 +19,7 @@ function stage(platform='tvOS',respond=async()=>({ok:true})){
  };
  vm.runInNewContext(source,context);
  function emit(name,props={}){const e={button:0,pointerId:1,isPrimary:true,clientX:960,clientY:540,deltaX:0,deltaY:0,deltaMode:0,preventDefault(){this.prevented=true;},...props};events[name](e);return e;}
- return {emit,calls,status,advance:ms=>{now+=ms;},elapse:ms=>{now+=ms;for(const [id,t] of [...timers])if(t.at<=now){timers.delete(id);t.fn();}},windowEvent:name=>windowEvents[name](),hide:()=>docEvents.visibilitychange(),disconnect:()=>stream.onClose()};
+ return {emit,calls,status,advance:ms=>{now+=ms;},elapse:ms=>{now+=ms;for(const [id,t] of [...timers])if(t.at<=now){timers.delete(id);t.fn();}},windowEvent:name=>windowEvents[name](),hide:()=>{context.document.hidden=true;docEvents.visibilitychange();},show:()=>{context.document.hidden=false;},disconnect:()=>stream.onClose()};
 }
 test('TV screen click confirms focus anywhere; right-click returns once without selecting',async()=>{
  const s=stage();s.emit('pointerdown');s.emit('pointerup');await tick();
@@ -81,4 +82,26 @@ test('Vision keeps spatial tap/hold and does not acquire TV wheel or context-men
  assert.deepEqual(s.calls,[{action:'tap',x:0.5,y:0.5,duration:0.8}]);
  assert.equal(s.emit('wheel',{deltaY:100}).prevented,undefined);
  assert.equal(s.emit('contextmenu').prevented,undefined);await tick();assert.equal(s.calls.length,1);
+});
+
+test('queued keys, clicks and paste are discarded on blur, hidden, stream loss and exit',async()=>{
+ for(const finish of [s=>s.windowEvent('blur'),s=>s.hide(),s=>s.disconnect(),s=>s.windowEvent('pagehide')]){
+  let release;const held=new Promise(r=>release=r);
+  const s=stage('visionOS',async()=>held);
+  s.emit('keydown',{code:'KeyA'});await tick();assert.equal(s.calls.length,1);
+  s.emit('keydown',{code:'KeyB'});
+  s.emit('pointerdown');s.emit('pointerup');
+  s.emit('paste',{clipboardData:{getData:()=> 'pending'}});
+  finish(s);s.show();release();await tick();
+  assert.equal(s.calls.length,1,'nothing queued before leaving can execute after returning');
+ }
+});
+test('input failure and queue saturation discard pending operations without replay',async()=>{
+ for(const mode of ['failure','saturated']){
+  let resolve,reject;const held=new Promise((a,b)=>{resolve=a;reject=b;});
+  const s=stage('tvOS',async()=>held);s.emit('keydown',{code:'KeyA'});await tick();
+  for(let i=0;i<(mode==='saturated'?40:3);i++)s.emit('keydown',{code:'KeyB'});
+  if(mode==='failure')reject(Error('unknown'));else resolve();
+  await tick();assert.equal(s.calls.length,1);assert.match(s.status.textContent,/Input not confirmed/);
+ }
 });

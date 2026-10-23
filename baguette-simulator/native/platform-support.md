@@ -78,3 +78,13 @@ through the real controller/API/native stack, not direct App focus assignment.
 This is not stable/Beta Cindy package acceptance. Installing the final `.cindy`
 and exercising its host preview on a supported production or Beta Cindy remains
 required before release.
+
+Input follow-up: the stage bounds its existing key/click/paste queue to 16
+outstanding operations. Blur, hidden page, stream loss, page exit, queue overflow
+and uncertain input discard unsent operations; nothing is replayed on returning.
+The remote and spatial helpers handle SIGTERM/SIGINT by ending an interruptible
+hold, sending release, waiting for delivery and exiting unsuccessfully. Their
+existing Node command timeout now requests SIGTERM; other commands retain
+SIGKILL. Cancellation remains unknown even when the release is confirmed.
+Rectangular zoom uses the same simctl screen geometry as Agent observations,
+including UI density, instead of an unavailable phone definition.

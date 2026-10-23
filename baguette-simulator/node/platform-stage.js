@@ -9,7 +9,18 @@
   let session, stopped = false, down = null, inputQueue = Promise.resolve(), errorUntil = 0;
   const message = text => { status.textContent = text; status.hidden = !text; };
   const inputError = () => {errorUntil=Date.now()+5000;message(zh ? '输入未确认，请查看画面后重试。' : 'Input not confirmed. Check the view before retrying.');};
-  const input = action => { inputQueue = inputQueue.then(async()=>{await endPan();if(!stopped)return action();}).catch(inputError); return inputQueue; };
+  let inputEpoch = 0, pendingInputs = 0;
+  const input = action => {
+    if (stopped || document.hidden) return;
+    if (pendingInputs >= 16) { inputEpoch++; inputError(); return; }
+    const epoch = inputEpoch; pendingInputs++;
+    inputQueue = inputQueue.then(async () => {
+      if (stopped || document.hidden || epoch !== inputEpoch) return;
+      await endPan();
+      if (!stopped && !document.hidden && epoch === inputEpoch) return action();
+    }).catch(() => { inputEpoch++; inputError(); }).finally(() => { pendingInputs--; });
+    return inputQueue;
+  };
   canvas.addEventListener('pointerdown', event => {
     if(event.button !== 0 || event.ctrlKey || event.isPrimary === false){down=null;return;}
     canvas.focus(); down = {id:event.pointerId,at:Date.now(),x:event.clientX,y:event.clientY,moved:false}; canvas.setPointerCapture(event.pointerId);
@@ -48,7 +59,7 @@
       await parent.cindySim.api('trackpad',{gesture:contact.id,phase,...(point||{x:contact.x,y:contact.y})});
       if(phase==='ended')finishPan(contact);
     } catch {
-      wheelFailed=true;inputError();finishPan(contact); // Native idle/EOF also lifts the finger.
+      inputEpoch++;wheelFailed=true;inputError();finishPan(contact); // Native idle/EOF also lifts the finger.
     } finally {contact.busy=false;if(!contact.finished)pumpPan(contact);}
   }
   function endPan() {
@@ -64,15 +75,15 @@
     const contact={id:crypto.randomUUID(),...start,pending:null,ready:false,busy:false,ending:false,finished:false,lastAt:Date.now()};
     contact.done=new Promise(resolve=>{contact.resolve=resolve;});pan=contact;
     (previous?.done||Promise.resolve()).then(async()=>{
-      if(stopped||Date.now()-contact.lastAt>250){finishPan(contact);return;}
+      if(stopped||contact.ending||document.hidden||Date.now()-contact.lastAt>250){finishPan(contact);return;}
       try{await parent.cindySim.api('trackpad',{gesture:contact.id,phase:'began',...start});contact.ready=true;pumpPan(contact);}
-      catch{wheelFailed=true;inputError();finishPan(contact);}
+      catch{inputEpoch++;wheelFailed=true;inputError();finishPan(contact);}
     });
     return contact;
   }
-  const resetPointer=()=>{down=null;endPan();};
+  const resetPointer=()=>{inputEpoch++;down=null;if(pan)pan.pending=null;endPan();};
   canvas.addEventListener('wheel', event => {
-    if(!tv||event.ctrlKey||event.metaKey||event.altKey||stopped)return;
+    if(!tv||event.ctrlKey||event.metaKey||event.altKey||stopped||document.hidden)return;
     event.preventDefault(); down=null; canvas.focus();
     const now=Date.now(),unit=event.deltaMode===1?16:event.deltaMode===2?canvas.getBoundingClientRect().height:1;
     if(now-wheelAt>180)wheelFailed=false;

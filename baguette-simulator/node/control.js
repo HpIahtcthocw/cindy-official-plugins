@@ -90,14 +90,22 @@
   // ---- zoom ----
   // The device page fits the device into its frame; zoom resizes that frame.
   // Percentages are of actual size (one device point per CSS pixel).
+  function stageSize() {
+    const bounds = stage.getBoundingClientRect();
+    const css = M.platform(state.status?.device) === 'iOS' ? null : globalThis.getComputedStyle?.(frame);
+    const insetX = parseFloat(css?.paddingLeft || 0) + parseFloat(css?.paddingRight || 0);
+    const insetY = parseFloat(css?.paddingTop || 0) + parseFloat(css?.paddingBottom || 0);
+    return {width: Math.max(0,bounds.width - insetX),height: Math.max(0,bounds.height - insetY),insetX,insetY};
+  }
   function applyZoom() {
-    const { width, height } = stage.getBoundingClientRect();
-    const factor = M.zoomFactor(state.zoom, state.fitPct);
+    const { width, height, insetX, insetY } = stageSize();
+    const factor = M.platform(state.status?.device) !== 'iOS' && state.zoom.mode === 'pct' && state.fitPct > 0
+      ? state.zoom.pct / state.fitPct : M.zoomFactor(state.zoom, state.fitPct);
     // Keep the point at the centre of the view in place while the frame grows or shrinks.
     const cx = scroll.scrollWidth > scroll.clientWidth ? (scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth : 0.5;
     const cy = scroll.scrollHeight > scroll.clientHeight ? (scroll.scrollTop + scroll.clientHeight / 2) / scroll.scrollHeight : 0.5;
-    frame.style.width = Math.round(width * factor) + 'px';
-    frame.style.height = Math.round(height * factor) + 'px';
+    frame.style.width = Math.round(width * factor + insetX) + 'px';
+    frame.style.height = Math.round(height * factor + insetY) + 'px';
     if (factor > 1.001) stage.setAttribute('data-zoomed', ''); else stage.removeAttribute('data-zoomed');
     scroll.scrollLeft = cx * scroll.scrollWidth - scroll.clientWidth / 2;
     scroll.scrollTop = cy * scroll.scrollHeight - scroll.clientHeight / 2;
@@ -106,6 +114,11 @@
   async function viewport() {
     if (state.viewport) return state.viewport;
     try {
+      if (M.platform(state.status?.device) !== 'iOS') {
+        const v = await api('viewport');
+        if (v?.width > 0 && v?.height > 0) state.viewport = { width: v.width, height: v.height };
+        return state.viewport;
+      }
       const w = screen.contentWindow;
       const def = await (await w.fetch(`/simulators/${encodeURIComponent(udid)}/definition.json`)).json();
       const v = def?.screen?.viewport;
@@ -117,8 +130,16 @@
   // (foldables) has no fixed size, so its zoom is relative to fit.
   async function measure() {
     let doc; try { doc = screen.contentDocument; } catch { return; }
-    const device = doc?.getElementById('nativeDeviceFrame');
     const v = await viewport();
+    if (M.platform(state.status?.device) !== 'iOS') {
+      const {width,height} = stageSize();
+      if (!v || !(width > 0 && height > 0)) return;
+      const fit = Math.min(width / v.width, height / v.height) * 100;
+      if (Math.abs(fit - state.fitPct) > 0.01) { state.fitPct = fit; applyZoom(); }
+      else renderZoom();
+      return;
+    }
+    const device = doc?.getElementById('nativeDeviceFrame');
     const rect = device?.getBoundingClientRect();
     if (!v || !rect?.width || doc.getElementById('simNativeView')?.getAttribute('data-render3d') === 'open') { state.fitPct = 0; renderZoom(); return; }
     const shown = Math.max(rect.width, rect.height) / Math.max(v.width, v.height) * 100;

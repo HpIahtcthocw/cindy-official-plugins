@@ -5,7 +5,7 @@
   "name": "iOS 模拟器",
   "description": "独立的 iPhone、iPad、Apple TV 与 Vision Pro 模拟器。任务页实时画面、主视图设备管理；支持安装、启动、截图、遥控和空间点击。需要 Apple Silicon、macOS 15+、完整 Xcode 与对应运行时。基于 Baguette。",
   "whenToUse": "iPhone/iPad、Apple TV、Vision Pro 模拟器任务默认使用。先 devices 复用设备，新建前查 environment。Apple TV 用 press 遥控；Vision Pro 用 tap 空间点击/长按和键盘；iOS 用 tap/gesture。heal 须用户同意，不替用户重开运行开关。详见手册。",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "kind": "chip",
   "entry": "main.js",
   "icon": "assets/icon.png",

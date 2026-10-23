@@ -6,6 +6,13 @@
 #import <unistd.h>
 #import <xpc/xpc.h>
 #import <math.h>
+#import <signal.h>
+static volatile sig_atomic_t stopping=0;
+static void interrupted(int sig){stopping=1;}
+static void waitHold(double seconds){
+ double until=NSProcessInfo.processInfo.systemUptime+seconds;
+ while(!stopping){double left=until-NSProcessInfo.processInfo.systemUptime;if(left<=0)break;usleep((useconds_t)(fmin(left,0.01)*1000000));}
+}
 // DTUHID wire protocol reference: facebook/idb 1de1629a (MIT).
 // Only fixed keyboard/button messages are accepted; no network or guest code injection.
 static const char *service="com.apple.coredevice.feature.remote.hid.digitizer";
@@ -18,6 +25,7 @@ static xpc_object_t message(NSString *type,NSDictionary *payload,BOOL barrier){
  xpc_object_t m=xpc_dictionary_create(NULL,NULL,0);xpc_dictionary_set_string(m,"messageType",type.UTF8String);xpc_dictionary_set_string(m,"featureIdentifier",service);xpc_dictionary_set_bool(m,"isBarrier",barrier);xpc_dictionary_set_value(m,"payload",value(payload));return m;
 }
 int main(int argc,const char **argv){@autoreleasepool{
+ signal(SIGTERM,interrupted);signal(SIGINT,interrupted);
  if(argc!=8)return 2;
  NSString *kind=@(argv[4]);int key=0;
  NSScanner *scanner=[NSScanner scannerWithString:@(argv[5])];
@@ -61,13 +69,14 @@ int main(int argc,const char **argv){@autoreleasepool{
  void (^keyEvent)(int,int)=^(int code,int state){xpc_connection_send_message(connection,message(@"IndigoKeyboardButtonEvent",@{@"usageCode":@(code),@"state":@(state)},NO));};
  if(keyboard){for(int code=4;code<=231;code++)keyEvent(code,2);}
  for(NSArray *pair in (batch?keys:@[@[@(key),@(mask)]])){
+  if(stopping)break;
   int key=[pair[0] intValue],mask=[pair[1] intValue];
   if(!key)continue;
   if(keyboard)for(int i=0;i<4;i++)if(mask&(1<<i))keyEvent(224+i,1);
   for(int state=1;state<=2;state++){
    if(keyboard)keyEvent(key,state);
    else xpc_connection_send_message(connection,message(@"IndigoButtonEvent",@{@"usagePage":@12,@"usageCode":@(key),@"state":@(state)},NO));
-   if(state==1)usleep((useconds_t)(fmax(duration,0.08)*1000000));
+   if(state==1)waitHold(fmax(duration,0.08));
   }
   if(keyboard)for(int i=3;i>=0;i--)keyEvent(224+i,2);
  }
@@ -75,5 +84,5 @@ int main(int argc,const char **argv){@autoreleasepool{
  dispatch_semaphore_t sent=dispatch_semaphore_create(0);__block BOOL delivered=NO;
  xpc_connection_send_message_with_reply(connection,message(@"IndigoKeyboardButtonEvent",@{@"usageCode":@0,@"state":@2},YES),q,^(xpc_object_t reply){delivered=xpc_get_type(reply)!=XPC_TYPE_ERROR;dispatch_semaphore_signal(sent);});
  long result=dispatch_semaphore_wait(sent,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC));
- usleep(200000);xpc_connection_cancel(connection);close(lock);return result||!delivered?5:0;
+ usleep(200000);xpc_connection_cancel(connection);close(lock);return result||!delivered||stopping?5:0;
 }}

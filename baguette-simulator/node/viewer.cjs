@@ -152,6 +152,7 @@ async function initializeBridge(server,deviceSet,clipboardAction){
     currentApp,...(currentAppError?{currentAppError}:{}),settings:state?.settings,idleDeadline:state?.idleDeadline};
   },
   catalog:()=>controls.request('viewer_catalog'),
+  viewport:p=>controls.request('viewer_screen',{udid:p.udid}),
   create:async p=>{const created=await controls.request('create_device',{name:p.name,deviceType:p.deviceType,runtime:p.runtime});return {ok:true,created,devices:(await controls.status()).devices};},
   rename:async p=>{await controls.request('rename_device',{udid:p.targetUdid,name:p.name});return {ok:true,devices:(await controls.status()).devices};},
   switch:async p=>{const job=await controls.request('viewer_switch',{udid:p.udid,targetUdid:p.targetUdid,_locale:p.locale,task:p.task});server.clipboard.devices.add(job.targetUdid);return {ok:true,job};},
